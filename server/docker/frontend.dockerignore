@@ -1,6 +1,44 @@
+# Dependencies
 node_modules
+
+# Build outputs
 .next
+out
+dist
+build
+
+# Git
 .git
 .gitignore
-README.md
+
+# Environment files
+.env
+.env.local
 .env*.local
+
+# Data directories
+data/
+Data/
+
+# Backend (not needed for frontend)
+backend/
+
+# Server scripts
+server/
+
+# Tests
+tests/
+
+# Documentation
+docs/
+
+# Notebooks
+notebooks/
+*.ipynb
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

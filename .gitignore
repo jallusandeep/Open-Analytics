@@ -48,10 +48,7 @@ Thumbs.db
 # Docker
 .dockerignore
 
-# Data directories
+# Data directories (contains databases, logs, temp files - should not be in git)
 data/
 Data/
 uploads/
-
-# Documentation
-docs/

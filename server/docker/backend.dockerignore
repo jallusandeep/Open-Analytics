@@ -1,14 +1,53 @@
+# Python cache and compiled files
 __pycache__
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# Virtual environments
 venv/
 env/
 ENV/
+
+# Git
 .git
 .gitignore
+
+# Database files
 *.db
 *.sqlite
+*.sqlite3
 *.duckdb
+
+# Data directories (contains databases, logs, temp files)
 data/
+Data/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Tests
+tests/
+
+# Documentation
+docs/
+
+# Notebooks
+notebooks/
+*.ipynb
+
+# Frontend (not needed for backend)
+frontend/
+
+# Server scripts
+server/
+
+# OS files
+.DS_Store
+Thumbs.db
