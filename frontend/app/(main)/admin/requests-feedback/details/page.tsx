@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/Card'
 import { Table, TableHeader, TableHeaderCell, TableBody, TableRow, TableCell } from '@/components/ui/Table'
@@ -661,10 +661,9 @@ export default function RequestsFeedbackDetailsPage() {
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
-            MozBackdropFilter: 'blur(12px)',
             opacity: isModalVisible ? undefined : 0,
             animation: isModalVisible ? 'backdropFadeIn 0.3s ease-out' : 'none',
-          }}
+          } as React.CSSProperties}
           onClick={() => setSelectedItem(null)}
         >
           <div 

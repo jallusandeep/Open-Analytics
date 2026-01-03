@@ -200,7 +200,6 @@ export default function FeatureRequestsPage() {
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
-            MozBackdropFilter: 'blur(12px)',
             opacity: isModalVisible ? undefined : 0,
             animation: isModalVisible ? 'backdropFadeIn 0.3s ease-out' : 'none',
           }}

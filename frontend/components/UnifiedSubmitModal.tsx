@@ -209,7 +209,6 @@ export function UnifiedSubmitModal({ isOpen, onClose, onSuccess }: UnifiedSubmit
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        MozBackdropFilter: 'blur(12px)',
         opacity: isVisible ? undefined : 0,
         animation: isVisible ? 'backdropFadeIn 0.3s ease-out' : 'none',
       }}

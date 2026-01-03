@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/Button'
 import { X } from 'lucide-react'
@@ -60,7 +60,6 @@ export function ApproveRequestModal({ isOpen, onClose, onConfirm, loading = fals
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        MozBackdropFilter: 'blur(12px)',
         zIndex: 9999,
         transition: 'opacity 0.3s ease-in-out',
         opacity: isVisible ? 1 : 0,

@@ -62,7 +62,6 @@ export function RejectRequestModal({ isOpen, onClose, onConfirm, loading = false
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        MozBackdropFilter: 'blur(12px)',
         zIndex: 9999,
         transition: 'opacity 0.3s ease-in-out',
         opacity: isVisible ? 1 : 0,

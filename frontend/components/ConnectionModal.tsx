@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
@@ -223,7 +223,6 @@ export function ConnectionModal({ isOpen, onClose, connection, onUpdate }: Conne
                 backgroundColor: 'rgba(0, 0, 0, 0.5)',
                 backdropFilter: 'blur(12px)',
                 WebkitBackdropFilter: 'blur(12px)',
-                MozBackdropFilter: 'blur(12px)',
                 opacity: isVisible ? undefined : 0,
                 animation: isVisible ? 'backdropFadeIn 0.3s ease-out' : 'none',
             }}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
@@ -96,9 +96,8 @@ export function Modal({
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        MozBackdropFilter: 'blur(12px)',
         zIndex: zIndex,
-      }}
+      } as React.CSSProperties}
       onClick={(e) => {
         if (closeOnBackdropClick && e.target === e.currentTarget) {
           onClose()
@@ -228,7 +227,6 @@ export function SecondaryModal({
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        MozBackdropFilter: 'blur(12px)',
         zIndex: 10000,
         display: 'flex',
         alignItems: 'center',
