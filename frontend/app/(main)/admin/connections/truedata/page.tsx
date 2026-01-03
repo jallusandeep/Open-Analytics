@@ -550,6 +550,22 @@ export default function TrueDataPage() {
                 <td className="py-3 px-4 text-sm font-sans text-text-primary align-top">{connection.provider}</td>
               </tr>
 
+              {/* URL Row */}
+              <tr className="hover:bg-background/50 transition-colors">
+                <td className="py-3 px-4 text-sm font-sans font-medium text-text-secondary align-top">URL</td>
+                <td className="py-3 px-4 text-sm font-sans font-mono text-text-primary align-top">
+                  {connection.url || 'https://auth.truedata.in/token'}
+                </td>
+              </tr>
+
+              {/* Port Row */}
+              <tr className="hover:bg-background/50 transition-colors">
+                <td className="py-3 px-4 text-sm font-sans font-medium text-text-secondary align-top">Port</td>
+                <td className="py-3 px-4 text-sm font-sans font-mono text-text-primary align-top">
+                  {connection.port || '8086'}
+                </td>
+              </tr>
+
               {/* WebSocket Status Row */}
 
               {/* Token Status Row */}

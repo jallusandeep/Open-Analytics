@@ -187,7 +187,12 @@ class SchedulerService:
                     
                     if username and password:
                         # Refresh only if expired (timer should have handled this, but safety check)
-                        refreshed = token_service.refresh_token_if_needed(username, password, auth_url)
+                        refreshed = token_service.refresh_token_if_needed(
+                            connection_id=truedata_conn.id,
+                            username=username,
+                            password=password,
+                            auth_url=auth_url
+                        )
                         if refreshed:
                             logger.info("TrueData token refreshed (expired token detected)")
                 finally:

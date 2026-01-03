@@ -39,6 +39,8 @@ class ConnectionResponse(BaseModel):
     last_success_at: Optional[datetime]
     created_at: datetime
     updated_at: Optional[datetime]
+    url: Optional[str] = None  # Public URL (e.g., auth_url for TrueData)
+    port: Optional[str] = None  # Public port (e.g., websocket_port for TrueData)
     
     # We DO NOT return full details/credentials here for security
     # We will return public configs only if needed, or masked

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from app.core.database import get_db
 from app.core.permissions import get_current_user, get_admin_user
 from app.core.security import encrypt_data, decrypt_data
+from app.core.config import settings
 from app.models.user import User
 from app.models.connection import Connection, ConnectionStatus, ConnectionHealth
 from app.schemas.connection import ConnectionCreate, ConnectionUpdate, ConnectionResponse
@@ -46,6 +47,22 @@ async def get_connections(
     for conn in db_connections:
         # Handle None values before validation to avoid Pydantic errors
         try:
+            # Extract URL and port from credentials for TrueData connections
+            url = None
+            port = None
+            provider_normalized = conn.provider.upper().replace(" ", "").replace("_", "").replace("-", "") if conn.provider else ""
+            if provider_normalized == "TRUEDATA" and conn.credentials:
+                try:
+                    decrypted_json = decrypt_data(conn.credentials)
+                    config = json.loads(decrypted_json)
+                    url = config.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
+                    port = config.get("websocket_port", settings.TRUEDATA_DEFAULT_WEBSOCKET_PORT)
+                except Exception as e:
+                    logger.debug(f"Could not extract URL/port from credentials for connection {conn.id}: {e}")
+                    # Use defaults if extraction fails
+                    url = settings.TRUEDATA_DEFAULT_AUTH_URL
+                    port = settings.TRUEDATA_DEFAULT_WEBSOCKET_PORT
+            
             # Prepare data with defaults for None values
             conn_dict = {
                 'id': conn.id,
@@ -60,7 +77,9 @@ async def get_connections(
                 'last_checked_at': conn.last_checked_at,
                 'last_success_at': conn.last_success_at,
                 'created_at': conn.created_at if conn.created_at is not None else datetime.now(timezone.utc),
-                'updated_at': conn.updated_at
+                'updated_at': conn.updated_at,
+                'url': url,
+                'port': port
             }
             
             # Use model_validate with dict to ensure proper validation
@@ -71,6 +90,20 @@ async def get_connections(
             logger.error(f"Error serializing connection {conn.id} ({conn.name}): {e}", exc_info=True)
             # Try to create a minimal response with explicit defaults
             try:
+                # Extract URL and port from credentials for TrueData connections
+                url = None
+                port = None
+                provider_normalized = conn.provider.upper().replace(" ", "").replace("_", "").replace("-", "") if conn.provider else ""
+                if provider_normalized == "TRUEDATA" and conn.credentials:
+                    try:
+                        decrypted_json = decrypt_data(conn.credentials)
+                        config = json.loads(decrypted_json)
+                        url = config.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
+                        port = config.get("websocket_port", settings.TRUEDATA_DEFAULT_WEBSOCKET_PORT)
+                    except Exception:
+                        url = settings.TRUEDATA_DEFAULT_AUTH_URL
+                        port = settings.TRUEDATA_DEFAULT_WEBSOCKET_PORT
+                
                 result.append(ConnectionResponse(
                     id=conn.id,
                     name=conn.name or "Unknown",
@@ -84,7 +117,9 @@ async def get_connections(
                     last_checked_at=conn.last_checked_at,
                     last_success_at=conn.last_success_at,
                     created_at=conn.created_at if conn.created_at is not None else datetime.now(timezone.utc),
-                    updated_at=conn.updated_at
+                    updated_at=conn.updated_at,
+                    url=url,
+                    port=port
                 ))
             except Exception as e2:
                 logger.error(f"Failed to create minimal response for connection {conn.id}: {e2}")
@@ -189,7 +224,7 @@ async def create_connection(
             # Extract TrueData credentials from details
             username = connection_data.details.get("username")
             password = connection_data.details.get("password")
-            auth_url = connection_data.details.get("auth_url", "https://auth.truedata.in/token")
+            auth_url = connection_data.details.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
             
             if not username or not password:
                 raise HTTPException(
@@ -290,7 +325,7 @@ async def create_connection(
             
             username = connection_data.details.get("username")
             password = connection_data.details.get("password")
-            auth_url = connection_data.details.get("auth_url", "https://auth.truedata.in/token")
+            auth_url = connection_data.details.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
             
             if username and password:
                 try:
@@ -336,7 +371,42 @@ async def get_connection(
     conn = db.query(Connection).filter(Connection.id == id).first()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    return conn
+    
+    # Extract URL and port from credentials for TrueData connections
+    url = None
+    port = None
+    provider_normalized = conn.provider.upper().replace(" ", "").replace("_", "").replace("-", "") if conn.provider else ""
+    if provider_normalized == "TRUEDATA" and conn.credentials:
+        try:
+            decrypted_json = decrypt_data(conn.credentials)
+            config = json.loads(decrypted_json)
+            url = config.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
+            port = config.get("websocket_port", settings.TRUEDATA_DEFAULT_WEBSOCKET_PORT)
+        except Exception as e:
+            logger.debug(f"Could not extract URL/port from credentials for connection {conn.id}: {e}")
+            url = settings.TRUEDATA_DEFAULT_AUTH_URL
+            port = settings.TRUEDATA_DEFAULT_WEBSOCKET_PORT
+    
+    # Create response with URL and port
+    conn_dict = {
+        'id': conn.id,
+        'name': conn.name,
+        'connection_type': conn.connection_type,
+        'provider': conn.provider,
+        'description': conn.description,
+        'environment': conn.environment if conn.environment is not None else "PROD",
+        'status': conn.status if conn.status is not None else "DISCONNECTED",
+        'health': conn.health if conn.health is not None else "HEALTHY",
+        'is_enabled': conn.is_enabled if conn.is_enabled is not None else False,
+        'last_checked_at': conn.last_checked_at,
+        'last_success_at': conn.last_success_at,
+        'created_at': conn.created_at if conn.created_at is not None else datetime.now(timezone.utc),
+        'updated_at': conn.updated_at,
+        'url': url,
+        'port': port
+    }
+    
+    return ConnectionResponse.model_validate(conn_dict)
 
 @router.get("/{id}/status")
 async def get_connection_status(
@@ -420,13 +490,32 @@ async def update_connection(
             if is_truedata:
                 # Get existing credentials first
                 existing_config = {}
+                decryption_failed = False
                 if conn.credentials:
                     try:
                         decrypted_existing = decrypt_data(conn.credentials)
                         existing_config = json.loads(decrypted_existing)
                         logger.info(f"Loaded existing credentials for connection {id}, keys: {list(existing_config.keys())}")
+                    except ValueError as e:
+                        # Invalid encryption key configuration
+                        logger.error(f"Invalid encryption key configuration: {e}")
+                        decryption_failed = True
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Invalid encryption key configuration. Cannot decrypt existing credentials. Please check ENCRYPTION_KEY environment variable."
+                        )
                     except Exception as e:
                         logger.warning(f"Could not decrypt existing credentials: {e}")
+                        decryption_failed = True
+                        # If we can't decrypt and user is only updating URL/port (not providing username/password),
+                        # we need to fail gracefully
+                        has_username = update_data.details.get("username") and str(update_data.details.get("username")).strip()
+                        has_password = update_data.details.get("password") and str(update_data.details.get("password")).strip()
+                        if not has_username or not has_password:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot decrypt existing credentials. Please provide both username and password when updating the connection."
+                            )
                 
                 # Merge: use new values if provided, otherwise keep existing
                 merged_details = existing_config.copy() if existing_config else {}
@@ -450,8 +539,16 @@ async def update_connection(
                 # Ensure required fields are present
                 if "username" not in merged_details or not merged_details.get("username"):
                     logger.error(f"CRITICAL: Username is missing after merge for connection {id}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Username is required. Please enter your TrueData username in the Configure dialog and save the connection."
+                    )
                 if "password" not in merged_details or not merged_details.get("password"):
                     logger.error(f"CRITICAL: Password is missing after merge for connection {id}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Password is required. Please enter your TrueData password in the Configure dialog and save the connection."
+                    )
                 
                 logger.info(f"Merged credentials keys: {list(merged_details.keys())}")
                 logger.info(f"Merged credentials (masked): { {k: ('***' if k in ['password', 'api_secret'] else v) for k, v in merged_details.items()} }")
@@ -462,7 +559,7 @@ async def update_connection(
                 # Extract TrueData credentials from merged details
                 username = merged_details.get("username")
                 password = merged_details.get("password")
-                auth_url = merged_details.get("auth_url", "https://auth.truedata.in/token")
+                auth_url = merged_details.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
                 
                 # Only regenerate token if username/password are provided and not empty
                 if username and password and username.strip() and password.strip():
@@ -482,6 +579,20 @@ async def update_connection(
                         conn.error_logs = None
                         logger.info(f"Token regenerated successfully during connection update")
                         
+                    except requests.exceptions.HTTPError as e:
+                        # Token generation failed with HTTP error
+                        connection_status = ConnectionStatus.ERROR
+                        connection_health = ConnectionHealth.DOWN
+                        error_detail = ""
+                        if hasattr(e, 'response') and e.response is not None:
+                            try:
+                                error_detail = e.response.json()
+                            except:
+                                error_detail = e.response.text[:200] if e.response.text else str(e)
+                        error_message = f"TrueData authentication failed (HTTP {e.response.status_code if hasattr(e, 'response') and e.response else 'Unknown'}): {error_detail}"
+                        logger.error(f"TrueData token generation failed during update: {error_message}")
+                        conn.error_logs = json.dumps({"error": error_message})
+                        # Don't raise here - allow connection to be saved with error status
                     except Exception as token_error:
                         # Token generation failed
                         connection_status = ConnectionStatus.ERROR
@@ -489,6 +600,7 @@ async def update_connection(
                         error_message = f"TrueData authentication failed: {str(token_error)}"
                         logger.error(f"TrueData token generation failed during update: {token_error}")
                         conn.error_logs = json.dumps({"error": error_message})
+                        # Don't raise here - allow connection to be saved with error status
             
             # Encrypt and store credentials (use merged_details for TrueData, or original details for others)
             final_details = merged_details if (is_truedata and merged_details) else update_data.details
@@ -508,9 +620,20 @@ async def update_connection(
                         detail="Password is required. Please enter your TrueData password in the Configure dialog and save the connection."
                     )
             
-            json_str = json.dumps(final_details)
-            conn.credentials = encrypt_data(json_str)
-            logger.info(f"Credentials encrypted and stored for connection {id}")
+            try:
+                json_str = json.dumps(final_details)
+                conn.credentials = encrypt_data(json_str)
+                logger.info(f"Credentials encrypted and stored for connection {id}")
+            except ValueError as e:
+                # Invalid encryption key configuration
+                logger.error(f"Encryption failed due to invalid encryption key: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Invalid encryption key configuration. Cannot encrypt credentials. Please check ENCRYPTION_KEY environment variable."
+                )
+            except Exception as e:
+                logger.error(f"Encryption failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Encryption failed: {str(e)}")
             
             # Update status if it changed
             if is_truedata:
@@ -679,7 +802,7 @@ async def test_connection(
                 # Try to generate/refresh token
                 username = config.get("username")
                 password = config.get("password")
-                auth_url = config.get("auth_url", "https://auth.truedata.in/token")
+                auth_url = config.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
                 
                 if not username or not password:
                     raise Exception("Username and password required for TrueData connection")
@@ -836,7 +959,7 @@ async def generate_token(
     
     username = config.get("username")
     password = config.get("password")
-    auth_url = config.get("auth_url", "https://auth.truedata.in/token")
+    auth_url = config.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
     
     # Handle case where username/password might be stored as empty strings or None
     if username:
@@ -1072,7 +1195,7 @@ async def refresh_token(
     
     username = config.get("username")
     password = config.get("password")
-    auth_url = config.get("auth_url", "https://auth.truedata.in/token")
+    auth_url = config.get("auth_url", settings.TRUEDATA_DEFAULT_AUTH_URL)
     
     if not username or not password:
         raise HTTPException(status_code=400, detail="Username and password required for token refresh")

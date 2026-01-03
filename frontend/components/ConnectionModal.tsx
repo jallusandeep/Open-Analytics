@@ -88,6 +88,9 @@ export function ConnectionModal({ isOpen, onClose, connection, onUpdate }: Conne
             const providerNormalized = connection.provider?.toUpperCase().replace(/\s+/g, '').replace(/_/g, '').replace(/-/g, '') || ''
             if (providerNormalized === 'TRUEDATA') {
                 setAuthType('TOKEN')
+                // Load existing URL and port from connection if available
+                setAuthUrl(connection.url || 'https://auth.truedata.in/token')
+                setWebsocketPort(connection.port || '8086')
             } else {
                 setAuthType('API_KEY')
             }
@@ -97,7 +100,6 @@ export function ConnectionModal({ isOpen, onClose, connection, onUpdate }: Conne
             setApiSecret('')
             setUsername('')
             setPassword('')
-            setWebsocketPort('8086') // Default to sandbox port
             // baseUrl might be public
         } else {
             resetForm()
