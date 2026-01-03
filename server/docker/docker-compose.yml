@@ -11,7 +11,7 @@ services:
     environment:
       # Data directory configuration
       - DATA_DIR=/app/data
-      - DATABASE_URL=sqlite:///./data/auth/sqlite/auth.db
+      - DATABASE_URL=sqlite:////app/data/auth/sqlite/auth.db
       - DUCKDB_PATH=./data/analytics/duckdb
       # JWT configuration
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}

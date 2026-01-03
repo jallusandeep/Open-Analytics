@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 from typing import Optional, List, Union
 
 class Settings(BaseSettings):
-    # Data directory
+    # Data directory - reads from DATA_DIR environment variable, falls back to default
     DATA_DIR: str = r"C:/Users/jallu/OneDrive/pgp/Python/Stock predictor/rubik-analytics/data"
     
     # Database (legacy - now using connection manager)

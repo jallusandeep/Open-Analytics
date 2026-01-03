@@ -147,7 +147,7 @@ export function CreateUserModal({ isOpen, onClose, onUpdate }: CreateUserModalPr
             </label>
             <select
               value={formData.role}
-              onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+              onChange={(e) => setFormData({ ...formData, role: e.target.value as 'user' | 'admin' })}
               className="w-full px-3 py-2 border border-[#1f2a44] rounded-lg bg-[#121b2f] text-[#e5e7eb] font-sans text-base focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/30 focus:border-[#3b82f6] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
             >
               <option value="user">User</option>

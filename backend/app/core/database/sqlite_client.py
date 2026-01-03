@@ -13,14 +13,22 @@ class SQLiteClient(DatabaseClient):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.db_path = config.get("path", "./data/auth/sqlite/auth.db")
+        # Validate path is not empty
+        if not self.db_path or not self.db_path.strip():
+            raise ValueError(f"SQLite database path cannot be empty. Config: {config}")
         self.engine = None
         self.SessionLocal = None
     
     def connect(self) -> bool:
         """Connect to SQLite database"""
         try:
+            # Validate path before using it
+            if not self.db_path or not self.db_path.strip():
+                raise ValueError(f"SQLite database path is empty. Cannot connect.")
             # Ensure directory exists
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            db_dir = os.path.dirname(self.db_path)
+            if db_dir:  # Only create directory if path has a directory component
+                os.makedirs(db_dir, exist_ok=True)
             
             self.engine = create_engine(
                 f"sqlite:///{self.db_path}",

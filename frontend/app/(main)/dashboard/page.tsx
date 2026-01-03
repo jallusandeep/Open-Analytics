@@ -335,7 +335,7 @@ export default function DashboardPage() {
                       <TableHeaderCell className="w-32">Symbol</TableHeaderCell>
                       <TableHeaderCell className="min-w-[400px]">Headline</TableHeaderCell>
                       <TableHeaderCell className="w-32">Descriptor</TableHeaderCell>
-                      <TableHeaderCell className="w-12"></TableHeaderCell>
+                      <TableHeaderCell className="w-12">{'\u00A0'}</TableHeaderCell>
                     </TableHeader>
                     <TableBody>
                       {announcements.map((announcement, index) => {

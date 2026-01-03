@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Card } from '@/components/ui/Card'
 import { Table, TableHeader, TableHeaderCell, TableBody, TableRow, TableCell } from '@/components/ui/Table'
@@ -13,7 +13,7 @@ import { SecondaryModal } from '@/components/ui/Modal'
 import { Trash2, Power, Play, RefreshCw, Search, ChevronLeft, ChevronRight, BarChart3, Upload, Clock, CheckCircle2, XCircle, AlertTriangle, AlertCircle, Loader2, X, ArrowLeft } from 'lucide-react'
 import { RefreshButton } from '@/components/ui/RefreshButton'
 
-export default function SymbolsPage() {
+function SymbolsPageContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const [symbols, setSymbols] = useState<any[]>([])
@@ -1359,5 +1359,13 @@ export default function SymbolsPage() {
             </SecondaryModal>
 
         </div>
+    )
+}
+
+export default function SymbolsPage() {
+    return (
+        <Suspense fallback={<div className="space-y-4"><div className="text-center py-8 text-xs font-sans text-text-secondary">Loading...</div></div>}>
+            <SymbolsPageContent />
+        </Suspense>
     )
 }

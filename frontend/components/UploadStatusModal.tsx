@@ -493,7 +493,7 @@ export function UploadStatusModal({ isOpen, onClose, refreshTrigger }: UploadSta
         await Promise.all(
           jobIds.map(jobId => symbolsAPI.cancelUpload(jobId).catch(err => {
             console.error(`[UploadStatusModal] Failed to cancel job ${jobId}:`, err)
-            return { error: true, jobId, error: err }
+            return { error: true, jobId, err }
           }))
         )
         

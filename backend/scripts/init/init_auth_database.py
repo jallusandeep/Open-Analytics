@@ -92,7 +92,26 @@ def init_auth_database(admin_username=None, admin_email=None, admin_password=Non
     """Initialize authentication database with tables and admin user"""
     print("Initializing authentication database...")
     
-    router = get_db_router(settings.DATA_DIR)
+    # Ensure DATA_DIR is set and valid
+    # Priority: environment variable > settings.DATA_DIR > default
+    data_dir = os.environ.get("DATA_DIR")
+    if not data_dir or data_dir.strip() == '':
+        # Fallback to settings or default
+        data_dir = settings.DATA_DIR if settings.DATA_DIR and settings.DATA_DIR.strip() else "/app/data"
+        # If it's the hardcoded Windows path, use Docker default instead
+        if "C:/Users" in data_dir or "C:\\Users" in data_dir:
+            data_dir = "/app/data"
+            print(f"[INFO] Detected Windows path in settings, using Docker default: {data_dir}")
+    
+    # Normalize path (handle both absolute and relative paths)
+    if not os.path.isabs(data_dir):
+        # If relative, make it absolute relative to backend directory
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        data_dir = os.path.abspath(os.path.join(backend_dir, data_dir))
+    
+    print(f"[INFO] Using DATA_DIR: {data_dir}")
+    
+    router = get_db_router(data_dir)
     auth_client = router.get_auth_db()
     
     if not auth_client:
@@ -111,13 +130,15 @@ def init_auth_database(admin_username=None, admin_email=None, admin_password=Non
     else:
         # Fallback: create engine from connection config
         from sqlalchemy import create_engine
-        manager = get_connection_manager(settings.DATA_DIR)
+        # Use the same data_dir we validated earlier (already set above)
+        
+        manager = get_connection_manager(data_dir)
         conn_id = manager.active_connections.get("auth")
         if conn_id:
             conn_config = manager.connections.get(conn_id, {}).get("config", {})
-            db_path = conn_config.get("path", os.path.join(settings.DATA_DIR, "auth", "sqlite", "auth.db"))
+            db_path = conn_config.get("path", os.path.join(data_dir, "auth", "sqlite", "auth.db"))
         else:
-            db_path = os.path.join(settings.DATA_DIR, "auth", "sqlite", "auth.db")
+            db_path = os.path.join(data_dir, "auth", "sqlite", "auth.db")
         
         # Ensure directory exists
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -141,59 +162,75 @@ def init_auth_database(admin_username=None, admin_email=None, admin_password=Non
                 print("          python init_auth_database.py --username <user> --email <email> --password <pass>")
                 return True  # Tables created successfully, just no admin user
             
-            # Create admin user with provided credentials
-            admin = User(
-                user_id=str(uuid.uuid4()),
-                username=admin_username,
-                email=admin_email,
-                mobile="",
-                hashed_password=get_password_hash(admin_password),
-                role="super_admin",
-                is_active=True,
-            )
-            db.add(admin)
-            db.commit()
-            print("[OK] Admin user created")
-            print(f"  User ID: {admin.user_id}")
-            print(f"  Username: {admin_username}")
-            print(f"  Email: {admin_email}")
-            print("  Role: super_admin")
-            print("  Status: ACTIVE")
-        else:
-            # Check if specific admin user exists (for updating)
-            admin = db.query(User).filter(User.username == admin_username).first() if admin_username else super_admins[0]
-            if admin:
-                # Ensure admin has user_id if missing
-                if not admin.user_id or admin.user_id == '':
-                    admin.user_id = str(uuid.uuid4())
-                    db.commit()
-                    print(f"[OK] Generated user_id for existing admin: {admin.user_id}")
-                
-                # Ensure existing admin user is active and has super_admin role
-                was_updated = False
-                if not admin.is_active:
-                    admin.is_active = True
-                    was_updated = True
-                    print("[OK] Admin user activated")
-                
-                # Case-insensitive role check
-                if admin.role and admin.role.lower() != "super_admin":
-                    admin.role = "super_admin"
-                    was_updated = True
-                    print("[OK] Admin user promoted to super_admin")
-                
-                if was_updated:
-                    db.commit()
-                    print("[OK] Admin user updated")
-                else:
-                    print("[OK] Admin user already exists and is active")
-                
-                print(f"  Username: {admin.username}")
-                print(f"  Email: {admin.email}")
-                print(f"  Role: {admin.role}")
-                print(f"  Status: {'ACTIVE' if admin.is_active else 'INACTIVE'}")
+            # Check if the user already exists (by username or email)
+            existing_user = db.query(User).filter(
+                (User.username == admin_username) | (User.email == admin_email)
+            ).first()
+            
+            if existing_user:
+                # User exists, just ensure they're a super_admin
+                print(f"[INFO] User '{admin_username}' already exists, ensuring super_admin role...")
+                existing_user.role = "super_admin"
+                existing_user.is_active = True
+                if not existing_user.user_id or existing_user.user_id == '':
+                    existing_user.user_id = str(uuid.uuid4())
+                db.commit()
+                print(f"[OK] Updated existing user to super_admin")
+                print(f"  Username: {existing_user.username}")
+                print(f"  Email: {existing_user.email}")
             else:
-                print(f"[OK] {len(super_admins)} Super User(s) found.")
+                # Create new admin user with provided credentials
+                admin = User(
+                    user_id=str(uuid.uuid4()),
+                    username=admin_username,
+                    email=admin_email,
+                    mobile="",
+                    hashed_password=get_password_hash(admin_password),
+                    role="super_admin",
+                    is_active=True,
+                )
+                db.add(admin)
+                db.commit()
+                print("[OK] Admin user created")
+                print(f"  User ID: {admin.user_id}")
+                print(f"  Username: {admin_username}")
+                print(f"  Email: {admin_email}")
+                print("  Role: super_admin")
+                print("  Status: ACTIVE")
+        else:
+            # Super admins already exist - don't create new ones, just ensure they're active
+            print(f"[OK] Found {len(super_admins)} existing super_admin user(s). Using existing users.")
+            print("[INFO] Skipping creation of new admin user from docker-compose.yml")
+            print("[INFO] Existing super_admin users:")
+            for super_user in super_admins:
+                print(f"  - {super_user.username} ({super_user.email})")
+            
+            # Only update the docker-compose admin user if it exists and needs updating
+            if admin_username:
+                existing_admin = db.query(User).filter(User.username == admin_username).first()
+                if existing_admin:
+                    # Ensure this user is also a super_admin if it exists
+                    was_updated = False
+                    if not existing_admin.user_id or existing_admin.user_id == '':
+                        existing_admin.user_id = str(uuid.uuid4())
+                        was_updated = True
+                        print(f"[OK] Generated user_id for existing admin: {existing_admin.user_id}")
+                    
+                    if not existing_admin.is_active:
+                        existing_admin.is_active = True
+                        was_updated = True
+                        print("[OK] Admin user activated")
+                    
+                    if existing_admin.role and existing_admin.role.lower() != "super_admin":
+                        existing_admin.role = "super_admin"
+                        was_updated = True
+                        print("[OK] Admin user promoted to super_admin")
+                    
+                    if was_updated:
+                        db.commit()
+                        print("[OK] Admin user updated")
+                    else:
+                        print(f"[OK] Admin user '{admin_username}' already exists and is active")
         
         # Ensure ALL super_admin users are active (critical) - case-insensitive
         all_users = db.query(User).all()

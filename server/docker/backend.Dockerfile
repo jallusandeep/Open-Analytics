@@ -46,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 WORKDIR /app/backend
 
 # Use shell form to allow for proper signal handling and initialization
-CMD ["sh", "-c", "python scripts/init/init_auth_database.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+CMD ["sh", "-c", "python scripts/init/init_auth_database.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log"]

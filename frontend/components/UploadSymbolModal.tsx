@@ -728,7 +728,7 @@ final_df = df`)
                         console.log(`[Schedule Update] Target date for conversion: ${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')} at ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${timezone}`)
                         
                         // Now convert the target date/time in the timezone to UTC
-                        let startDate: Date
+                        let startDate: Date = new Date(Date.UTC(targetYear, targetMonth, targetDay, hours, minutes, 0)) // Default initialization
                         
                         if (timezone === 'UTC') {
                             // For UTC, create date directly in UTC
@@ -1140,7 +1140,7 @@ final_df = df`)
                 pollCount++
                 console.log(`Polling upload status (attempt ${pollCount}/${maxPolls}):`, jobIdOrLogId)
 
-                const status = await symbolsAPI.getUploadStatus(jobId)
+                const status = await symbolsAPI.getUploadStatus(String(jobId))
                 console.log('Upload status response:', status)
 
                 // Normalize status to string (in case it's an enum or number)

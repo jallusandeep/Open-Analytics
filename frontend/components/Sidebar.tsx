@@ -26,16 +26,16 @@ import {
 interface NavItem {
   name: string
   href: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>
   color: string
 }
 
 interface AdminNavItem {
   name: string
   href: string
-  icon?: React.ComponentType<{ className?: string }>
+  icon?: React.ComponentType<{ className?: string; style?: React.CSSProperties }>
   color?: string
-  children?: { name: string; href: string; icon?: React.ComponentType<{ className?: string }>; color?: string }[]
+  children?: { name: string; href: string; icon?: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; color?: string }[]
 }
 
 const mainNavItems: NavItem[] = [

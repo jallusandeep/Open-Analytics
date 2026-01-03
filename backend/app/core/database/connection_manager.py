@@ -3,6 +3,7 @@ Connection manager for dynamic database switching
 """
 import json
 import os
+import sys
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from app.core.database.base import DatabaseClient
@@ -16,7 +17,13 @@ class ConnectionManager:
     """Manages database connections and dynamic switching"""
     
     def __init__(self, data_dir: str = "./data"):
+        # Validate data_dir is not empty
+        if not data_dir or not data_dir.strip():
+            raise ValueError(f"ConnectionManager data_dir cannot be empty. Received: '{data_dir}'")
         self.data_dir = os.path.abspath(data_dir)
+        # Validate that abspath didn't result in empty string (shouldn't happen, but safety check)
+        if not self.data_dir or not self.data_dir.strip():
+            raise ValueError(f"ConnectionManager data_dir resolved to empty path. Original: '{data_dir}'")
         self.connections_file = os.path.join(self.data_dir, "connections", "connections.json")
         self.active_file = os.path.join(self.data_dir, "connections", "active_connection.json")
         self.clients: Dict[str, DatabaseClient] = {}
@@ -32,7 +39,17 @@ class ConnectionManager:
             if os.path.exists(self.connections_file):
                 with open(self.connections_file, 'r') as f:
                     data = json.load(f)
-                    self.connections = {conn["id"]: conn for conn in data.get("connections", [])}
+                    connections_list = data.get("connections", [])
+                    # Fix any connections with empty or invalid paths
+                    for conn in connections_list:
+                        if conn.get("type") == "sqlite":
+                            config = conn.get("config", {})
+                            path = config.get("path", "")
+                            if not path or not path.strip():
+                                # Fix empty path
+                                config["path"] = os.path.abspath(os.path.join(self.data_dir, "auth", "sqlite", "auth.db"))
+                                print(f"[INFO] Fixed empty path for connection {conn.get('id')}: {config['path']}")
+                    self.connections = {conn["id"]: conn for conn in connections_list}
             else:
                 self.connections = {}
         except Exception as e:
@@ -74,15 +91,23 @@ class ConnectionManager:
     
     def initialize_defaults(self) -> None:
         """Initialize default connections"""
+        # Validate data_dir is set
+        if not self.data_dir or not self.data_dir.strip():
+            raise ValueError(f"ConnectionManager data_dir cannot be empty. Current value: '{self.data_dir}'")
+        
         # Ensure default SQLite auth connection exists
         if "auth_sqlite_default" not in self.connections:
+            db_path = os.path.abspath(os.path.join(self.data_dir, "auth", "sqlite", "auth.db"))
+            # Validate path is not empty
+            if not db_path or not db_path.strip():
+                raise ValueError(f"Cannot create database path. data_dir: '{self.data_dir}', resulting path: '{db_path}'")
             self.connections["auth_sqlite_default"] = {
                 "id": "auth_sqlite_default",
                 "name": "Default SQLite Auth",
                 "type": "sqlite",
                 "category": "auth",
                 "config": {
-                    "path": os.path.abspath(os.path.join(self.data_dir, "auth", "sqlite", "auth.db"))
+                    "path": db_path
                 },
                 "is_default": True,
                 "is_active": True,
@@ -158,7 +183,59 @@ class ConnectionManager:
         conn_type = connection.get("type")
         config = connection.get("config", {})
         
+        # Helper to fix paths when running in Docker (Linux) but reading Windows config
+        def fix_path_if_needed(path_str):
+            if not path_str or not isinstance(path_str, str):
+                return path_str
+            
+            # If path exists, it's fine
+            if os.path.exists(path_str):
+                return path_str
+            
+            # If we are in Docker (implied by /app/data existing or path starting with /app)
+            # and the path looks like a Windows path (drive letter or backslashes)
+            if (sys.platform != "win32") and (":" in path_str or "\\" in path_str):
+                # Try to rebase relative to data_dir
+                # Strategy: find known markers like 'auth', 'analytics', 'data'
+                parts = path_str.replace("\\", "/").split("/")
+                
+                # Common subdirectories in our structure
+                markers = ["auth", "analytics", "Company Fundamentals", "symbols", "connections", "logs"]
+                
+                for marker in markers:
+                    if marker in parts:
+                        try:
+                            idx = parts.index(marker)
+                            # Reconstruct path from marker onwards relative to our data_dir
+                            rel_path = os.path.join(*parts[idx:])
+                            new_path = os.path.join(self.data_dir, rel_path)
+                            print(f"[INFO] Path correction: '{path_str}' -> '{new_path}'")
+                            return new_path
+                        except Exception as e:
+                            print(f"[WARNING] Path correction failed for '{path_str}': {e}")
+            
+            return path_str
+
+        # Apply path fix to config
+        if "path" in config:
+            config["path"] = fix_path_if_needed(config["path"])
+        if "ohlcv" in config:
+            config["ohlcv"] = fix_path_if_needed(config["ohlcv"])
+        if "indicators" in config:
+            config["indicators"] = fix_path_if_needed(config["indicators"])
+        if "signals" in config:
+            config["signals"] = fix_path_if_needed(config["signals"])
+        if "jobs" in config:
+            config["jobs"] = fix_path_if_needed(config["jobs"])
+        
         if conn_type == "sqlite":
+            # Validate path exists in config
+            db_path = config.get("path", "")
+            if not db_path or not db_path.strip():
+                # Try to construct path from data_dir
+                db_path = os.path.abspath(os.path.join(self.data_dir, "auth", "sqlite", "auth.db"))
+                config["path"] = db_path
+                print(f"[WARNING] SQLite connection missing path, using default: {db_path}")
             return SQLiteClient(config)
         elif conn_type == "duckdb":
             return DuckDBClient(config)

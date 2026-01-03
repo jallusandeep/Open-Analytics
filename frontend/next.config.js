@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  // Removed standalone output - using standard production build
   experimental: {
     outputFileTracingRoot: require('path').join(__dirname, '../../'),
   },

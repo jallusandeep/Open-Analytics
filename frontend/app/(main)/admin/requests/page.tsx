@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/Card'
 import { Table, TableHeader, TableHeaderCell, TableBody, TableRow, TableCell } from '@/components/ui/Table'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { adminAPI } from '@/lib/api'
 import { getErrorMessage } from '@/lib/error-utils'
@@ -29,7 +29,7 @@ interface AccessRequest {
   reviewed_at: string | null
 }
 
-export default function RequestsPage() {
+function RequestsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [requests, setRequests] = useState<AccessRequest[]>([])
@@ -507,5 +507,13 @@ export default function RequestsPage() {
         success={rejectSuccess}
       />
     </div>
+  )
+}
+
+export default function RequestsPage() {
+  return (
+    <Suspense fallback={<div className="space-y-4"><div className="text-center py-8 text-xs font-sans text-text-secondary">Loading...</div></div>}>
+      <RequestsPageContent />
+    </Suspense>
   )
 }

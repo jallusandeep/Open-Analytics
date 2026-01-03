@@ -128,10 +128,6 @@ export function TrueDataConnectionCard({ connection, onConfigure, onViewDetails,
         if (currentSeconds <= 0) {
           setCountdown('00:00:00')
           setCountdownColor('red')
-          // Poll backend to get updated status
-          if (connection?.id) {
-            loadTokenStatus()
-          }
           return
         }
 
@@ -163,25 +159,15 @@ export function TrueDataConnectionCard({ connection, onConfigure, onViewDetails,
     
     // Update every second (decrement timer)
     const interval = setInterval(updateCountdown, 1000)
-    
-    // Poll backend every 45 seconds to get authoritative seconds_left
-    const statusInterval = setInterval(() => {
-      if (connection?.id) {
-        loadTokenStatus()
-      }
-    }, 45000)
 
     return () => {
       clearInterval(interval)
-      clearInterval(statusInterval)
     }
   }, [tokenInfo, connection?.id])
 
-  // Load token status on mount and when connection changes
+  // Load token status on mount and when connection changes (no auto-polling)
   useEffect(() => {
     loadTokenStatus()
-    const interval = setInterval(loadTokenStatus, 30000) // Refresh every 30 seconds
-    return () => clearInterval(interval)
   }, [connection?.id])
 
   const handleToggle = async () => {

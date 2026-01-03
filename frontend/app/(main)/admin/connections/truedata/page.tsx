@@ -238,10 +238,6 @@ export default function TrueDataPage() {
         if (currentSeconds <= 0) {
           setCountdown('00:00:00')
           setCountdownColor('red')
-          // Poll backend to get updated status
-          if (connection?.id && !refreshInProgress.current) {
-            loadTokenStatus(connection.id)
-          }
           return
         }
 
@@ -276,22 +272,13 @@ export default function TrueDataPage() {
     
     // Update every second (decrement timer)
     const interval = setInterval(updateCountdown, 1000)
-    
-    // Poll backend every 45 seconds to get authoritative seconds_left
-    // This ensures timer stays synchronized with backend
-    const statusInterval = setInterval(() => {
-      if (connection?.id && !refreshInProgress.current) {
-        loadTokenStatus(connection.id)
-      }
-    }, 45000) // Every 45 seconds (middle of 30-60 range)
 
     return () => {
       clearInterval(interval)
-      clearInterval(statusInterval)
     }
   }, [tokenInfo, connection?.id])
 
-  // NO AUTO-REFRESH - Only refresh when user clicks refresh button
+  // NO AUTO-REFRESH - Only refresh when user clicks refresh button or page loads
 
   const handleToggle = async () => {
     if (!connection?.id) return

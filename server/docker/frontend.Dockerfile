@@ -31,20 +31,16 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Create public directory (may not exist in source)
-RUN mkdir -p ./public
+# Copy production dependencies
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 
-# Copy public folder if it exists (use shell to handle missing folder gracefully)
-COPY --from=builder /app/frontend/public* ./public/
+# Copy built application
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/package.json ./package.json
 
-# Set the correct permission for prerender cache
-RUN mkdir -p .next
-RUN chown -R nextjs:nodejs .next public
-
-# Automatically leverage output traces to reduce image size
-# standalone output includes server.js and necessary node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/static ./.next/static
+# Set the correct permission
+RUN chown -R nextjs:nodejs /app
 
 USER nextjs
 
@@ -57,4 +53,5 @@ ENV HOSTNAME "0.0.0.0"
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
 
-CMD ["node", "server.js"]
+# Use next start (standard production mode)
+CMD ["npm", "start"]
