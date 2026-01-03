@@ -7,9 +7,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Copy requirements first (for better Docker layer caching)
 # Note: .dockerignore is automatically read from build context root (project root)
-# Source ignore patterns are in server/docker/backend.dockerignore
 COPY backend/requirements.txt ./requirements.txt
 
 # Install Python dependencies
@@ -18,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY backend/ ./backend/
 
-# Create data directory structure
+# Create data directory structure (will be overwritten by volume mount if provided)
 RUN mkdir -p /app/data/auth/sqlite \
     && mkdir -p /app/data/auth/postgres/migrations \
     && mkdir -p /app/data/analytics/duckdb \
@@ -33,13 +32,18 @@ RUN mkdir -p /app/data/auth/sqlite \
     && mkdir -p /app/data/temp \
     && mkdir -p /app/data/backups
 
+# Set proper permissions
+RUN chmod -R 755 /app/data
+
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Health check with longer start period for database initialization
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run initialization and start server
 WORKDIR /app/backend
-CMD python scripts/init/init_auth_database.py && uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Use shell form to allow for proper signal handling and initialization
+CMD ["sh", "-c", "python scripts/init/init_auth_database.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]

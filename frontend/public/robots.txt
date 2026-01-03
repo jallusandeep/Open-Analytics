@@ -1,0 +1,6 @@
+# Rubik Analytics - Robots.txt
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Allow: /
+

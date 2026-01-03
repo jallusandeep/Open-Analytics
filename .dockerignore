@@ -1,28 +1,93 @@
-# Docker ignore file - Source of truth: server/docker/backend.dockerignore and frontend.dockerignore
-# This file combines patterns for both backend and frontend builds
+# Docker ignore file for Rubik Analytics
+# This file is used when building Docker images from project root
 
-# Backend patterns (from server/docker/backend.dockerignore)
-__pycache__
+# ============================================
+# Python / Backend
+# ============================================
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+backend/venv/
+backend/env/
 venv/
 env/
 ENV/
+*.egg-info/
+
+# ============================================
+# Node.js / Frontend
+# ============================================
+frontend/node_modules/
+tests/frontend/node_modules/
+node_modules/
+frontend/.next/
+.next/
+
+# ============================================
+# Database files (will be mounted as volumes)
+# ============================================
 *.db
 *.sqlite
+*.sqlite3
 *.duckdb
+data/
+Data/
 
-# Frontend patterns (from server/docker/frontend.dockerignore)
-node_modules
-.next
+# ============================================
+# Environment and secrets
+# ============================================
+.env
+.env.local
 .env*.local
 
-# Common patterns
-.git
+# ============================================
+# Git
+# ============================================
+.git/
 .gitignore
-README.md
-data/
+
+# ============================================
+# IDE and editors
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============================================
+# OS files
+# ============================================
+.DS_Store
+Thumbs.db
+
+# ============================================
+# Test outputs
+# ============================================
+tests/frontend/playwright-report/
+tests/frontend/test-results/
+coverage/
+.nyc_output/
+
+# ============================================
+# Logs
+# ============================================
+logs/
+*.log
+
+# ============================================
+# Windows batch scripts (not needed in Docker)
+# ============================================
 server/windows/
-docs/
+
+# ============================================
+# Notebooks (development only)
+# ============================================
+notebooks/
+*.ipynb
+
+# ============================================
+# Documentation (optional - can be included)
+# ============================================
+# docs/
