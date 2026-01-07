@@ -98,6 +98,17 @@ class AnnouncementsDBWriter:
                 ON corporate_announcements(symbol)
             """)
             
+            # Create unique index on headline + datetime to prevent content duplicates
+            try:
+                conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_content_unique 
+                    ON corporate_announcements(headline, announcement_datetime)
+                    WHERE headline IS NOT NULL AND announcement_datetime IS NOT NULL
+                """)
+            except Exception as idx_err:
+                # Index might fail if duplicates exist - will be handled by cleanup script
+                logger.debug(f"Could not create content unique index (duplicates may exist): {idx_err}")
+            
             conn.commit()
             conn.close()
             logger.info(f"Initialized announcements database at {self.db_path}")
@@ -401,6 +412,22 @@ class AnnouncementsDBWriter:
                         if similar:
                             duplicates += 1
                             logger.debug(f"Skipping duplicate announcement (same headline+datetime): {announcement_id}")
+                            continue
+                    
+                    # Additional check: If headline and symbol match, consider it a duplicate
+                    # This prevents the most common type of duplicate (same company announcement)
+                    symbol_value = message.get("symbol_nse") or message.get("symbol_bse") or message.get("symbol")
+                    if headline:
+                        existing_by_content = conn.execute("""
+                            SELECT announcement_id FROM corporate_announcements 
+                            WHERE headline = ? 
+                              AND COALESCE(symbol_nse, symbol_bse, symbol) = ?
+                            LIMIT 1
+                        """, [headline, symbol_value]).fetchone()
+                        
+                        if existing_by_content:
+                            duplicates += 1
+                            logger.debug(f"Skipping duplicate announcement (same headline+symbol): {announcement_id}")
                             continue
                     
                     # Double-check: Also check if we're about to insert a duplicate

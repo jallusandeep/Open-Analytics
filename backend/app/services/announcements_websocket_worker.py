@@ -283,9 +283,30 @@ class AnnouncementsWebSocketWorker:
                     symbol_bse = None
                     exchange = None
                     
+                    # Invalid symbols - these are category keywords, not actual trading symbols
+                    INVALID_SYMBOLS = {
+                        "COMPLIANCES", "COMPLIANCE", "DIVIDEND", "DIVIDENDS", 
+                        "ANNOUNCEMENT", "ANNOUNCEMENTS", "REGULATION", "REGULATIONS",
+                        "DISCLOSURES", "DISCLOSURE", "DETAILS", "BSE", "NSE",
+                        "CERTIFICATE", "CERTIFICATES", "QUARTERLY", "ANNUAL",
+                        "INTIMATION", "REG", "SEBI", "LODR", "GOVERNANCE",
+                        "STATEMENT", "REPORT", "MEETING", "BOARD", "AGM", "EGM",
+                        "OUTCOME", "RESULTS", "FINANCIAL", "INVESTOR", "GRIEVANCE",
+                        "RECORD", "DATE", "INTEREST", "PAYMENT", "REDEMPTION",
+                        "PROHIBITION", "INSIDER", "TRADING", "PRICE", "SENSITIVE",
+                        "INFORMATION", "EVENT", "UPDATE", "UPDATES", "BUSINESS",
+                        "CHANGE", "MANAGEMENT", "PRESS", "RELEASE", "MEDIA",
+                        "ANALYST", "MEET", "PARTICIPATION", "CONSUMER", "SHOW",
+                    }
+                    
                     if symbol_raw and isinstance(symbol_raw, str):
-                        symbol_upper = symbol_raw.upper()
-                        if "_BSE" in symbol_upper or symbol_upper.endswith("_B"):
+                        symbol_upper = symbol_raw.upper().strip()
+                        
+                        # Skip if symbol is an invalid keyword
+                        if symbol_upper in INVALID_SYMBOLS or symbol_upper.replace("_BSE", "").replace("_NSE", "").replace("_B", "").replace("_N", "").strip() in INVALID_SYMBOLS:
+                            logger.debug(f"Skipping invalid symbol (keyword): {symbol_raw}")
+                            symbol_raw = None
+                        elif "_BSE" in symbol_upper or symbol_upper.endswith("_B"):
                             # BSE symbol
                             symbol_bse = symbol_upper.replace("_BSE", "").replace("_B", "").strip()
                             exchange = "BSE"
