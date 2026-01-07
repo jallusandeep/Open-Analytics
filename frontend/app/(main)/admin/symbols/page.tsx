@@ -911,11 +911,47 @@ function SymbolsPageContent() {
                                 <>
                                     {symbols.map((sym, i) => {
                                         // Find all exchanges for this trading_symbol
+                                        // Normalize trading_symbol for comparison
+                                        const normalizedTradingSymbol = sym.trading_symbol ? String(sym.trading_symbol).trim().toUpperCase() : ''
                                         const allExchanges = symbols
-                                            .filter(s => s.trading_symbol === sym.trading_symbol && s.exchange)
-                                            .map(s => s.exchange)
+                                            .filter(s => {
+                                                const sTradingSymbol = s.trading_symbol ? String(s.trading_symbol).trim().toUpperCase() : ''
+                                                return sTradingSymbol === normalizedTradingSymbol && normalizedTradingSymbol !== '' && s.exchange
+                                            })
+                                            .map(s => String(s.exchange).trim())
+                                            .filter(ex => ex !== '') // Filter out empty exchanges
                                             .filter((ex, idx, arr) => arr.indexOf(ex) === idx) // Remove duplicates
                                             .sort() // Sort alphabetically (BSE, NSE)
+                                        
+                                        // Find all symbols with the same trading_symbol to show in symbol column
+                                        // Normalize trading_symbol for comparison (trim and uppercase)
+                                        const currentTradingSymbol = sym.trading_symbol ? String(sym.trading_symbol).trim().toUpperCase() : ''
+                                        const allSymbolsWithSameTradingSymbol = symbols
+                                            .filter(s => {
+                                                const sTradingSymbol = s.trading_symbol ? String(s.trading_symbol).trim().toUpperCase() : ''
+                                                return sTradingSymbol === currentTradingSymbol && currentTradingSymbol !== ''
+                                            })
+                                        
+                                        // Create unique list of exchange-symbol pairs
+                                        const uniqueSymbols = allSymbolsWithSameTradingSymbol
+                                            .map(s => ({ 
+                                                exchange: s.exchange ? String(s.exchange).trim() : '', 
+                                                trading_symbol: s.trading_symbol ? String(s.trading_symbol).trim() : '' 
+                                            }))
+                                            .filter(s => s.exchange && s.trading_symbol) // Filter out empty values
+                                            .filter((s, idx, arr) => arr.findIndex(x => x.exchange === s.exchange) === idx) // Remove duplicates by exchange
+                                            .sort((a, b) => a.exchange.localeCompare(b.exchange)) // Sort by exchange (BSE, NSE)
+                                        
+                                        // Always include current symbol if not already in the list
+                                        const currentExchange = sym.exchange ? String(sym.exchange).trim() : ''
+                                        const currentSymbolInList = uniqueSymbols.some(s => s.exchange === currentExchange)
+                                        const displaySymbols = currentSymbolInList 
+                                            ? uniqueSymbols 
+                                            : (currentExchange && sym.trading_symbol ? 
+                                                [{ exchange: currentExchange, trading_symbol: String(sym.trading_symbol).trim() }, ...uniqueSymbols]
+                                                    .filter((s, idx, arr) => arr.findIndex(x => x.exchange === s.exchange) === idx)
+                                                    .sort((a, b) => a.exchange.localeCompare(b.exchange))
+                                                : uniqueSymbols)
                                         
                                         return (
                                         <TableRow key={sym.id || i} index={i} className={selectedIds.includes(sym.id) ? 'bg-primary/5' : ''}>
@@ -945,7 +981,25 @@ function SymbolsPageContent() {
                                                     {sym.exchange_token && <span className="text-[10px] text-text-muted">{sym.exchange_token}</span>}
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="font-mono text-xs text-primary">{sym.trading_symbol || '-'}</TableCell>
+                                            <TableCell className="font-mono text-xs text-primary">
+                                                <div className="flex flex-col gap-0.5">
+                                                    {displaySymbols.length > 0 ? (
+                                                        // Show all exchanges found (could be 1 or more)
+                                                        displaySymbols.map((s, idx) => (
+                                                            <span key={idx} className="flex items-center gap-1">
+                                                                <span className="text-text-secondary text-[10px] font-medium">{s.exchange}:</span> 
+                                                                <span className="text-xs">{s.trading_symbol}</span>
+                                                            </span>
+                                                        ))
+                                                    ) : (
+                                                        // Fallback: show current symbol with its exchange
+                                                        <span className="flex items-center gap-1">
+                                                            {sym.exchange && <span className="text-text-secondary text-[10px] font-medium">{sym.exchange}:</span>}
+                                                            <span className="text-xs">{sym.trading_symbol || '-'}</span>
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </TableCell>
                                             <TableCell className="text-xs max-w-[150px] truncate">
                                                 <span title={sym.name || ''}>{sym.name || '-'}</span>
                                             </TableCell>
