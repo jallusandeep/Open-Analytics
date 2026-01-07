@@ -1,5 +1,8 @@
 """
 Clean up blank and duplicate announcements from database
+
+IMPORTANT: Only removes duplicates by announcement_id (TrueData's unique identifier)
+Different companies can have the same headline, so we don't dedupe by headline
 """
 import os
 import sys
@@ -38,7 +41,8 @@ def clean_announcements():
         """).fetchone()[0]
         print(f"Found {blank_count} blank entries")
         
-        # Find duplicates by announcement_id
+        # Find duplicates by announcement_id ONLY
+        # Different companies can have the same headline, so we ONLY dedupe by announcement_id
         id_dup_count = conn.execute("""
             SELECT COALESCE(SUM(cnt - 1), 0) FROM (
                 SELECT COUNT(*) as cnt
@@ -50,23 +54,19 @@ def clean_announcements():
         """).fetchone()[0]
         print(f"Found {id_dup_count} duplicates by announcement_id")
         
-        # Find duplicates by headline only (treating NULL symbol same as empty)
-        # This is the main fix - use COALESCE to handle NULL symbols
-        headline_dup_count = conn.execute("""
-            SELECT COALESCE(SUM(cnt - 1), 0) FROM (
-                SELECT COUNT(*) as cnt
-                FROM corporate_announcements
-                WHERE headline IS NOT NULL AND headline != '' AND headline != '-'
-                GROUP BY headline, COALESCE(symbol_nse, symbol_bse, symbol, '')
-                HAVING COUNT(*) > 1
-            )
-        """).fetchone()[0]
-        print(f"Found {headline_dup_count} duplicates by headline+symbol")
-        
-        total_to_remove = blank_count + id_dup_count + headline_dup_count
+        total_to_remove = blank_count + id_dup_count
         
         if total_to_remove == 0:
             print("\n[OK] No cleanup needed - database is clean!")
+            
+            # Show stats
+            unique_ids = conn.execute("SELECT COUNT(DISTINCT announcement_id) FROM corporate_announcements").fetchone()[0]
+            unique_headlines = conn.execute("SELECT COUNT(DISTINCT headline) FROM corporate_announcements WHERE headline IS NOT NULL").fetchone()[0]
+            print(f"\nStats:")
+            print(f"  Total announcements: {total_before}")
+            print(f"  Unique announcement_ids: {unique_ids}")
+            print(f"  Unique headlines: {unique_headlines}")
+            print(f"  (Note: Same headline can appear for different companies - this is normal)")
             return
         
         print(f"\n[INFO] Starting cleanup...")
@@ -82,44 +82,31 @@ def clean_announcements():
             conn.commit()
             print(f"[OK] Deleted blank entries")
         
-        # Step 2: Delete duplicates by announcement_id (keep first by rowid)
-        print(f"Removing duplicates by announcement_id...")
-        conn.execute("""
-            DELETE FROM corporate_announcements
-            WHERE rowid NOT IN (
-                SELECT MIN(rowid)
-                FROM corporate_announcements
-                GROUP BY announcement_id
-            )
-        """)
-        conn.commit()
-        print(f"[OK] Removed duplicates by announcement_id")
-        
-        # Step 3: Delete duplicates by headline + symbol (using COALESCE for NULL)
-        # This is the KEY fix - treat NULL/empty symbols as same value
-        print(f"Removing duplicates by headline+symbol...")
-        conn.execute("""
-            DELETE FROM corporate_announcements
-            WHERE rowid NOT IN (
-                SELECT MIN(rowid)
-                FROM corporate_announcements
-                GROUP BY headline, COALESCE(symbol_nse, symbol_bse, symbol, '')
-            )
-        """)
-        conn.commit()
-        print(f"[OK] Removed duplicates by headline+symbol")
+        # Step 2: Delete duplicates by announcement_id ONLY (keep first by rowid)
+        if id_dup_count > 0:
+            print(f"Removing duplicates by announcement_id...")
+            conn.execute("""
+                DELETE FROM corporate_announcements
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid)
+                    FROM corporate_announcements
+                    GROUP BY announcement_id
+                )
+            """)
+            conn.commit()
+            print(f"[OK] Removed duplicates by announcement_id")
         
         # Count after cleanup
         total_after = conn.execute("SELECT COUNT(*) FROM corporate_announcements").fetchone()[0]
         removed = total_before - total_after
         
-        # Verify no more duplicates
+        # Verify no more duplicates by announcement_id
         remaining_dups = conn.execute("""
             SELECT COUNT(*) FROM (
-                SELECT headline, COALESCE(symbol_nse, symbol_bse, symbol, '') as sym, COUNT(*) as cnt
+                SELECT announcement_id, COUNT(*) as cnt
                 FROM corporate_announcements
-                WHERE headline IS NOT NULL AND headline != '' AND headline != '-'
-                GROUP BY headline, COALESCE(symbol_nse, symbol_bse, symbol, '')
+                WHERE announcement_id IS NOT NULL AND announcement_id != ''
+                GROUP BY announcement_id
                 HAVING COUNT(*) > 1
             )
         """).fetchone()[0]
@@ -129,7 +116,7 @@ def clean_announcements():
         print(f"  Before: {total_before} announcements")
         print(f"  After:  {total_after} announcements")
         print(f"  Removed: {removed} entries")
-        print(f"  Remaining duplicates: {remaining_dups}")
+        print(f"  Remaining duplicates (by ID): {remaining_dups}")
         print(f"{'='*50}")
         
         if remaining_dups == 0:

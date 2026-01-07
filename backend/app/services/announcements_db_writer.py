@@ -399,37 +399,10 @@ class AnnouncementsDBWriter:
                             logger.debug(f"Could not parse announcement_datetime: {e}")
                             announcement_datetime = None
                     
-                    # Additional check: If headline and datetime match, consider it a duplicate
-                    # This catches cases where announcement_id might be generated differently
-                    if headline and announcement_datetime:
-                        similar = conn.execute("""
-                            SELECT announcement_id FROM corporate_announcements 
-                            WHERE headline = ? 
-                              AND announcement_datetime = ?
-                            LIMIT 1
-                        """, [headline, announcement_datetime]).fetchone()
-                        
-                        if similar:
-                            duplicates += 1
-                            logger.debug(f"Skipping duplicate announcement (same headline+datetime): {announcement_id}")
-                            continue
-                    
-                    # Additional check: If headline and symbol match, consider it a duplicate
-                    # This prevents the most common type of duplicate (same company announcement)
-                    # Use COALESCE to treat NULL symbols as empty string for comparison
-                    symbol_value = message.get("symbol_nse") or message.get("symbol_bse") or message.get("symbol") or ""
-                    if headline:
-                        existing_by_content = conn.execute("""
-                            SELECT announcement_id FROM corporate_announcements 
-                            WHERE headline = ? 
-                              AND COALESCE(symbol_nse, symbol_bse, symbol, '') = ?
-                            LIMIT 1
-                        """, [headline, symbol_value]).fetchone()
-                        
-                        if existing_by_content:
-                            duplicates += 1
-                            logger.debug(f"Skipping duplicate announcement (same headline+symbol): {announcement_id}")
-                            continue
+                    # NOTE: We ONLY check by announcement_id for duplicates
+                    # Different companies can have the same headline (e.g., "Board Meeting", "Quarterly Results")
+                    # TrueData provides unique announcement_id, so we trust that
+                    # Additional checks by headline+datetime or headline+symbol would skip legitimate news
                     
                     # Double-check: Also check if we're about to insert a duplicate
                     # This handles race conditions where another thread might have inserted between check and insert
