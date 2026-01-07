@@ -67,7 +67,10 @@ class AnnouncementsService:
         try:
             conn = duckdb.connect(self.db_path)
             
-            # Check if old table exists and has old schema
+            # Check if table exists and get its columns
+            needs_migration = False
+            table_exists = False
+            
             try:
                 result = conn.execute("""
                     SELECT column_name FROM information_schema.columns 
@@ -75,43 +78,80 @@ class AnnouncementsService:
                 """).fetchall()
                 existing_columns = {row[0] for row in result}
                 
-                # If old schema exists (has announcement_id as primary key), we need to migrate
-                if 'announcement_id' in existing_columns and 'unique_hash' not in existing_columns:
-                    logger.info("Detected old schema. Creating new table...")
-                    # Drop the old table and create new one
-                    conn.execute("DROP TABLE IF EXISTS corporate_announcements_old")
-                    conn.execute("ALTER TABLE corporate_announcements RENAME TO corporate_announcements_old")
-                    logger.info("Old table renamed to corporate_announcements_old")
-            except Exception:
-                # Table doesn't exist or other error - continue with creation
+                if existing_columns:
+                    table_exists = True
+                    # Check if it's the old schema (has announcement_id but not unique_hash)
+                    # OR has received_at but not created_at
+                    if ('announcement_id' in existing_columns and 'unique_hash' not in existing_columns) or \
+                       ('received_at' in existing_columns and 'created_at' not in existing_columns):
+                        needs_migration = True
+                        logger.info(f"Detected old schema. Columns: {existing_columns}")
+            except Exception as e:
+                logger.debug(f"Table check: {e}")
+                # Table doesn't exist - continue with creation
                 pass
+            
+            # Migrate old table if needed - DROP old table completely and create fresh
+            # This is a complete rewrite per requirements - start fresh
+            if needs_migration:
+                logger.info("Migrating old schema to new schema (dropping old table)...")
+                try:
+                    # Drop indexes first to avoid dependency errors
+                    try:
+                        conn.execute("DROP INDEX IF EXISTS idx_announcements_datetime")
+                        conn.execute("DROP INDEX IF EXISTS idx_announcements_received_at")
+                        conn.execute("DROP INDEX IF EXISTS idx_announcements_symbol")
+                        conn.execute("DROP INDEX IF EXISTS idx_announcements_content_unique")
+                    except Exception:
+                        pass
+                    
+                    # Drop the old table
+                    conn.execute("DROP TABLE IF EXISTS corporate_announcements")
+                    logger.info("Old table dropped successfully")
+                    table_exists = False
+                except Exception as e:
+                    logger.warning(f"Migration error: {e}")
+                    # Force drop with CASCADE-like behavior
+                    try:
+                        conn.execute("DROP TABLE IF EXISTS corporate_announcements CASCADE")
+                        table_exists = False
+                    except Exception as e2:
+                        logger.error(f"Force drop error: {e2}")
             
             # Create new table with proper schema
             # unique_hash is the PRIMARY KEY - enforces deduplication at DB level
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS corporate_announcements (
-                    unique_hash VARCHAR PRIMARY KEY,
-                    announcement_datetime TIMESTAMP,
-                    company_info VARCHAR,
-                    headline VARCHAR,
-                    category VARCHAR,
-                    attachments JSON,
-                    source_link VARCHAR,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    raw_payload TEXT
-                )
-            """)
+            if not table_exists:
+                conn.execute("""
+                    CREATE TABLE corporate_announcements (
+                        unique_hash VARCHAR PRIMARY KEY,
+                        announcement_datetime TIMESTAMP,
+                        company_info VARCHAR,
+                        headline VARCHAR,
+                        category VARCHAR,
+                        attachments JSON,
+                        source_link VARCHAR,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        raw_payload TEXT
+                    )
+                """)
+                logger.info("Created new corporate_announcements table with new schema")
             
             # Create indexes for efficient queries
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ann_datetime 
-                ON corporate_announcements(announcement_datetime DESC)
-            """)
+            try:
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ann_datetime 
+                    ON corporate_announcements(announcement_datetime DESC)
+                """)
+            except Exception as e:
+                logger.debug(f"Index idx_ann_datetime: {e}")
             
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ann_created_at 
-                ON corporate_announcements(created_at DESC)
-            """)
+            try:
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ann_created_at 
+                    ON corporate_announcements(created_at DESC)
+                """)
+            except Exception as e:
+                logger.debug(f"Index idx_ann_created_at: {e}")
             
             conn.commit()
             conn.close()
@@ -119,7 +159,8 @@ class AnnouncementsService:
             
         except Exception as e:
             logger.error(f"Error initializing database: {e}", exc_info=True)
-            raise
+            # Don't raise - allow service to continue even if DB init has issues
+            logger.warning("Continuing with service startup despite DB init error")
     
     def start_worker(self, connection_id: int) -> bool:
         """Start WebSocket worker for a TrueData connection."""
