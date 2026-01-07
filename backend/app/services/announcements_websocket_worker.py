@@ -474,6 +474,40 @@ class AnnouncementsWebSocketWorker:
                     logger.debug(f"Skipping announcement {announcement_id}: invalid headline '{headline}'")
                     return None
                 
+                # Extract attachment_id first
+                attachment_id_value = (
+                    data.get("attachment_id") or 
+                    data.get("AttachmentID") or
+                    data.get("attachment") or
+                    data.get("Attachment") or
+                    data.get("file_id") or
+                    data.get("FileID")
+                )
+                
+                # Extract link, but exclude if it's the same as attachment_id
+                link_value = (
+                    data.get("link") or
+                    data.get("Link") or
+                    data.get("LINK") or
+                    data.get("announcement_link") or
+                    data.get("AnnouncementLink") or
+                    data.get("announcement_url") or
+                    data.get("AnnouncementURL") or
+                    data.get("source_url") or
+                    data.get("SourceURL") or
+                    data.get("web_link") or
+                    data.get("WebLink") or
+                    data.get("web_url") or
+                    data.get("WebURL") or
+                    data.get("url") or
+                    data.get("Url") or
+                    data.get("URL")
+                )
+                
+                # Only set link if it's different from attachment_id
+                if link_value and link_value == attachment_id_value:
+                    link_value = None
+                
                 parsed = {
                     "announcement_id": str(announcement_id),
                     "symbol": symbol,  # Keep for reference
@@ -503,14 +537,8 @@ class AnnouncementsWebSocketWorker:
                         data.get("timestamp") or
                         data.get("Timestamp")
                     ),
-                    "attachment_id": (
-                        data.get("attachment_id") or 
-                        data.get("AttachmentID") or
-                        data.get("attachment") or
-                        data.get("Attachment") or
-                        data.get("file_id") or
-                        data.get("FileID")
-                    ),
+                    "attachment_id": attachment_id_value,
+                    "link": link_value,
                     "received_at": datetime.now(timezone.utc).isoformat(),
                     "raw_payload": message  # Store raw for debugging
                 }

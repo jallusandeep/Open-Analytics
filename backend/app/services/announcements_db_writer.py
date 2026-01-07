@@ -67,10 +67,20 @@ class AnnouncementsDBWriter:
                     attachment_id VARCHAR,
                     symbol_nse VARCHAR,
                     symbol_bse VARCHAR,
+                    link VARCHAR,
                     raw_payload TEXT,
                     UNIQUE(announcement_id)
                 )
             """)
+            
+            # Add link column if it doesn't exist (for existing databases)
+            try:
+                conn.execute("ALTER TABLE corporate_announcements ADD COLUMN link VARCHAR")
+                logger.info("Added 'link' column to corporate_announcements table")
+            except Exception as e:
+                # Column already exists or other error - ignore
+                if "duplicate" not in str(e).lower() and "already exists" not in str(e).lower():
+                    logger.debug(f"Could not add link column (may already exist): {e}")
             
             # Create indexes for efficient queries
             conn.execute("""
@@ -474,8 +484,9 @@ class AnnouncementsDBWriter:
                                 attachment_id,
                                 symbol_nse,
                                 symbol_bse,
+                                link,
                                 raw_payload
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, [
                             announcement_id,
                             symbol_value,  # Use best available symbol
@@ -488,6 +499,7 @@ class AnnouncementsDBWriter:
                             message.get("attachment_id"),
                             message.get("symbol_nse"),
                             message.get("symbol_bse"),
+                            message.get("link"),
                             message.get("raw_payload")
                         ])
                         

@@ -151,6 +151,7 @@ async def get_announcements(
                             a.announcement_datetime,
                             a.received_at,
                             a.attachment_id,
+                            a.link,
                             COALESCE(s_nse.name, s_bse.name) as company_name
                         FROM corporate_announcements a
                         INNER JOIN (
@@ -222,6 +223,7 @@ async def get_announcements(
                         a.announcement_datetime,
                         a.received_at,
                         a.attachment_id,
+                        a.link,
                         NULL as company_name
                     FROM corporate_announcements a
                     INNER JOIN (
@@ -264,7 +266,7 @@ async def get_announcements(
                     return val_str
                 
                 # Extract values with proper None handling
-                # Query order: announcement_id, symbol, symbol_nse, symbol_bse, exchange, headline, description, category, announcement_datetime, received_at, attachment_id, company_name
+                # Query order: announcement_id, symbol, symbol_nse, symbol_bse, exchange, headline, description, category, announcement_datetime, received_at, attachment_id, link, company_name
                 announcement_id = str(ann[0]) if ann[0] else None
                 
                 # Skip if we've already seen this announcement_id (extra safety check)
@@ -284,7 +286,8 @@ async def get_announcements(
                 announcement_datetime = ann[8].isoformat() if ann[8] else None
                 received_at = ann[9].isoformat() if ann[9] else None
                 attachment_id = clean_value(ann[10], 10)
-                company_name = clean_value(ann[11], 11)
+                link = clean_value(ann[11], 11)
+                company_name = clean_value(ann[12], 12)
                 
                 result.append({
                     "announcement_id": announcement_id,
@@ -298,6 +301,7 @@ async def get_announcements(
                     "announcement_datetime": announcement_datetime,
                     "received_at": received_at,
                     "attachment_id": attachment_id,
+                    "link": link,
                     "company_name": company_name
                 })
             except Exception as e:
