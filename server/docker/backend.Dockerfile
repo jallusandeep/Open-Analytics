@@ -9,9 +9,14 @@ RUN apt-get update && apt-get install -y \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
+# Set timezone early to avoid rebuilds
+ENV TZ=Asia/Kolkata
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Copy and install Python dependencies first for better layer caching
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY backend/ ./backend/
@@ -31,16 +36,12 @@ RUN mkdir -p /app/data/auth/sqlite \
     && mkdir -p /app/data/backups \
     && chmod -R 755 /app/data
 
-# Fix line endings for Python files
-RUN find ./backend -type f -name "*.py" -exec dos2unix {} +
-
-# Set timezone (default to Asia/Kolkata/IST, can be overridden via TZ environment variable)
-ENV TZ=Asia/Kolkata
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# Fix line endings for Python files (skip if dos2unix fails on binary files)
+RUN find ./backend -type f -name "*.py" -exec dos2unix {} + || true
 
 # Copy entrypoint script
 COPY server/docker/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh && dos2unix /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && dos2unix /app/entrypoint.sh || true
 
 EXPOSE 8000
 

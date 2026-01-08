@@ -160,16 +160,13 @@ docker-compose exec backend python scripts/init/init_auth_database.py
 1. **Change default secrets**: Update `JWT_SECRET_KEY`, `JWT_SYSTEM_SECRET_KEY`, and `ENCRYPTION_KEY` in production
 2. **Use environment variables**: Store secrets in `.env` file (not committed to git)
 3. **Enable HTTPS**: Use a reverse proxy (nginx, traefik) for HTTPS
-4. **Resource limits**: Add resource limits to docker-compose.yml:
-   ```yaml
-   deploy:
-     resources:
-       limits:
-         cpus: '2'
-         memory: 2G
-   ```
-5. **Backup strategy**: Regularly backup the `data/` directory
-6. **Log rotation**: Configure log rotation for application logs
+4. **Resource limits**: Already configured in docker-compose.yml:
+   - Backend: 2 CPU / 2GB RAM limit, 0.5 CPU / 512MB reserved
+   - Frontend: 1 CPU / 1GB RAM limit, 0.25 CPU / 256MB reserved
+   - Adjust based on your infrastructure needs
+5. **Log rotation**: Configured with 10MB max size and 3 file rotation
+6. **Backup strategy**: Regularly backup the `data/` directory
+7. **Monitoring**: Set up monitoring for health checks and resource usage
 
 ## Windows Server Compatibility
 

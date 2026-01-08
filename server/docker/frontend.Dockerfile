@@ -5,8 +5,9 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat wget
 WORKDIR /app
 
+# Copy package files first for better layer caching
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+RUN npm ci --prefer-offline --no-audit
 
 # Rebuild the source code only when needed
 FROM base AS builder
