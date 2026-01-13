@@ -20,6 +20,7 @@ echo "[INFO] Starting backend (skipping explicit init script)..."
 echo "==========================================="
 echo "  STARTING RUBIK ANALYTICS BACKEND"
 echo "==========================================="
-# Match Windows server: use --reload for development, --workers 1 for production
-# --no-access-log matches Windows server behavior (HTTP access logs filtered)
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log
+# Match Windows server behavior: use --reload for development parity
+# Note: We don't force --env-file here because Docker Compose injects environment variables directly,
+# but we add --reload to see detailed logs and enable hot-reloading as requested ("same as Windows")
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --no-access-log
