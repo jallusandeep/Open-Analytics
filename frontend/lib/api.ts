@@ -368,6 +368,35 @@ export const telegramAPI = {
       password
     })
     return response.data
+    return response.data
+  }
+}
+
+// Telegram Channels API
+export const telegramChannelsAPI = {
+  discoverChannels: async (connectionId: number) => {
+    const response = await api.get(`/telegram-channels/discover/${connectionId}`)
+    return response.data
+  },
+  registerChannels: async (connectionId: number, channels: any[]) => {
+    const response = await api.post(`/telegram-channels/${connectionId}/register`, { channels })
+    return response.data
+  },
+  getChannels: async (connectionId: number) => {
+    const response = await api.get(`/telegram-channels/list/${connectionId}`)
+    return response.data
+  },
+  toggleChannel: async (channelId: number, isEnabled: boolean) => {
+    const response = await api.patch(`/telegram-channels/${channelId}/toggle`, { is_enabled: isEnabled })
+    return response.data
+  },
+  searchChannels: async (connectionId: number, query: string) => {
+    const response = await api.get(`/telegram-channels/search/${connectionId}`, { params: { q: query } })
+    return response.data
+  },
+  deleteChannel: async (channelId: number) => {
+    const response = await api.delete(`/telegram-channels/${channelId}`)
+    return response.data
   }
 }
 

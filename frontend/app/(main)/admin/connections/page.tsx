@@ -102,7 +102,7 @@ export default function ConnectionsPage() {
     SOCIAL: {
       total: connections.filter(c => ['SOCIAL', 'TELEGRAM_BOT', 'TELEGRAM_USER'].includes(c.connection_type)).length,
       connected: connections.filter(c => ['SOCIAL', 'TELEGRAM_BOT', 'TELEGRAM_USER'].includes(c.connection_type) && c.status === 'CONNECTED').length,
-      label: 'Messaging & Social',
+      label: 'Telegram',
       description: 'Telegram, social media, and messaging integrations',
       icon: MessageSquare,
       color: 'warning'

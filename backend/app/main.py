@@ -538,6 +538,9 @@ app.include_router(telegram.router, prefix="/api/v1/telegram", tags=["telegram"]
 app.include_router(telegram_connect.router, prefix="/api/v1/telegram", tags=["telegram_connect"])
 app.include_router(telegram_auth.router, prefix="/api/v1/telegram", tags=["telegram_auth"])
 
+from app.api.v1 import telegram_channels
+app.include_router(telegram_channels.router, prefix="/api/v1/telegram-channels", tags=["telegram_channels"])
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""

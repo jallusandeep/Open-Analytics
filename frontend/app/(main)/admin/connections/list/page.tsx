@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { RefreshButton } from '@/components/ui/RefreshButton'
 import { ArrowLeft, Settings, Trash2, Search, Plus, Eye, Edit } from 'lucide-react'
 import { Switch } from '@/components/ui/Switch'
+import { SmartTooltip } from '@/components/ui/SmartTooltip'
 import { ConnectionModal } from '@/components/ConnectionModal'
 import { ViewConnectionModal } from '@/components/ViewConnectionModal'
 import { DeleteConfirmationModal } from '@/components/DeleteConfirmationModal'
@@ -117,13 +118,22 @@ function ConnectionListContent() {
         }
     }
 
+    const handleSettingsClick = (conn: any) => {
+        if (conn.status !== 'CONNECTED' && conn.status !== 'HEALTHY') {
+            // Basic alert for now, can be improved to a proper modal if needed or reuse existing warning pattern
+            alert("Connection is not healthy. Please resolve connection issues first.")
+            return
+        }
+        router.push(`/admin/telegram/channel-management?connectionId=${conn.id}&name=${encodeURIComponent(conn.name)}`)
+    }
+
     const getCategoryLabel = (key: string | null) => {
         if (!key) return 'All Connections'
         const labels: Record<string, string> = {
             'INTERNAL': 'Database Connections',
             'BROKER': 'Broker APIs',
             'NEWS': 'News Channels',
-            'SOCIAL': 'Messaging & Social',
+            'SOCIAL': 'Telegram',
             'MARKET_DATA': 'Market Data',
             'AI_ML': 'AI / ML Models',
             'TRUEDATA': 'TrueData'
@@ -232,38 +242,56 @@ function ConnectionListContent() {
                                         </span>
                                     </TableCell>
                                     <TableCell>
-                                        <div className="flex justify-end gap-2">
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setSelectedConn(conn)
-                                                    setIsViewOpen(true)
-                                                }}
-                                                title="View Details"
-                                            >
-                                                <Eye className="w-4 h-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setSelectedConn(conn)
-                                                    setIsEditOpen(true)
-                                                }}
-                                                title="Edit"
-                                            >
-                                                <Edit className="w-4 h-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => handleDeleteClick(conn)}
-                                                title="Delete"
-                                                className="text-error hover:text-error hover:bg-error/10"
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                            </Button>
+                                        <div className="flex justify-end gap-1">
+                                            <SmartTooltip text="View Details">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        setSelectedConn(conn)
+                                                        setIsViewOpen(true)
+                                                    }}
+                                                    className="p-1.5"
+                                                >
+                                                    <Eye className="w-4 h-4 btn-icon-hover icon-button icon-button-bounce" />
+                                                </Button>
+                                            </SmartTooltip>
+                                            {conn.connection_type === 'TELEGRAM_USER' && (
+                                                <SmartTooltip text="Channel Settings">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleSettingsClick(conn)}
+                                                        className="p-1.5"
+                                                    >
+                                                        <Settings className="w-4 h-4 btn-icon-hover icon-button icon-button-bounce" />
+                                                    </Button>
+                                                </SmartTooltip>
+                                            )}
+                                            <SmartTooltip text="Edit">
+
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        setSelectedConn(conn)
+                                                        setIsEditOpen(true)
+                                                    }}
+                                                    className="p-1.5"
+                                                >
+                                                    <Edit className="w-4 h-4 btn-icon-hover icon-button icon-button-bounce" />
+                                                </Button>
+                                            </SmartTooltip>
+                                            <SmartTooltip text="Delete">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => handleDeleteClick(conn)}
+                                                    className="p-1.5 text-error hover:text-error hover:bg-error/10"
+                                                >
+                                                    <Trash2 className="w-4 h-4 btn-icon-hover icon-button icon-button-bounce" />
+                                                </Button>
+                                            </SmartTooltip>
                                         </div>
                                     </TableCell>
                                 </TableRow>
@@ -277,6 +305,7 @@ function ConnectionListContent() {
                 isOpen={isAddOpen}
                 onClose={() => setIsAddOpen(false)}
                 onUpdate={loadConnections}
+                category={categoryParam || undefined}
             />
 
             <ConnectionModal

@@ -13,6 +13,7 @@ interface ConnectionModalProps {
     onClose: () => void
     connection?: any
     onUpdate: () => void
+    category?: string
 }
 
 const CONNECTION_TYPES = [
@@ -31,10 +32,18 @@ const ENVIRONMENTS = [
     { value: 'SANDBOX', label: 'Sandbox' },
 ]
 
-export function ConnectionModal({ isOpen, onClose, connection, onUpdate }: ConnectionModalProps) {
+export function ConnectionModal({ isOpen, onClose, connection, onUpdate, category }: ConnectionModalProps) {
+    // Filter connection types based on category
+    const filteredConnectionTypes = CONNECTION_TYPES.filter(t => {
+        if (category === 'SOCIAL') {
+            return ['TELEGRAM_BOT', 'TELEGRAM_USER'].includes(t.value)
+        }
+        return true
+    })
+
     const [formData, setFormData] = useState({
         name: '',
-        connection_type: 'MARKET_DATA',
+        connection_type: category === 'SOCIAL' ? 'TELEGRAM_BOT' : 'MARKET_DATA',
         provider: '',
         description: '',
         environment: 'PROD',
@@ -135,7 +144,7 @@ export function ConnectionModal({ isOpen, onClose, connection, onUpdate }: Conne
     const resetForm = () => {
         setFormData({
             name: '',
-            connection_type: 'MARKET_DATA',
+            connection_type: category === 'SOCIAL' ? 'TELEGRAM_BOT' : 'MARKET_DATA',
             provider: '',
             description: '',
             environment: 'PROD',
@@ -385,7 +394,7 @@ export function ConnectionModal({ isOpen, onClose, connection, onUpdate }: Conne
                                         className="w-full px-3 py-2 border border-[#1f2a44] rounded-lg bg-[#121b2f] text-[#e5e7eb] focus:ring-2 focus:ring-primary/30 outline-none"
                                         disabled={!!connection} // Type usually immutable?
                                     >
-                                        {CONNECTION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                                        {filteredConnectionTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                                     </select>
                                 </div>
                             </div>
