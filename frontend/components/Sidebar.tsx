@@ -22,6 +22,7 @@ import {
   UserCog,
   LogOut,
   Bell,
+  Newspaper,
 } from 'lucide-react'
 
 interface NavItem {
@@ -44,6 +45,7 @@ const mainNavItems: NavItem[] = [
   { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'text-success' },
   { name: 'Reports', href: '/reports', icon: FileText, color: 'text-primary' },
   { name: 'Announcements', href: '/announcements', icon: Bell, color: 'text-warning' },
+  { name: 'News', href: '/news', icon: Newspaper, color: 'text-success' },
 
   { name: 'Feature & Feedback', href: '/feature-feedback', icon: MessageSquare, color: 'text-primary' },
   { name: 'Settings', href: '/settings', icon: Settings, color: 'text-warning' },

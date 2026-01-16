@@ -13,7 +13,8 @@ from .config import LINK_CACHE_DIR, OCR_CACHE_DIR, REQ_HEADERS
 logger = logging.getLogger(__name__)
 
 # Compile Regex
-URL_REGEX = r'(https?://\S+)'
+# Compile Regex - robustly capture the full link exactly as it appears (including paths, query params, etc)
+URL_REGEX = r'https?://[^\s{}()<>\[\]"\']+'
 
 def extract_urls(text):
     """

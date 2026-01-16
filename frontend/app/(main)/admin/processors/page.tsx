@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Card } from '@/components/ui/Card'
 import { adminAPI } from '@/lib/api'
-import { Cpu, FileText, ArrowRight } from 'lucide-react'
+import { FileText, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
 
 export default function ProcessorsPage() {
@@ -106,4 +106,3 @@ export default function ProcessorsPage() {
         </div>
     )
 }
-

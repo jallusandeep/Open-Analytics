@@ -936,3 +936,18 @@ export const analyticsAPI = {
   },
 }
 
+export const newsAPI = {
+  getNews: async (params?: { page?: number; page_size?: number; search?: string }) => {
+    const response = await api.get('/news', { params })
+    return response.data
+  },
+  getStatus: async () => {
+    const response = await api.get('/news/status')
+    return response.data
+  },
+  toggleStatus: async (enabled: boolean) => {
+    const response = await api.post('/news/toggle', null, { params: { enabled } })
+    return response.data
+  }
+}
+

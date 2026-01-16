@@ -63,6 +63,8 @@ def get_unprocessed_rows(limit=50):
         """
         return db.run_raw_query(query, [limit], fetch='all')
     except Exception as e:
+        if "does not exist" in str(e).lower():
+            return []
         logger.error(f"Error fetching unprocessed rows: {e}")
         return []
 
@@ -84,6 +86,8 @@ def check_exact_duplicate(content_hash, lookback_hours=24):
         result = db.run_raw_query(query, [content_hash], fetch='one')
         return result[0] if result else None
     except Exception as e:
+        if "does not exist" in str(e).lower():
+            return None
         logger.error(f"Error checking exact duplicate: {e}")
         return None
 
@@ -104,6 +108,8 @@ def get_recent_non_duplicates(limit=200, lookback_hours=24):
         """
         return db.run_raw_query(query, [limit], fetch='all')
     except Exception as e:
+        if "does not exist" in str(e).lower():
+            return []
         logger.error(f"Error fetching recent non-duplicates: {e}")
         return []
 

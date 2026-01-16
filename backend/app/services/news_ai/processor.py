@@ -1,6 +1,6 @@
 import logging
 import json
-from .db import ensure_schema, get_eligible_news, insert_enriched_news, mark_failed
+from .db import ensure_schema, get_eligible_news, insert_enriched_news, mark_failed, get_system_setting
 from ..ai_enrichment_config_manager import get_active_enrichment_config
 from ..ai_connection_manager import get_ai_adapter_for_connection
 from .config import BATCH_SIZE
@@ -37,6 +37,10 @@ class AIEnrichmentProcessor:
 
     def process_batch(self, limit=BATCH_SIZE):
         """Process a batch of eligible news."""
+        # 0. Check if sync is enabled
+        if get_system_setting('news_sync_enabled', 'true') == 'false':
+            return 0
+
         if not self.refresh_config():
             return 0
 

@@ -3,16 +3,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { adminAPI } from '@/lib/api'
+import { adminAPI, newsAPI } from '@/lib/api'
 import { ConnectionModal } from '@/components/ConnectionModal'
 import { ViewConnectionModal } from '@/components/ViewConnectionModal'
 import { TrueDataConnectionCard } from '@/components/TrueDataConnectionCard'
 import { Plus, Database, TrendingUp, Newspaper, MessageSquare, Brain, Settings, ArrowRight, BarChart3 } from 'lucide-react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const [newsStatus, setNewsStatus] = useState({ status: 'active', websocket_connected: false, database_accessible: true, sync_enabled: true })
   const router = useRouter()
 
   // Modals use separate state
@@ -54,14 +57,32 @@ export default function ConnectionsPage() {
   const loadConnections = async () => {
     try {
       setLoading(true)
-      const data = await adminAPI.getConnections()
+      const [data, nStatus] = await Promise.all([
+        adminAPI.getConnections(),
+        newsAPI.getStatus().catch(() => ({ status: 'unknown', websocket_connected: false, database_accessible: false }))
+      ])
       console.log('[Connections Page] Loaded connections from API:', data)
       console.log('[Connections Page] Connection count:', data?.length || 0)
       setConnections(data || [])
-    } catch (e) {
-      console.error('[Connections Page] Error loading connections:', e)
+      if (nStatus) {
+        setNewsStatus(nStatus)
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleNewsToggle = async (enabled: boolean) => {
+    try {
+      setToggling(true)
+      await newsAPI.toggleStatus(enabled)
+      // Refresh status immediately
+      const nStatus = await newsAPI.getStatus()
+      setNewsStatus(nStatus)
+    } catch (e) {
+      console.error('Error toggling news sync:', e)
+    } finally {
+      setToggling(false)
     }
   }
 
@@ -281,6 +302,90 @@ export default function ConnectionsPage() {
             </Card>
           )
         })}
+
+        {/* Final News Websocket Connection Card */}
+        <Card className="hover:shadow-lg transition-all duration-200 flex flex-col w-full max-w-sm">
+          <div className="p-6 flex flex-col h-full">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-xl bg-success/10">
+                  <Database className="w-6 h-6 text-success" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-sans font-semibold text-text-primary dark:text-[#e5e7eb]">
+                    Final news websocket connection
+                  </h3>
+                  <p className="text-xs font-sans text-text-secondary dark:text-[#9ca3af] mt-0.5">
+                    Curated Real-time Data
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Status List */}
+            {loading ? (
+              <div className="py-8 text-center text-text-secondary">Loading...</div>
+            ) : (
+              <div className="space-y-1 mb-6">
+                <div className="flex justify-between items-center p-1.5 bg-background/50 dark:bg-[#121b2f]/50 rounded text-sm">
+                  <span className="text-text-secondary dark:text-[#9ca3af]">Sync Status</span>
+                  <span className={`font-bold capitalize ${newsStatus.status === 'active' ? 'text-success' : 'text-error'}`}>
+                    {newsStatus.status}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-background/50 dark:bg-[#121b2f]/50 rounded text-sm">
+                  <span className="text-text-secondary dark:text-[#9ca3af]">WebSocket</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-2 h-2 rounded-full ${newsStatus.websocket_connected ? 'bg-success animate-pulse' : 'bg-text-tertiary'}`} />
+                    <span className={`font-bold ${newsStatus.websocket_connected ? 'text-success' : 'text-text-tertiary'}`}>
+                      {newsStatus.websocket_connected ? 'Connected' : 'Disconnected'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex justify-between items-center p-1.5 bg-background/50 dark:bg-[#121b2f]/50 rounded text-sm">
+                  <span className="text-text-secondary dark:text-[#9ca3af]">DB Access</span>
+                  <span className={`font-bold ${newsStatus.database_accessible ? 'text-success' : 'text-error'}`}>
+                    {newsStatus.database_accessible ? 'Healthy' : 'Error'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-auto pt-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-sans text-text-secondary dark:text-[#9ca3af]">
+                  Tracks real-time sync status.
+                </p>
+                <Link href="/news" className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1">
+                  Go to News Tab <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+
+              {newsStatus.sync_enabled ? (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => handleNewsToggle(false)}
+                  disabled={toggling}
+                >
+                  {toggling ? 'Disabling...' : 'Disable News Sync'}
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => handleNewsToggle(true)}
+                  disabled={toggling}
+                >
+                  {toggling ? 'Enabling...' : 'Enable News Sync'}
+                </Button>
+              )}
+            </div>
+          </div>
+        </Card>
       </div>
 
 

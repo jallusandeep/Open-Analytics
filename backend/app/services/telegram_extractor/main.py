@@ -52,6 +52,7 @@ def process_batch():
             # 2. Link Extraction & Scraping
             found_urls = extract_urls(full_source_text)
             link_texts = []
+            source_url = found_urls[0] if found_urls else None
             for url in found_urls:
                 scraped = scrape_url(url)
                 if scraped:
@@ -89,6 +90,7 @@ def process_batch():
                 'telegram_text': telegram_text,
                 'caption_text': caption_text,
                 'link_text': link_text_combined,
+                'source_url': source_url,
                 'image_ocr_text': image_ocr_text,
                 'combined_text': combined_text,
                 'normalized_text': norm_text,

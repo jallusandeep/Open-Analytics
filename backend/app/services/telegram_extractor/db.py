@@ -56,15 +56,42 @@ def ensure_schema():
             telegram_text TEXT,
             caption_text TEXT,
             link_text TEXT,
+            source_url TEXT,
             image_ocr_text TEXT,
             combined_text TEXT,
             normalized_text TEXT,
             file_id TEXT,
             received_at TIMESTAMP,
+            content_hash TEXT,
+            is_duplicate BOOLEAN DEFAULT FALSE,
+            duplicate_of_raw_id BIGINT,
+            is_scored BOOLEAN DEFAULT FALSE,
+            deduped_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """
         db.run_raw_query(query)
+        
+        # Migration for existing table
+        try:
+            cols = db.run_raw_query(f"DESCRIBE {OUTPUT_TABLE}", fetch='all')
+            col_names = [c[0] for c in cols]
+            
+            # Helper to add column if not exists
+            def add_col_if_missing(name, type_def):
+                if name not in col_names:
+                    logger.info(f"Migrating {OUTPUT_TABLE}: Adding {name} column")
+                    db.run_raw_query(f"ALTER TABLE {OUTPUT_TABLE} ADD COLUMN {name} {type_def}")
+
+            add_col_if_missing('source_url', 'TEXT')
+            add_col_if_missing('content_hash', 'TEXT')
+            add_col_if_missing('is_duplicate', 'BOOLEAN DEFAULT FALSE')
+            add_col_if_missing('duplicate_of_raw_id', 'BIGINT')
+            add_col_if_missing('is_scored', 'BOOLEAN DEFAULT FALSE')
+            add_col_if_missing('deduped_at', 'TIMESTAMP')
+            
+        except Exception as e:
+            logger.warning(f"Output DB Migration skipped: {e}")
     except Exception as e:
         logger.error(f"Output DB Creation Error: {e}")
         # raise # Dont raise if table exists
@@ -170,9 +197,9 @@ def insert_raw_result(data: dict):
         query = f"""
         INSERT INTO {OUTPUT_TABLE} (
             listing_id, telegram_chat_id, telegram_msg_id, source_handle,
-            telegram_text, caption_text, link_text, image_ocr_text,
+            telegram_text, caption_text, link_text, source_url, image_ocr_text,
             combined_text, normalized_text, file_id, received_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         db.run_raw_query(query, [
             data['listing_id'],
@@ -182,6 +209,7 @@ def insert_raw_result(data: dict):
             data['telegram_text'],
             data['caption_text'],
             data['link_text'],
+            data.get('source_url'),
             data['image_ocr_text'],
             data['combined_text'],
             data['normalized_text'],

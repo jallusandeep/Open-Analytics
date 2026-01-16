@@ -107,6 +107,8 @@ def get_unscored_rows(limit=50):
         """
         return db.run_raw_query(query, [limit], fetch='all')
     except Exception as e:
+        if "does not exist" in str(e).lower():
+            return []
         logger.error(f"Error fetching unscored rows: {e}")
         return []
 

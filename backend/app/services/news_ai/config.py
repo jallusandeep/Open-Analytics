@@ -13,5 +13,9 @@ SCORING_TABLE = "news_scoring"
 AI_DB_PATH = os.path.join(DATA_DIR, "Final", "news_ai.duckdb")
 AI_TABLE = "news_ai"
 
+# Final DB (User Request)
+FINAL_DB_PATH = os.path.join(DATA_DIR, "Final", "final_news.duckdb")
+FINAL_TABLE = "final_news"
+
 # Batch Size
 BATCH_SIZE = 1

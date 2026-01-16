@@ -15,9 +15,24 @@ class WebSocketManager:
         self.active_connections: Dict[int, Set[WebSocket]] = {}
         # Map of WebSocket -> user_id
         self.connection_users: Dict[WebSocket, int] = {}
+        self._loop = None
+        try:
+            import asyncio
+            # In Python 3.7+ we should ideally use get_running_loop but 
+            # this is called during global module initialization, so we use get_event_loop
+            self._loop = asyncio.get_event_loop()
+        except Exception:
+            pass
     
     async def connect(self, websocket: WebSocket, user_id: int):
         """Register a new WebSocket connection for a user"""
+        # Capture the running loop if we don't have it yet
+        if not self._loop:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except:
+                pass
+
         await websocket.accept()
         
         if user_id not in self.active_connections:
@@ -25,6 +40,9 @@ class WebSocketManager:
         
         self.active_connections[user_id].add(websocket)
         self.connection_users[websocket] = user_id
+        
+        # Log active connections for debugging
+        print(f"[WebSocket] User {user_id} connected. Total active users: {len(self.active_connections)}")
     
     def disconnect(self, websocket: WebSocket):
         """Remove a WebSocket connection"""
@@ -103,6 +121,63 @@ class WebSocketManager:
         # Clean up disconnected connections
         for connection in disconnected:
             self.disconnect(connection)
+
+    async def broadcast_news(self, news_item: dict):
+        """Broadcast a new AI-enriched news item to all connected clients"""
+        message = {
+            "type": "news_update",
+            "event": "new_news",
+            "data": news_item
+        }
+        
+        # Broadcast to all connected clients
+        count = 0
+        disconnected = set()
+        # Use list() to avoid "dictionary changed size during iteration"
+        for user_connections in list(self.active_connections.values()):
+            for connection in list(user_connections):
+                try:
+                    await connection.send_json(message)
+                    count += 1
+                except Exception as e:
+                    print(f"[WebSocket] Error broadcasting news: {e}")
+                    disconnected.add(connection)
+        
+        if count > 0:
+            print(f"[WebSocket] Broadcasted news {news_item.get('news_id')} to {count} connections")
+        
+        # Clean up disconnected connections
+        for connection in disconnected:
+            self.disconnect_all(connection)
+
+    def broadcast_news_sync(self, news_item: dict):
+        """Sync wrapper to broadcast news from sync context"""
+        try:
+            import asyncio
+            # Use the stored loop if available
+            loop = self._loop
+            
+            # Fallback to event loop if we can get it
+            if not loop:
+                try:
+                    loop = asyncio.get_event_loop()
+                except:
+                    pass
+                    
+            if loop and loop.is_running():
+                asyncio.run_coroutine_threadsafe(self.broadcast_news(news_item), loop)
+            else:
+                print(f"[WebSocket] No running loop found for sync broadcast of news {news_item.get('news_id')}")
+        except Exception as e:
+            print(f"[WebSocket] Error in broadcast_news_sync: {e}")
+            pass
+
+    def disconnect_all(self, websocket: WebSocket):
+        """Helper to disconnect a websocket from all users (fallback cleanup)"""
+        try:
+            self.disconnect(websocket)
+        except:
+            pass
     
     async def cleanup_stale_connections(self):
         """Periodically clean up stale connections"""

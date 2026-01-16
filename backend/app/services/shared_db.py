@@ -2,6 +2,7 @@ import duckdb
 import logging
 import os
 import threading
+import time
 
 # Import paths from existing configs (easiest via importing config loader or hardcoding if consistent)
 # We need paths for all DBs that are shared:
@@ -13,7 +14,7 @@ import threading
 
 from app.services.telegram_extractor.config import OUTPUT_DB_PATH as RAW_DB_PATH
 from app.services.telegram_extractor.config import INPUT_DB_PATH as LISTING_DB_PATH
-from app.services.news_ai.config import AI_DB_PATH, AI_TABLE
+from app.services.news_ai.config import AI_DB_PATH, AI_TABLE, FINAL_DB_PATH
 from app.services.news_ai.config import SCORING_DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class SharedDatabase:
         self.listing_conn = None
         self.ai_conn = None
         self.scoring_conn = None
+        self.final_conn = None
         self.db_lock = threading.Lock() # Protect connection access if needed
         
     @classmethod
@@ -39,15 +41,38 @@ class SharedDatabase:
     def get_raw_connection(self):
         """
         Returns the shared read-write connection to telegram_raw.duckdb
+        Includes recovery logic for WAL corruption.
         """
         with self._lock:
             if self.raw_conn is None:
                 logger.info(f"Opening SHARED connection to {RAW_DB_PATH}")
                 try:
+                    os.makedirs(os.path.dirname(RAW_DB_PATH), exist_ok=True)
                     self.raw_conn = duckdb.connect(RAW_DB_PATH)
                 except Exception as e:
-                    logger.error(f"Failed to open shared DB {RAW_DB_PATH}: {e}")
-                    raise
+                    err_msg = str(e)
+                    if "WAL" in err_msg or "Catalog" in err_msg or "Binder Error" in err_msg:
+                        logger.warning(f"Detected Raw DB corruption or WAL error: {e}. Attempting recovery...")
+                        try:
+                            if self.raw_conn: self.raw_conn.close()
+                            self.raw_conn = None
+                            
+                            import time
+                            ts = int(time.time())
+                            if os.path.exists(RAW_DB_PATH):
+                                os.rename(RAW_DB_PATH, f"{RAW_DB_PATH}.corrupt.{ts}")
+                            wal_path = f"{RAW_DB_PATH}.wal"
+                            if os.path.exists(wal_path):
+                                os.rename(wal_path, f"{wal_path}.corrupt.{ts}")
+                            
+                            logger.info("Corrupted Raw DB moved to backup. Creating fresh DB...")
+                            self.raw_conn = duckdb.connect(RAW_DB_PATH)
+                        except Exception as recovery_err:
+                            logger.error(f"Raw DB Recovery Failed: {recovery_err}")
+                            raise
+                    else:
+                        logger.error(f"Failed to open shared Raw DB {RAW_DB_PATH}: {e}")
+                        raise
             return self.raw_conn
 
     def get_listing_connection(self):
@@ -142,11 +167,49 @@ class SharedDatabase:
                         raise
             return self.scoring_conn
 
+    def get_final_connection(self):
+        """
+        Returns shared read-write connection to final_news DB.
+        Includes recovery logic for WAL corruption.
+        """
+        with self._lock:
+            if self.final_conn is None:
+                logger.info(f"Opening SHARED connection to {FINAL_DB_PATH}")
+                try:
+                    os.makedirs(os.path.dirname(FINAL_DB_PATH), exist_ok=True)
+                    self.final_conn = duckdb.connect(FINAL_DB_PATH)
+                except Exception as e:
+                    err_msg = str(e)
+                    if "WAL" in err_msg or "Catalog" in err_msg or "Binder Error" in err_msg:
+                        logger.warning(f"Detected Final DB corruption or WAL error: {e}. Attempting recovery...")
+                        try:
+                            if self.final_conn: self.final_conn.close()
+                            self.final_conn = None
+                            
+                            import time
+                            ts = int(time.time())
+                            if os.path.exists(FINAL_DB_PATH):
+                                os.rename(FINAL_DB_PATH, f"{FINAL_DB_PATH}.corrupt.{ts}")
+                            wal_path = f"{FINAL_DB_PATH}.wal"
+                            if os.path.exists(wal_path):
+                                os.rename(wal_path, f"{wal_path}.corrupt.{ts}")
+                            
+                            logger.info("Corrupted Final DB moved to backup. Creating fresh DB...")
+                            self.final_conn = duckdb.connect(FINAL_DB_PATH)
+                        except Exception as recovery_err:
+                            logger.error(f"Final DB Recovery Failed: {recovery_err}")
+                            raise
+                    else:
+                        logger.error(f"Failed to open shared Final DB {FINAL_DB_PATH}: {e}")
+                        raise
+            return self.final_conn
+
     # Locks for query execution
     listing_lock = threading.Lock()
     raw_lock = threading.Lock()
     ai_lock = threading.Lock()
     scoring_lock = threading.Lock()
+    final_lock = threading.Lock()
 
     def run_listing_query(self, query, params=None, fetch='none'):
         """
@@ -222,6 +285,19 @@ class SharedDatabase:
                 logger.error(f"Scoring DB Query Failed: {e}")
                 raise
 
+    def run_final_query(self, query, params=None, fetch='none'):
+        """Executes a query on the Final DB with thread safety."""
+        with self.final_lock:
+            conn = self.get_final_connection()
+            try:
+                result = conn.execute(query, params if params is not None else [])
+                if fetch == 'all': return result.fetchall()
+                elif fetch == 'one': return result.fetchone()
+                else: return None
+            except Exception as e:
+                logger.error(f"Final DB Query Failed: {e}")
+                raise
+
     def run_pipeline_cleanup(self, hours=24):
         """Unified cleanup for the entire news pipeline."""
         logger.info(f"Starting pipeline-wide cleanup (older than {hours} hours)...")
@@ -284,6 +360,14 @@ class SharedDatabase:
                     except:
                         pass
                     self.scoring_conn = None
+
+            with self.final_lock:
+                if self.final_conn:
+                    try:
+                        self.final_conn.close()
+                    except:
+                        pass
+                    self.final_conn = None
 
 # Global Accessor
 def get_shared_db():

@@ -1,7 +1,9 @@
 import logging
 import os
-from .config import SCORING_DB_PATH, SCORING_TABLE, AI_DB_PATH, AI_TABLE
+from typing import Optional
+from .config import SCORING_DB_PATH, SCORING_TABLE, AI_DB_PATH, AI_TABLE, FINAL_TABLE
 from app.services.shared_db import get_shared_db
+from app.core.websocket_manager import manager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,38 @@ def ensure_schema():
         );
         """
         db.run_ai_query(query_queue)
+        
+        # Final Table for curated data
+        query_final = f"""
+        CREATE TABLE IF NOT EXISTS {FINAL_TABLE} (
+            news_id BIGINT PRIMARY KEY,
+            received_date TIMESTAMP,
+            headline TEXT,
+            summary TEXT,
+            company_name TEXT,
+            ticker TEXT,
+            exchange TEXT,
+            country_code TEXT,
+            sentiment TEXT,
+            url TEXT,
+            impact_score INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        db.run_final_query(query_final)
+        
+        # System Settings Table
+        query_settings = """
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        db.run_final_query(query_settings)
+        
+        # Initialize default news_sync status if not exists
+        db.run_final_query("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('news_sync_enabled', 'true')")
 
         # Migration: Check for missing columns in news_ai
         cols = db.run_ai_query(f"PRAGMA table_info({AI_TABLE})", fetch='all')
@@ -118,7 +152,7 @@ def get_eligible_news(limit=1):
                 continue
             
             raw_id = scoring_row[0]
-            raw_row = db.run_raw_query("SELECT combined_text, received_at, link_text FROM telegram_raw WHERE raw_id = ?", [raw_id], fetch='one')
+            raw_row = db.run_raw_query("SELECT combined_text, received_at, source_url FROM telegram_raw WHERE raw_id = ?", [raw_id], fetch='one')
             
             if raw_row:
                 results.append((news_id, raw_row[1], raw_row[0], raw_row[2]))
@@ -126,6 +160,8 @@ def get_eligible_news(limit=1):
         return results
         
     except Exception as e:
+        if "does not exist" in str(e).lower():
+            return []
         logger.error(f"Error fetching eligible news from queue: {e}")
         return []
 
@@ -188,6 +224,52 @@ def insert_enriched_news(news_id, received_date, ai_data, ai_model, ai_config_id
         # Mark as COMPLETED
         db.run_ai_query("UPDATE ai_queue SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP WHERE news_id = ?", [news_id])
         
+        # 3. Sync to Final Database
+        try:
+            final_query = f"""
+            INSERT INTO {FINAL_TABLE} (
+                news_id, received_date, headline, summary, company_name,
+                ticker, exchange, country_code, sentiment, url, impact_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            db.run_final_query(final_query, [
+                news_id,
+                received_date,
+                ai_data.get('headline', ''),
+                ai_data.get('summary', ''),
+                ai_data.get('company_name', ''),
+                ai_data.get('ticker', ''),
+                ai_data.get('exchange', ''),
+                ai_data.get('country_code', ''),
+                ai_data.get('sentiment', ''),
+                url,
+                impact_score
+            ])
+            logger.info(f"Successfully synced news {news_id} to final database.")
+            
+            # 4. Broadcast to frontend
+            try:
+                broadcast_data = {
+                    "news_id": news_id,
+                    "received_date": received_date.isoformat() if hasattr(received_date, 'isoformat') else str(received_date),
+                    "headline": ai_data.get('headline', ''),
+                    "summary": ai_data.get('summary', ''),
+                    "company_name": ai_data.get('company_name', ''),
+                    "ticker": ai_data.get('ticker', ''),
+                    "exchange": ai_data.get('exchange', ''),
+                    "country_code": ai_data.get('country_code', ''),
+                    "sentiment": ai_data.get('sentiment', ''),
+                    "url": url,
+                    "impact_score": impact_score
+                }
+                manager.broadcast_news_sync(broadcast_data)
+            except Exception as broadcast_err:
+                logger.warning(f"Failed to broadcast news {news_id}: {broadcast_err}")
+                
+        except Exception as final_err:
+            logger.error(f"Failed to sync news {news_id} to final database: {final_err}")
+            # We don't raise here to avoid failing the main process if only the sync fails
+        
     except Exception as e:
         logger.error(f"Failed to insert enriched news {news_id}: {e}")
         # Mark as FAILED in queue
@@ -231,3 +313,87 @@ def get_recent_enrichments(limit=50):
     except Exception as e:
         logger.error(f"Error fetching recent enrichments: {e}")
         return []
+
+def get_final_news(limit=20, offset=0, search: Optional[str] = None):
+    """Fetch AI-enriched news from final database with pagination and fuzzy search."""
+    db = get_shared_db()
+    try:
+        where_clause = ""
+        params = []
+        
+        if search and search.strip():
+            tokens = search.strip().split()
+            where_parts = []
+            for token in tokens:
+                pattern = f"%{token}%"
+                # Substring match (ILIKE) + Fuzzy match (jaro_winkler) for better relevance
+                where_parts.append("""
+                    (headline ILIKE ? 
+                    OR summary ILIKE ? 
+                    OR ticker ILIKE ? 
+                    OR company_name ILIKE ?
+                    OR jaro_winkler_similarity(lower(ticker), lower(?)) > 0.8
+                    OR jaro_winkler_similarity(lower(company_name), lower(?)) > 0.8)
+                """)
+                params.extend([pattern, pattern, pattern, pattern, token.lower(), token.lower()])
+            where_clause = "WHERE " + " AND ".join(where_parts)
+
+        # Get total count
+        count_query = f"SELECT COUNT(*) FROM {FINAL_TABLE} {where_clause}"
+        total_count = db.run_final_query(count_query, params, fetch='one')[0]
+        
+        # Get paginated data
+        data_params = params + [limit, offset]
+        query = f"""
+            SELECT 
+                news_id, received_date, headline, summary, company_name,
+                ticker, exchange, country_code, sentiment, url, impact_score, created_at
+            FROM {FINAL_TABLE}
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        rows = db.run_final_query(query, data_params, fetch='all')
+        
+        result = []
+        for row in rows:
+            result.append({
+                "news_id": row[0],
+                "received_date": row[1].strftime("%Y-%m-%d %H:%M:%S") if row[1] else None,
+                "headline": row[2],
+                "summary": row[3],
+                "company_name": row[4],
+                "ticker": row[5],
+                "exchange": row[6],
+                "country_code": row[7],
+                "sentiment": row[8],
+                "url": row[9],
+                "impact_score": row[10],
+                "created_at": row[11].strftime("%Y-%m-%d %H:%M:%S") if row[11] else None
+            })
+        return result, total_count
+    except Exception as e:
+        logger.error(f"Error fetching final news with pagination: {e}")
+        return [], 0
+def get_system_setting(key, default=None):
+    """Retrieve a system setting."""
+    db = get_db()
+    try:
+        res = db.run_final_query("SELECT value FROM system_settings WHERE key = ?", [key], fetch='one')
+        return res[0] if res else default
+    except Exception as e:
+        logger.error(f"Error getting setting {key}: {e}")
+        return default
+
+def set_system_setting(key, value):
+    """Update a system setting."""
+    db = get_db()
+    try:
+        db.run_final_query(
+            "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            [key, str(value).lower()]
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error setting {key}: {e}")
+        return False
