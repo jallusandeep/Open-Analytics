@@ -42,6 +42,8 @@ services:
       # HOST_DATA_DIR is automatically set by docker-start scripts
       # Falls back to relative path if not set (for manual docker-compose usage)
       - ${HOST_DATA_DIR:-../../data}:/app/data
+      # Mount backend code for hot-reloading (same as Windows dev environment)
+      - ../../backend:/app/backend
     restart: unless-stopped
     networks:
       - rubik-network
