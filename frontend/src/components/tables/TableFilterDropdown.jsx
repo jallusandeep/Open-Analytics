@@ -5,10 +5,11 @@ import {
   ChevronRight,
   Filter,
   Palette,
-  Search,
   X
 } from "lucide-react";
 import { useMemo, useState } from "react";
+
+import SearchBox from "../common/SearchBox";
 
 function normalizeValue(value) {
   if (value === null || value === undefined || value === "") {
@@ -231,16 +232,15 @@ export default function TableFilterDropdown({
       </div>
 
       <div className="border-y border-oa-border p-2">
-        <div className="flex h-8 items-center gap-2 rounded border border-oa-border bg-black px-2 focus-within:border-blue-500">
-          <Search size={13} className="text-oa-muted" />
-          <input
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Search values"
-            className="w-full bg-transparent text-xs normal-case tracking-normal text-oa-text outline-none placeholder:text-oa-muted"
-            autoFocus
-          />
-        </div>
+        <SearchBox
+          value={searchText}
+          onChange={setSearchText}
+          onClear={() => setSearchText("")}
+          placeholder="Search values"
+          className="w-full"
+          inputClassName="normal-case tracking-normal text-oa-text"
+          iconSize={13}
+        />
       </div>
 
       <div className="max-h-56 overflow-y-auto p-1">

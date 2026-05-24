@@ -42,18 +42,16 @@ function Select({
         type="button"
         aria-label={ariaLabel}
         onClick={() => setOpen((previous) => !previous)}
-        className={`flex h-8 w-full items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 text-xs text-oa-text transition hover:bg-oa-card ${
-          open ? "bg-oa-card" : ""
+        className={`flex h-8 w-full items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 text-xs text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500 ${
+          open ? "border-blue-500 bg-oa-card" : ""
         }`}
       >
-        <span className="truncate">
-          {selectedOption?.label || "Select"}
-        </span>
+        <span className="truncate">{selectedOption?.label || "Select"}</span>
 
         <ChevronDown
           size={12}
           className={`shrink-0 text-oa-muted transition duration-150 ${
-            open ? "rotate-180" : ""
+            open ? "rotate-180 text-sky-300" : ""
           }`}
         />
       </button>
@@ -69,12 +67,17 @@ function Select({
                   key={option.value}
                   type="button"
                   onClick={() => handleSelect(option.value)}
-                  className={`flex h-8 w-full items-center justify-between rounded-sm px-2 text-left text-xs transition hover:bg-oa-card ${
-                    selected ? "bg-oa-card text-white" : "text-oa-muted"
+                  className={`relative flex h-8 w-full items-center justify-between rounded-sm border-l px-2 text-left text-xs transition ${
+                    selected
+                      ? "border-l-sky-400 bg-sky-950/30 text-white"
+                      : "border-l-transparent text-oa-muted hover:border-l-oa-border hover:bg-oa-card/70 hover:text-white"
                   }`}
                 >
                   <span className="truncate">{option.label}</span>
-                  {selected && <Check size={12} />}
+
+                  {selected && (
+                    <Check size={12} className="shrink-0 text-sky-300" />
+                  )}
                 </button>
               );
             })}

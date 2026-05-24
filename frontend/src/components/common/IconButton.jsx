@@ -22,29 +22,37 @@ function IconButton({
 
   const buttonClass = {
     default:
-      "border-oa-border bg-black hover:bg-oa-card hover:border-oa-border",
+      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
     primary:
-      "border-oa-border bg-white hover:bg-zinc-200",
+      "border-oa-border bg-white hover:border-sky-500/40 hover:bg-zinc-200 focus:border-blue-500",
     add:
-      "border-oa-border bg-black hover:bg-oa-card",
+      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
     refresh:
-      "border-oa-border bg-black hover:bg-oa-card",
+      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
     search:
-      "border-oa-border bg-black hover:bg-oa-card",
+      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
     filter:
-      "border-oa-border bg-black hover:bg-oa-card",
+      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
     danger:
-      "border-oa-border bg-black hover:bg-red-950/40 hover:border-red-500/60"
+      "border-oa-border bg-black hover:border-red-500/60 hover:bg-red-950/40 focus:border-red-500"
+  };
+
+  const activeButtonClass = {
+    default: "border-blue-500 bg-oa-card",
+    primary: "border-blue-500 bg-white",
+    add: "border-blue-500 bg-oa-card",
+    refresh: "border-blue-500 bg-oa-card",
+    search: "border-blue-500 bg-oa-card",
+    filter: "border-blue-500 bg-oa-card",
+    danger: "border-red-500 bg-red-950/40"
   };
 
   const selectedButtonClass = buttonClass[variant] || buttonClass.default;
   const selectedIconClass = iconClass[variant] || iconClass.default;
+  const selectedActiveClass = activeButtonClass[variant] || activeButtonClass.default;
 
-  const finalButtonClass = active
-    ? "border-oa-border bg-oa-card"
-    : selectedButtonClass;
-
-  const finalIconClass = active ? "text-white" : selectedIconClass;
+  const finalButtonClass = active ? selectedActiveClass : selectedButtonClass;
+  const finalIconClass = active ? selectedIconClass : selectedIconClass;
 
   return (
     <Tooltip text={label} side={tooltipSide}>
@@ -53,7 +61,7 @@ function IconButton({
         onClick={onClick}
         disabled={disabled}
         aria-label={label}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border transition disabled:cursor-not-allowed disabled:opacity-40 ${finalButtonClass}`}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border outline-none transition disabled:cursor-not-allowed disabled:opacity-40 ${finalButtonClass}`}
       >
         {Icon && <Icon size={14} className={finalIconClass} />}
       </button>
