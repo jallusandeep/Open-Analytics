@@ -10,6 +10,10 @@ export function createAdminUser(payload) {
   return axiosClient.post("/admin/users", payload);
 }
 
+export function updateAdminUser(userId, payload) {
+  return axiosClient.put(`/admin/users/${userId}`, payload);
+}
+
 export function deleteAdminUser(userId) {
   return axiosClient.delete(`/admin/users/${userId}`);
 }

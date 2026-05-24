@@ -12,6 +12,16 @@ class AdminUserCreateRequest(BaseModel):
     access_restrictions: Optional[List[str]] = []
 
 
+class AdminUserUpdateRequest(BaseModel):
+    login_id: str = Field(..., min_length=2, max_length=50)
+    full_name: str = Field(..., min_length=2, max_length=100)
+    email: EmailStr
+    mobile_number: Optional[str] = None
+    role: str = "user"
+    is_active: bool = True
+    access_restrictions: Optional[List[str]] = []
+
+
 class AdminUserResponse(BaseModel):
     user_id: str
     login_id: Optional[str]

@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, Query
 from app.dependencies import require_admin_or_super_admin
 from app.schemas.admin_schema import (
     AdminUserCreateRequest,
+    AdminUserUpdateRequest,
     AdminUserResponse,
     PaginatedUsersResponse
 )
 from app.services.admin_service import (
     list_users_service,
     create_user_service,
+    update_user_service,
     delete_user_service
 )
 
@@ -42,6 +44,19 @@ def create_user(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return create_user_service(
+        request=request,
+        current_user=current_user
+    )
+
+
+@router.put("/users/{user_id}", response_model=AdminUserResponse)
+def update_user(
+    user_id: str,
+    request: AdminUserUpdateRequest,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return update_user_service(
+        user_id=user_id,
         request=request,
         current_user=current_user
     )

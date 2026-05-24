@@ -4,6 +4,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Pencil,
   Plus,
   RefreshCcw,
   Trash2,
@@ -13,7 +14,8 @@ import {
 import {
   createAdminUser,
   deleteAdminUser,
-  getAdminUsers
+  getAdminUsers,
+  updateAdminUser
 } from "../../api/adminApi";
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
@@ -36,7 +38,7 @@ const tableColumns = [
 ];
 
 const gridTemplateColumns =
-  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 160px 60px";
+  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 160px 86px";
 
 const emptyFormData = {
   login_id: "",
@@ -45,6 +47,7 @@ const emptyFormData = {
   mobile_number: "",
   password: "",
   role: "user",
+  is_active: true,
   access_restrictions: []
 };
 
@@ -105,6 +108,39 @@ function getFilterValues(rows, key) {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function getStoredCurrentUser() {
+  try {
+    const currentUser =
+      localStorage.getItem("open_analytics_current_user") ||
+      localStorage.getItem("open_analytics_user");
+
+    if (!currentUser) {
+      return null;
+    }
+
+    return JSON.parse(currentUser);
+  } catch {
+    return null;
+  }
+}
+
+function parseAccessRestrictions(value) {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function UserAccounts() {
   const [users, setUsers] = useState([]);
 
@@ -132,10 +168,17 @@ function UserAccounts() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [editUser, setEditUser] = useState(null);
+  const [updating, setUpdating] = useState(false);
+
   const [deleteUser, setDeleteUser] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
   const [formData, setFormData] = useState(emptyFormData);
+  const [editFormData, setEditFormData] = useState(emptyFormData);
+
+  const currentUser = useMemo(() => getStoredCurrentUser(), []);
+  const currentUserRole = currentUser?.role;
 
   const roleOptions = [
     { value: "all", label: "All Roles" },
@@ -149,6 +192,15 @@ function UserAccounts() {
     { value: "active", label: "Active" },
     { value: "inactive", label: "Inactive" }
   ];
+
+  const editRoleOptions =
+    currentUserRole === "admin"
+      ? [{ value: "user", label: "User" }]
+      : [
+          { value: "user", label: "User" },
+          { value: "admin", label: "Admin" },
+          { value: "super_admin", label: "Super Admin" }
+        ];
 
   async function loadUsers(customPage = page, overrides = {}) {
     setLoading(true);
@@ -373,6 +425,56 @@ function UserAccounts() {
     setFormData(emptyFormData);
   }
 
+  function canEditUser(user) {
+    if (!["admin", "super_admin"].includes(currentUserRole)) {
+      return false;
+    }
+
+    if (user.user_id === currentUser?.user_id) {
+      return false;
+    }
+
+    if (currentUserRole === "admin" && user.role === "super_admin") {
+      return false;
+    }
+
+    return true;
+  }
+
+  function openEditModal(user) {
+    setActionMessage("");
+
+    if (!canEditUser(user)) {
+      setActionMessage(
+        user.user_id === currentUser?.user_id
+          ? "You cannot edit your own account from User Accounts."
+          : "You do not have permission to edit this user."
+      );
+      return;
+    }
+
+    setEditUser(user);
+    setEditFormData({
+      login_id: user.login_id || "",
+      full_name: user.full_name || "",
+      email: user.email || "",
+      mobile_number: user.mobile_number || "",
+      password: "",
+      role: user.role || "user",
+      is_active: Boolean(user.is_active),
+      access_restrictions: parseAccessRestrictions(user.access_restrictions)
+    });
+  }
+
+  function closeEditModal() {
+    if (updating) {
+      return;
+    }
+
+    setEditUser(null);
+    setEditFormData(emptyFormData);
+  }
+
   function openDeleteModal(user) {
     setActionMessage("");
     setDeleteUser(user);
@@ -390,6 +492,15 @@ function UserAccounts() {
     const { name, value } = event.target;
 
     setFormData((previous) => ({
+      ...previous,
+      [name]: value
+    }));
+  }
+
+  function handleEditInputChange(event) {
+    const { name, value } = event.target;
+
+    setEditFormData((previous) => ({
       ...previous,
       [name]: value
     }));
@@ -418,6 +529,43 @@ function UserAccounts() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleUpdateUser(event) {
+    event.preventDefault();
+
+    if (!editUser) {
+      return;
+    }
+
+    setUpdating(true);
+    setActionMessage("");
+
+    try {
+      await updateAdminUser(editUser.user_id, {
+        login_id: editFormData.login_id,
+        full_name: editFormData.full_name,
+        email: editFormData.email,
+        mobile_number: editFormData.mobile_number,
+        role: editFormData.role,
+        is_active: editFormData.is_active,
+        access_restrictions:
+          editFormData.role === "user"
+            ? editFormData.access_restrictions
+            : []
+      });
+
+      setEditUser(null);
+      setEditFormData(emptyFormData);
+      setActionMessage("User updated successfully.");
+      loadUsers(page);
+    } catch (error) {
+      setActionMessage(
+        error.response?.data?.detail || "Unable to update user."
+      );
+    } finally {
+      setUpdating(false);
     }
   }
 
@@ -536,13 +684,25 @@ function UserAccounts() {
 
   function renderUserActions(user) {
     return (
-      <IconButton
-        icon={Trash2}
-        label="Delete"
-        variant="danger"
-        tooltipSide="left"
-        onClick={() => openDeleteModal(user)}
-      />
+      <span className="flex items-center justify-center gap-1">
+        {canEditUser(user) && (
+          <IconButton
+            icon={Pencil}
+            label="Edit"
+            variant="default"
+            tooltipSide="left"
+            onClick={() => openEditModal(user)}
+          />
+        )}
+
+        <IconButton
+          icon={Trash2}
+          label="Delete"
+          variant="danger"
+          tooltipSide="left"
+          onClick={() => openDeleteModal(user)}
+        />
+      </span>
     );
   }
 
@@ -762,6 +922,114 @@ function UserAccounts() {
               minWidth="w-full"
             />
           </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(editUser)}
+        title="Edit User"
+        subtitle="Update user account details, role, and active status."
+        onClose={closeEditModal}
+        width="max-w-2xl"
+        closeOnOverlay={!updating}
+        footer={
+          <>
+            <IconButton
+              icon={X}
+              label="Cancel"
+              variant="danger"
+              tooltipSide="top"
+              disabled={updating}
+              onClick={closeEditModal}
+            />
+
+            <Tooltip text="Update user" side="top">
+              <button
+                type="submit"
+                form="edit-user-form"
+                disabled={updating}
+                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Update user"
+              >
+                {updating ? (
+                  <Spinner size="xs" color="light" />
+                ) : (
+                  <Check size={15} />
+                )}
+              </button>
+            </Tooltip>
+          </>
+        }
+      >
+        <form id="edit-user-form" onSubmit={handleUpdateUser}>
+          <div className="grid gap-2 md:grid-cols-3">
+            <Input
+              name="login_id"
+              value={editFormData.login_id}
+              onChange={handleEditInputChange}
+              placeholder="Login ID"
+              required
+            />
+
+            <Input
+              name="full_name"
+              value={editFormData.full_name}
+              onChange={handleEditInputChange}
+              placeholder="Full Name"
+              required
+            />
+
+            <Input
+              name="email"
+              type="email"
+              value={editFormData.email}
+              onChange={handleEditInputChange}
+              placeholder="Email ID"
+              required
+            />
+
+            <Input
+              name="mobile_number"
+              value={editFormData.mobile_number}
+              onChange={handleEditInputChange}
+              placeholder="Mobile Number"
+            />
+
+            <Select
+              value={editFormData.role}
+              onChange={(event) =>
+                setEditFormData((previous) => ({
+                  ...previous,
+                  role: event.target.value
+                }))
+              }
+              options={editRoleOptions}
+              ariaLabel="Edit user role"
+              minWidth="w-full"
+            />
+
+            <Select
+              value={editFormData.is_active ? "active" : "inactive"}
+              onChange={(event) =>
+                setEditFormData((previous) => ({
+                  ...previous,
+                  is_active: event.target.value === "active"
+                }))
+              }
+              options={[
+                { value: "active", label: "Active" },
+                { value: "inactive", label: "Inactive" }
+              ]}
+              ariaLabel="Edit user status"
+              minWidth="w-full"
+            />
+          </div>
+
+          {currentUserRole === "admin" && editUser?.role === "admin" && (
+            <p className="mt-3 rounded border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+              Admin users cannot assign admin or super admin roles.
+            </p>
+          )}
         </form>
       </Modal>
 

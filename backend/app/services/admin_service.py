@@ -10,6 +10,21 @@ from app.security import hash_password
 VALID_ROLES = ["user", "admin", "super_admin"]
 
 
+def serialize_user_row(row):
+    return {
+        "user_id": row[0],
+        "login_id": row[1],
+        "full_name": row[2],
+        "email": row[3],
+        "mobile_number": row[4],
+        "role": row[5],
+        "access_restrictions": row[6],
+        "is_active": row[7],
+        "created_at": str(row[8]),
+        "updated_at": str(row[9])
+    }
+
+
 def list_users_service(
     page: int,
     page_size: int,
@@ -51,7 +66,6 @@ def list_users_service(
         filters.append("is_active = ?")
         params.append(is_active)
 
-    where_clause = ""
     where_clause = "WHERE " + " AND ".join(filters)
 
     conn = get_connection()
@@ -85,20 +99,7 @@ def list_users_service(
 
     conn.close()
 
-    users = []
-    for row in rows:
-        users.append({
-            "user_id": row[0],
-            "login_id": row[1],
-            "full_name": row[2],
-            "email": row[3],
-            "mobile_number": row[4],
-            "role": row[5],
-            "access_restrictions": row[6],
-            "is_active": row[7],
-            "created_at": str(row[8]),
-            "updated_at": str(row[9])
-        })
+    users = [serialize_user_row(row) for row in rows]
 
     total_pages = math.ceil(total_records / page_size) if total_records else 1
 
@@ -146,8 +147,11 @@ def create_user_service(request, current_user):
     password_hash = hash_password(request.password)
 
     access_restrictions = None
+
     if request.role == "user":
-        access_restrictions = json.dumps(request.access_restrictions or [])
+        access_restrictions = json.dumps(
+            request.access_restrictions or []
+        )
 
     conn.execute(
         """
@@ -198,18 +202,144 @@ def create_user_service(request, current_user):
 
     conn.close()
 
-    return {
-        "user_id": created_user[0],
-        "login_id": created_user[1],
-        "full_name": created_user[2],
-        "email": created_user[3],
-        "mobile_number": created_user[4],
-        "role": created_user[5],
-        "access_restrictions": created_user[6],
-        "is_active": created_user[7],
-        "created_at": str(created_user[8]),
-        "updated_at": str(created_user[9])
-    }
+    return serialize_user_row(created_user)
+
+
+def update_user_service(user_id: str, request, current_user: dict):
+    if request.role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user role"
+        )
+
+    if user_id == current_user["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot edit your own account"
+        )
+
+    conn = get_connection()
+
+    target_user = conn.execute(
+        """
+        SELECT
+            user_id,
+            role
+        FROM users
+        WHERE user_id = ?
+          AND COALESCE(record_status, 'S') != 'D'
+        """,
+        [user_id]
+    ).fetchone()
+
+    if not target_user:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    target_role = target_user[1]
+
+    if (
+        current_user["role"] == "admin"
+        and target_role == "super_admin"
+    ):
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin cannot edit super admin"
+        )
+
+    if (
+        current_user["role"] == "admin"
+        and request.role in ["admin", "super_admin"]
+    ):
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin cannot assign admin roles"
+        )
+
+    existing_user = conn.execute(
+        """
+        SELECT user_id
+        FROM users
+        WHERE (
+            email = ?
+            OR login_id = ?
+        )
+        AND user_id != ?
+        """,
+        [
+            request.email,
+            request.login_id,
+            user_id
+        ]
+    ).fetchone()
+
+    if existing_user:
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email or Login ID already exists"
+        )
+
+    access_restrictions = None
+
+    if request.role == "user":
+        access_restrictions = json.dumps(
+            request.access_restrictions or []
+        )
+
+    conn.execute(
+        """
+        UPDATE users
+        SET
+            login_id = ?,
+            full_name = ?,
+            email = ?,
+            mobile_number = ?,
+            role = ?,
+            access_restrictions = ?,
+            is_active = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+        """,
+        [
+            request.login_id,
+            request.full_name,
+            request.email,
+            request.mobile_number,
+            request.role,
+            access_restrictions,
+            request.is_active,
+            user_id
+        ]
+    )
+
+    updated_user = conn.execute(
+        """
+        SELECT
+            user_id,
+            login_id,
+            full_name,
+            email,
+            mobile_number,
+            role,
+            CAST(access_restrictions AS VARCHAR),
+            is_active,
+            created_at,
+            updated_at
+        FROM users
+        WHERE user_id = ?
+        """,
+        [user_id]
+    ).fetchone()
+
+    conn.close()
+
+    return serialize_user_row(updated_user)
 
 
 def delete_user_service(user_id: str, current_user: dict):
@@ -238,7 +368,7 @@ def delete_user_service(user_id: str, current_user: dict):
             detail="User not found"
         )
 
-    target_user_id, target_role = target_user
+    target_role = target_user[1]
 
     if current_user["role"] == "admin" and target_role in ["admin", "super_admin"]:
         conn.close()
@@ -250,7 +380,8 @@ def delete_user_service(user_id: str, current_user: dict):
     conn.execute(
         """
         UPDATE users
-        SET is_active = FALSE,
+        SET
+            is_active = FALSE,
             record_status = 'D',
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
@@ -263,4 +394,4 @@ def delete_user_service(user_id: str, current_user: dict):
     return {
         "message": "User deleted successfully",
         "user_id": user_id
-    }   
+    }
