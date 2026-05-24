@@ -9,6 +9,7 @@ function TableToolbar({
   onSearchChange,
   onSearchClear,
   onSearchSubmit,
+  searchActive = false,
   searchPlaceholder = "Search users",
   filters = [],
   hasActiveFilter = false,
@@ -26,6 +27,7 @@ function TableToolbar({
         onChange={onSearchChange}
         onClear={onSearchClear}
         placeholder={searchPlaceholder}
+        active={searchActive}
       />
 
       {filters.map((filter) => (

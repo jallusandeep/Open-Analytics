@@ -4,7 +4,8 @@ function FilterSearchInput({
   value,
   onChange,
   onClear,
-  placeholder = "Search users"
+  placeholder = "Search users",
+  active = false
 }) {
   return (
     <SearchBox
@@ -12,6 +13,7 @@ function FilterSearchInput({
       onChange={onChange}
       onClear={onClear}
       placeholder={placeholder}
+      active={active}
     />
   );
 }

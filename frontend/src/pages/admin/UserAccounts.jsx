@@ -145,6 +145,7 @@ function UserAccounts() {
   const [users, setUsers] = useState([]);
 
   const [searchText, setSearchText] = useState("");
+  const [appliedSearchText, setAppliedSearchText] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -306,7 +307,7 @@ function UserAccounts() {
 
   function hasAnyActiveFilter() {
     return (
-      searchText.trim() !== "" ||
+      appliedSearchText.trim() !== "" ||
       roleFilter !== "all" ||
       statusFilter !== "all" ||
       sortConfig.key !== null ||
@@ -318,6 +319,7 @@ function UserAccounts() {
 
   function clearAllFilters() {
     setSearchText("");
+    setAppliedSearchText("");
     setRoleFilter("all");
     setStatusFilter("all");
     setColumnFilters({});
@@ -337,6 +339,7 @@ function UserAccounts() {
 
   function clearSearchFilter() {
     setSearchText("");
+    setAppliedSearchText("");
 
     loadUsers(1, {
       searchText: ""
@@ -593,6 +596,7 @@ function UserAccounts() {
 
   function handleSearchSubmit(event) {
     event.preventDefault();
+    setAppliedSearchText(searchText.trim());
     loadUsers(1);
   }
 
@@ -722,6 +726,7 @@ function UserAccounts() {
             onSearchChange={setSearchText}
             onSearchClear={clearSearchFilter}
             onSearchSubmit={handleSearchSubmit}
+            searchActive={appliedSearchText.trim() !== ""}
             searchPlaceholder="Search users"
             filters={[
               {

@@ -1,20 +1,17 @@
-import { Search, X } from "lucide-react";
+import { Search } from "lucide-react";
 import { useState } from "react";
 
 function SearchBox({
   value,
   onChange,
-  onClear,
   placeholder = "Search",
   className = "",
   inputClassName = "",
   iconSize = 14,
-  clearIconSize = 11,
-  clearLabel = "Clear search"
+  active = false
 }) {
   const [focused, setFocused] = useState(false);
-  const hasValue = String(value || "").trim() !== "";
-  const selected = focused || hasValue;
+  const selected = focused || active;
 
   const wrapperStateClass = selected
     ? "border-blue-500 bg-black"
@@ -40,16 +37,12 @@ function SearchBox({
         className={`w-full bg-transparent pr-6 text-xs text-white outline-none placeholder:text-oa-muted ${inputClassName}`}
       />
 
-      {hasValue && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm border border-oa-border bg-black text-red-400 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-300 focus:border-red-500"
-          aria-label={clearLabel}
-          title={clearLabel}
-        >
-          <X size={clearIconSize} />
-        </button>
+      {active && (
+        <span
+          className="pointer-events-none absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-black bg-sky-400 shadow"
+          aria-hidden="true"
+          title="Search active"
+        />
       )}
     </div>
   );
