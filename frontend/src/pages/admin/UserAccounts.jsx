@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Check,
   ChevronLeft,
   ChevronRight,
   Filter,
@@ -20,145 +19,76 @@ import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Select from "../../components/common/Select";
+import TableFilterDropdown from "../../components/common/TableFilterDropdown";
 
-function HeaderFilter({
-  label,
-  value,
-  onChange,
-  onClear,
-  values = [],
-  type = "value"
-}) {
-  const [open, setOpen] = useState(false);
-  const [searchText, setSearchText] = useState("");
-  const ref = useRef(null);
+const tableColumns = [
+  { key: "login_id", label: "Login ID" },
+  { key: "email", label: "Email ID" },
+  { key: "full_name", label: "Full Name" },
+  { key: "mobile_number", label: "Mobile" },
+  { key: "role", label: "Role" },
+  { key: "status", label: "Status" },
+  { key: "access", label: "Access" }
+];
 
-  const isActive = value && value !== "all";
+const gridTemplateColumns =
+  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 160px 60px";
 
-  const filteredValues = values.filter((item) =>
-    String(item)
-      .toLowerCase()
-      .includes(searchText.toLowerCase())
-  );
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (ref.current && !ref.current.contains(event.target)) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  function handleSelect(selectedValue) {
-    onChange(selectedValue);
-    setOpen(false);
+function normalizeCellValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
   }
 
-  return (
-    <div ref={ref} className="relative flex items-center justify-between gap-2">
-      <span className="truncate">{label}</span>
-
-      <button
-        type="button"
-        onClick={() => setOpen((previous) => !previous)}
-        className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-sm border transition ${
-          isActive
-            ? "border-oa-border bg-oa-card text-white"
-            : "border-oa-border bg-black text-oa-muted hover:bg-oa-card hover:text-white"
-        }`}
-        aria-label={`Filter ${label}`}
-      >
-        <Filter size={10} />
-      </button>
-
-      {open && (
-        <div className="absolute right-2 top-7 z-50 w-64 overflow-hidden rounded border border-oa-border bg-black shadow-2xl animate-[oaMenuIn_0.14s_ease-out]">
-          <div className="flex items-center justify-between border-b border-oa-border px-2 py-2">
-            <span className="text-[11px] normal-case tracking-normal text-oa-muted">
-              Filter {label}
-            </span>
-
-            <button
-              type="button"
-              onClick={() => {
-                onClear();
-                setSearchText("");
-                setOpen(false);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-sm border border-oa-border bg-black text-oa-muted hover:bg-oa-card hover:text-white"
-              aria-label="Clear filter"
-            >
-              <X size={12} />
-            </button>
-          </div>
-
-          <div className="border-b border-oa-border p-2">
-            <div className="flex h-8 items-center gap-2 rounded border border-oa-border bg-black px-2">
-              <Search size={13} className="text-oa-muted" />
-              <input
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search values"
-                className="w-full bg-transparent text-xs normal-case tracking-normal text-oa-text outline-none"
-                autoFocus={type !== "select"}
-              />
-            </div>
-          </div>
-
-          <div className="max-h-56 overflow-y-auto p-1">
-            <button
-              type="button"
-              onClick={() => handleSelect(type === "select" ? "all" : "")}
-              className={`flex h-8 w-full items-center justify-between rounded-sm px-2 text-left text-xs normal-case tracking-normal transition hover:bg-oa-card ${
-                !isActive ? "bg-oa-card text-white" : "text-oa-muted"
-              }`}
-            >
-              <span>(All)</span>
-              {!isActive && <Check size={12} />}
-            </button>
-
-            {filteredValues.length === 0 ? (
-              <div className="px-2 py-3 text-center text-[11px] normal-case tracking-normal text-oa-muted">
-                No values
-              </div>
-            ) : (
-              filteredValues.map((item) => {
-                const selected = value === item;
-
-                return (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => handleSelect(item)}
-                    className={`flex h-8 w-full items-center justify-between rounded-sm px-2 text-left text-xs normal-case tracking-normal transition hover:bg-oa-card ${
-                      selected ? "bg-oa-card text-white" : "text-oa-muted"
-                    }`}
-                  >
-                    <span className="truncate">{item || "--"}</span>
-                    {selected && <Check size={12} />}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return String(value);
 }
 
-function uniqueValues(rows, mapper) {
-  return Array.from(
-    new Set(
-      rows
-        .map(mapper)
-        .filter((value) => value !== null && value !== undefined)
-        .map((value) => String(value || "--"))
-    )
-  ).sort((a, b) => a.localeCompare(b));
+function formatRoleLabel(role) {
+  if (!role) {
+    return "--";
+  }
+
+  return String(role)
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function accessTextForUser(user) {
+  return user.role === "user"
+    ? user.access_restrictions || "[]"
+    : "Full Access";
+}
+
+function getColumnValue(user, key) {
+  if (key === "status") {
+    return user.is_active ? "active" : "inactive";
+  }
+
+  if (key === "role") {
+    return formatRoleLabel(user.role);
+  }
+
+  if (key === "access") {
+    return accessTextForUser(user);
+  }
+
+  return user[key];
+}
+
+function getFilterValues(rows, key) {
+  const valueMap = new Map();
+
+  rows.forEach((row) => {
+    const value = normalizeCellValue(getColumnValue(row, key));
+    valueMap.set(value, (valueMap.get(value) || 0) + 1);
+  });
+
+  return Array.from(valueMap.entries())
+    .map(([value, count]) => ({
+      label: value,
+      value,
+      count
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function UserAccounts() {
@@ -168,12 +98,12 @@ function UserAccounts() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const [columnFilters, setColumnFilters] = useState({
-    login_id: "",
-    email: "",
-    full_name: "",
-    mobile_number: "",
-    access: ""
+  const [columnFilters, setColumnFilters] = useState({});
+  const [draftColumnFilters, setDraftColumnFilters] = useState({});
+  const [activeFilter, setActiveFilter] = useState(null);
+  const [sortConfig, setSortConfig] = useState({
+    key: null,
+    direction: null
   });
 
   const [page, setPage] = useState(1);
@@ -186,6 +116,8 @@ function UserAccounts() {
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const filterRef = useRef(null);
 
   const [formData, setFormData] = useState({
     login_id: "",
@@ -210,20 +142,31 @@ function UserAccounts() {
     { value: "inactive", label: "Inactive" }
   ];
 
-  async function loadUsers(customPage = page) {
+  async function loadUsers(customPage = page, overrides = {}) {
     setLoading(true);
     setActionMessage("");
+
+    const effectiveSearchText =
+      overrides.searchText !== undefined ? overrides.searchText : searchText;
+
+    const effectiveRoleFilter =
+      overrides.roleFilter !== undefined ? overrides.roleFilter : roleFilter;
+
+    const effectiveStatusFilter =
+      overrides.statusFilter !== undefined
+        ? overrides.statusFilter
+        : statusFilter;
 
     try {
       const params = {
         page: customPage,
         page_size: pageSize,
-        search: searchText.trim(),
-        role: roleFilter
+        search: effectiveSearchText.trim(),
+        role: effectiveRoleFilter
       };
 
-      if (statusFilter !== "all") {
-        params.is_active = statusFilter === "active";
+      if (effectiveStatusFilter !== "all") {
+        params.is_active = effectiveStatusFilter === "active";
       }
 
       const response = await getAdminUsers(params);
@@ -246,55 +189,171 @@ function UserAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const accessTextForUser = (user) =>
-    user.role === "user" ? user.access_restrictions || "[]" : "Full Access";
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (filterRef.current && !filterRef.current.contains(event.target)) {
+        setActiveFilter(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const headerValues = useMemo(() => {
-    return {
-      login_id: uniqueValues(users, (user) => user.login_id || "--"),
-      email: uniqueValues(users, (user) => user.email || "--"),
-      full_name: uniqueValues(users, (user) => user.full_name || "--"),
-      mobile_number: uniqueValues(users, (user) => user.mobile_number || "--"),
-      role: uniqueValues(users, (user) => user.role || "--"),
-      status: uniqueValues(users, (user) =>
-        user.is_active ? "active" : "inactive"
-      ),
-      access: uniqueValues(users, accessTextForUser)
-    };
+    return tableColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(users, column.key);
+      return result;
+    }, {});
   }, [users]);
 
   const filteredUsers = useMemo(() => {
-    return users.filter((user) => {
-      const accessText = accessTextForUser(user);
-      const statusText = user.is_active ? "active" : "inactive";
+    let result = users.filter((user) => {
+      return Object.entries(columnFilters).every(([key, selectedValues]) => {
+        if (!selectedValues || selectedValues.length === 0) {
+          return true;
+        }
 
-      return (
-        String(user.login_id || "--")
-          .toLowerCase()
-          .includes(columnFilters.login_id.toLowerCase()) &&
-        String(user.email || "--")
-          .toLowerCase()
-          .includes(columnFilters.email.toLowerCase()) &&
-        String(user.full_name || "--")
-          .toLowerCase()
-          .includes(columnFilters.full_name.toLowerCase()) &&
-        String(user.mobile_number || "--")
-          .toLowerCase()
-          .includes(columnFilters.mobile_number.toLowerCase()) &&
-        String(accessText || "")
-          .toLowerCase()
-          .includes(columnFilters.access.toLowerCase()) &&
-        (roleFilter === "all" || user.role === roleFilter) &&
-        (statusFilter === "all" || statusText === statusFilter)
-      );
+        const value = normalizeCellValue(getColumnValue(user, key));
+        return selectedValues.includes(value);
+      });
     });
-  }, [users, columnFilters, roleFilter, statusFilter]);
 
-  function handleColumnFilterChange(name, value) {
+    if (roleFilter !== "all") {
+      result = result.filter((user) => user.role === roleFilter);
+    }
+
+    if (statusFilter !== "all") {
+      result = result.filter((user) => {
+        const statusText = user.is_active ? "active" : "inactive";
+        return statusText === statusFilter;
+      });
+    }
+
+    if (sortConfig.key && sortConfig.direction) {
+      result = [...result].sort((a, b) => {
+        const firstValue = normalizeCellValue(
+          getColumnValue(a, sortConfig.key)
+        ).toLowerCase();
+
+        const secondValue = normalizeCellValue(
+          getColumnValue(b, sortConfig.key)
+        ).toLowerCase();
+
+        if (firstValue < secondValue) {
+          return sortConfig.direction === "asc" ? -1 : 1;
+        }
+
+        if (firstValue > secondValue) {
+          return sortConfig.direction === "asc" ? 1 : -1;
+        }
+
+        return 0;
+      });
+    }
+
+    return result;
+  }, [users, columnFilters, roleFilter, statusFilter, sortConfig]);
+
+  function hasAnyActiveFilter() {
+    return (
+      searchText.trim() !== "" ||
+      roleFilter !== "all" ||
+      statusFilter !== "all" ||
+      sortConfig.key !== null ||
+      Object.values(columnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllFilters() {
+    setSearchText("");
+    setRoleFilter("all");
+    setStatusFilter("all");
+    setColumnFilters({});
+    setDraftColumnFilters({});
+    setSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveFilter(null);
+
+    loadUsers(1, {
+      searchText: "",
+      roleFilter: "all",
+      statusFilter: "all"
+    });
+  }
+
+  function clearSearchFilter() {
+    setSearchText("");
+
+    loadUsers(1, {
+      searchText: ""
+    });
+  }
+
+  function clearRoleFilter() {
+    setRoleFilter("all");
+
+    loadUsers(1, {
+      roleFilter: "all"
+    });
+  }
+
+  function clearStatusFilter() {
+    setStatusFilter("all");
+
+    loadUsers(1, {
+      statusFilter: "all"
+    });
+  }
+
+  function openColumnFilter(key) {
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: columnFilters[key] || []
+    }));
+
+    setActiveFilter((previous) => (previous === key ? null : key));
+  }
+
+  function applyColumnFilter(key) {
     setColumnFilters((previous) => ({
       ...previous,
-      [name]: value === "--" ? "" : value
+      [key]: draftColumnFilters[key] || []
     }));
+
+    setActiveFilter(null);
+  }
+
+  function clearColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function handleSort(key, direction) {
+    setSortConfig({
+      key,
+      direction
+    });
+
+    setActiveFilter(null);
+  }
+
+  function isColumnFilterActive(key) {
+    const selectedValues = columnFilters[key] || [];
+    return selectedValues.length > 0;
   }
 
   function handleInputChange(event) {
@@ -398,32 +457,72 @@ function UserAccounts() {
             onSubmit={handleSearchSubmit}
             className="mb-3 flex flex-wrap items-center gap-2"
           >
-            <div className="flex h-8 w-[360px] max-w-full items-center gap-2 rounded border border-oa-border bg-black px-2">
+            <div className="relative flex h-8 w-[360px] max-w-full items-center gap-2 rounded border border-oa-border bg-black px-2">
               <Search size={14} className="text-oa-muted" />
 
               <input
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
                 placeholder="Search users"
-                className="w-full bg-transparent text-xs outline-none"
+                className="w-full bg-transparent pr-6 text-xs outline-none"
               />
+
+              {searchText.trim() !== "" && (
+                <button
+                  type="button"
+                  onClick={clearSearchFilter}
+                  className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm border border-oa-border bg-black text-oa-muted transition hover:bg-oa-card hover:text-white"
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X size={11} />
+                </button>
+              )}
             </div>
 
-            <Select
-              value={roleFilter}
-              onChange={(event) => setRoleFilter(event.target.value)}
-              options={roleOptions}
-              ariaLabel="Role filter"
-              minWidth="w-36"
-            />
+            <div className="relative">
+              <Select
+                value={roleFilter}
+                onChange={(event) => setRoleFilter(event.target.value)}
+                options={roleOptions}
+                ariaLabel="Role filter"
+                minWidth="w-36"
+              />
 
-            <Select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-              options={statusOptions}
-              ariaLabel="Status filter"
-              minWidth="w-36"
-            />
+              {roleFilter !== "all" && (
+                <button
+                  type="button"
+                  onClick={clearRoleFilter}
+                  className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full border border-oa-border bg-black text-oa-muted shadow transition hover:bg-oa-card hover:text-white"
+                  aria-label="Clear role filter"
+                  title="Clear role filter"
+                >
+                  <X size={9} />
+                </button>
+              )}
+            </div>
+
+            <div className="relative">
+              <Select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                options={statusOptions}
+                ariaLabel="Status filter"
+                minWidth="w-36"
+              />
+
+              {statusFilter !== "all" && (
+                <button
+                  type="button"
+                  onClick={clearStatusFilter}
+                  className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full border border-oa-border bg-black text-oa-muted shadow transition hover:bg-oa-card hover:text-white"
+                  aria-label="Clear status filter"
+                  title="Clear status filter"
+                >
+                  <X size={9} />
+                </button>
+              )}
+            </div>
 
             <IconButton
               icon={Search}
@@ -433,6 +532,16 @@ function UserAccounts() {
               tooltipSide="top"
               disabled={loading}
             />
+
+            {hasAnyActiveFilter() && (
+              <IconButton
+                icon={X}
+                label="Clear filters"
+                variant="default"
+                tooltipSide="top"
+                onClick={clearAllFilters}
+              />
+            )}
 
             <div className="ml-auto flex items-center gap-2">
               <IconButton
@@ -554,78 +663,76 @@ function UserAccounts() {
             </div>
           )}
 
-          <div className="overflow-visible rounded border border-oa-border bg-black oa-table-font">
+          <div className="overflow-hidden rounded border border-oa-border bg-black oa-table-font">
             <div className="min-w-[1080px]">
-              <div className="grid grid-cols-[120px_1.4fr_1.4fr_130px_120px_105px_160px_60px] border-b border-oa-border bg-oa-panel px-3 py-2 text-[10px] uppercase tracking-widest text-oa-muted">
-                <HeaderFilter
-                  label="Login ID"
-                  value={columnFilters.login_id}
-                  values={headerValues.login_id}
-                  onChange={(value) =>
-                    handleColumnFilterChange("login_id", value)
-                  }
-                  onClear={() => handleColumnFilterChange("login_id", "")}
-                />
+              <div
+                ref={filterRef}
+                className="grid border-b border-oa-border bg-oa-panel px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-oa-muted"
+                style={{ gridTemplateColumns }}
+              >
+                {tableColumns.map((column) => {
+                  const active = isColumnFilterActive(column.key);
 
-                <HeaderFilter
-                  label="Email ID"
-                  value={columnFilters.email}
-                  values={headerValues.email}
-                  onChange={(value) =>
-                    handleColumnFilterChange("email", value)
-                  }
-                  onClear={() => handleColumnFilterChange("email", "")}
-                />
+                  return (
+                    <div
+                      key={column.key}
+                      className="relative flex min-w-0 items-center justify-between gap-2 pr-8"
+                    >
+                      <span className="truncate">{column.label}</span>
 
-                <HeaderFilter
-                  label="Full Name"
-                  value={columnFilters.full_name}
-                  values={headerValues.full_name}
-                  onChange={(value) =>
-                    handleColumnFilterChange("full_name", value)
-                  }
-                  onClear={() => handleColumnFilterChange("full_name", "")}
-                />
+                      <button
+                        type="button"
+                        onClick={() => openColumnFilter(column.key)}
+                        className={`absolute right-3 top-1/2 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border transition ${
+                          active
+                            ? "border-oa-border bg-oa-card text-white"
+                            : "border-oa-border bg-black text-oa-muted hover:bg-oa-card hover:text-white"
+                        }`}
+                        aria-label={`Filter ${column.label}`}
+                        title={`Filter ${column.label}`}
+                      >
+                        <Filter size={10} />
 
-                <HeaderFilter
-                  label="Mobile"
-                  value={columnFilters.mobile_number}
-                  values={headerValues.mobile_number}
-                  onChange={(value) =>
-                    handleColumnFilterChange("mobile_number", value)
-                  }
-                  onClear={() =>
-                    handleColumnFilterChange("mobile_number", "")
-                  }
-                />
+                        {active && (
+                          <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-black bg-emerald-400" />
+                        )}
+                      </button>
 
-                <HeaderFilter
-                  label="Role"
-                  value={roleFilter}
-                  values={headerValues.role}
-                  type="select"
-                  onChange={(value) => setRoleFilter(value)}
-                  onClear={() => setRoleFilter("all")}
-                />
-
-                <HeaderFilter
-                  label="Status"
-                  value={statusFilter}
-                  values={headerValues.status}
-                  type="select"
-                  onChange={(value) => setStatusFilter(value)}
-                  onClear={() => setStatusFilter("all")}
-                />
-
-                <HeaderFilter
-                  label="Access"
-                  value={columnFilters.access}
-                  values={headerValues.access}
-                  onChange={(value) =>
-                    handleColumnFilterChange("access", value)
-                  }
-                  onClear={() => handleColumnFilterChange("access", "")}
-                />
+                      {activeFilter === column.key && (
+                        <div
+                          className={`absolute top-7 z-50 ${
+                            ["role", "status", "access"].includes(column.key)
+                              ? "right-3"
+                              : "left-0"
+                          }`}
+                        >
+                          <TableFilterDropdown
+                            columnName={column.label}
+                            values={headerValues[column.key] || []}
+                            selectedValues={columnFilters[column.key] || []}
+                            pendingValues={draftColumnFilters[column.key] || []}
+                            align={
+                              ["role", "status", "access"].includes(column.key)
+                                ? "right"
+                                : "left"
+                            }
+                            onChange={(values) =>
+                              setDraftColumnFilters((previous) => ({
+                                ...previous,
+                                [column.key]: values
+                              }))
+                            }
+                            onApply={() => applyColumnFilter(column.key)}
+                            onCancel={() => setActiveFilter(null)}
+                            onSortAsc={() => handleSort(column.key, "asc")}
+                            onSortDesc={() => handleSort(column.key, "desc")}
+                            onClear={() => clearColumnFilter(column.key)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
                 <span className="text-center">Action</span>
               </div>
@@ -646,7 +753,8 @@ function UserAccounts() {
                   return (
                     <div
                       key={user.user_id}
-                      className="grid grid-cols-[120px_1.4fr_1.4fr_130px_120px_105px_160px_60px] border-b border-oa-border px-3 py-1.5 text-[11px] last:border-b-0 hover:bg-oa-panel/60"
+                      className="grid items-center border-b border-oa-border px-3 py-2 text-[13px] last:border-b-0 hover:bg-oa-panel/60"
+                      style={{ gridTemplateColumns }}
                     >
                       <span className="truncate font-semibold">
                         {user.login_id || "--"}
@@ -662,17 +770,17 @@ function UserAccounts() {
 
                       <span>
                         <span
-                          className={`rounded-full border px-2 py-0.5 text-[10px] ${getRolePill(
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getRolePill(
                             user.role
                           )}`}
                         >
-                          {user.role}
+                          {formatRoleLabel(user.role)}
                         </span>
                       </span>
 
                       <span>
                         <span
-                          className={`rounded-full border px-2 py-0.5 text-[10px] ${getStatusPill(
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getStatusPill(
                             user.is_active
                           )}`}
                         >
