@@ -7,7 +7,7 @@ function FilterSearchInput({
   placeholder = "Search users"
 }) {
   return (
-    <div className="relative flex h-8 w-[360px] max-w-full items-center gap-2 rounded border border-oa-border bg-black px-2 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+    <div className="relative flex h-8 w-[360px] max-w-full items-center gap-2 rounded border border-oa-border bg-black px-2 focus-within:border-blue-500">
       <Search size={14} className="text-oa-muted" />
 
       <input

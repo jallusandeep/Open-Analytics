@@ -231,7 +231,7 @@ export default function TableFilterDropdown({
       </div>
 
       <div className="border-y border-oa-border p-2">
-        <div className="flex h-8 items-center gap-2 rounded border border-oa-border bg-black px-2 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+        <div className="flex h-8 items-center gap-2 rounded border border-oa-border bg-black px-2 focus-within:border-blue-500">
           <Search size={13} className="text-oa-muted" />
           <input
             value={searchText}
