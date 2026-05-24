@@ -49,16 +49,25 @@ function IconButton({
 
   const selectedButtonClass = buttonClass[variant] || buttonClass.default;
   const selectedIconClass = iconClass[variant] || iconClass.default;
-  const selectedActiveClass = activeButtonClass[variant] || activeButtonClass.default;
+  const selectedActiveClass =
+    activeButtonClass[variant] || activeButtonClass.default;
 
   const finalButtonClass = active ? selectedActiveClass : selectedButtonClass;
-  const finalIconClass = active ? selectedIconClass : selectedIconClass;
+  const finalIconClass = selectedIconClass;
+
+  function handleClick(event) {
+    onClick?.(event);
+
+    if (variant === "refresh" || variant === "search") {
+      event.currentTarget.blur();
+    }
+  }
 
   return (
     <Tooltip text={label} side={tooltipSide}>
       <button
         type={type}
-        onClick={onClick}
+        onClick={handleClick}
         disabled={disabled}
         aria-label={label}
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded border outline-none transition disabled:cursor-not-allowed disabled:opacity-40 ${finalButtonClass}`}

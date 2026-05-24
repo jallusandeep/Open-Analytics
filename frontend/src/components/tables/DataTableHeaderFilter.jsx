@@ -90,7 +90,13 @@ function DataTableHeaderFilter({
       window.removeEventListener("resize", handlePositionRefresh);
       window.removeEventListener("scroll", handlePositionRefresh, true);
     };
-  }, [open, align]);
+  }, [open, align, onClose]);
+
+  const selected = active || open;
+
+  const buttonStateClass = selected
+    ? "border-blue-500 bg-sky-950/30 text-sky-300"
+    : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white";
 
   return (
     <>
@@ -98,11 +104,7 @@ function DataTableHeaderFilter({
         ref={buttonRef}
         type="button"
         onClick={onOpen}
-        className={`absolute right-3 top-1/2 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border transition ${
-          active
-            ? "border-oa-border bg-oa-card text-white"
-            : "border-oa-border bg-black text-oa-muted hover:bg-oa-card hover:text-white"
-        }`}
+        className={`absolute right-3 top-1/2 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border outline-none transition ${buttonStateClass}`}
         aria-label={`Filter ${column.label}`}
         title={`Filter ${column.label}`}
       >
