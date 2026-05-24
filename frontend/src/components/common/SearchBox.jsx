@@ -11,7 +11,7 @@ function SearchBox({
   active = false
 }) {
   const [focused, setFocused] = useState(false);
-  const selected = focused || active;
+  const selected = focused;
 
   const wrapperStateClass = selected
     ? "border-blue-500 bg-black"
