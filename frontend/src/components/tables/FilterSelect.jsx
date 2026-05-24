@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 
-import Select from "./Select";
+import Select from "../common/Select";
 
 function FilterSelect({
   value,

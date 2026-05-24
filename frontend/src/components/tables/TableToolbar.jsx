@@ -1,6 +1,6 @@
 import { Search, X } from "lucide-react";
 
-import IconButton from "./IconButton";
+import IconButton from "../common/IconButton";
 import FilterSearchInput from "./FilterSearchInput";
 import FilterSelect from "./FilterSelect";
 

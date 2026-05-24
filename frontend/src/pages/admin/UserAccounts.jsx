@@ -18,8 +18,8 @@ import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
-import DataTable from "../../components/common/DataTable";
-import TableToolbar from "../../components/common/TableToolbar";
+import DataTable from "../../components/tables/DataTable";
+import TableToolbar from "../../components/tables/TableToolbar";
 
 const tableColumns = [
   { key: "login_id", label: "Login ID" },
