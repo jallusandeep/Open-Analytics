@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   Plus,
@@ -18,6 +19,8 @@ import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
+import Modal from "../../components/common/Modal";
+import Tooltip from "../../components/common/Tooltip";
 import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
 
@@ -33,6 +36,16 @@ const tableColumns = [
 
 const gridTemplateColumns =
   "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 160px 60px";
+
+const emptyFormData = {
+  login_id: "",
+  full_name: "",
+  email: "",
+  mobile_number: "",
+  password: "",
+  role: "user",
+  access_restrictions: []
+};
 
 function normalizeCellValue(value) {
   if (value === null || value === undefined || value === "") {
@@ -115,18 +128,10 @@ function UserAccounts() {
   const [loading, setLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
 
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [formData, setFormData] = useState({
-    login_id: "",
-    full_name: "",
-    email: "",
-    mobile_number: "",
-    password: "",
-    role: "user",
-    access_restrictions: []
-  });
+  const [formData, setFormData] = useState(emptyFormData);
 
   const roleOptions = [
     { value: "all", label: "All Roles" },
@@ -350,6 +355,20 @@ function UserAccounts() {
     return selectedValues.length > 0;
   }
 
+  function openCreateModal() {
+    setActionMessage("");
+    setShowAddModal(true);
+  }
+
+  function closeCreateModal() {
+    if (saving) {
+      return;
+    }
+
+    setShowAddModal(false);
+    setFormData(emptyFormData);
+  }
+
   function handleInputChange(event) {
     const { name, value } = event.target;
 
@@ -371,16 +390,8 @@ function UserAccounts() {
           formData.role === "user" ? formData.access_restrictions : []
       });
 
-      setShowAddForm(false);
-      setFormData({
-        login_id: "",
-        full_name: "",
-        email: "",
-        mobile_number: "",
-        password: "",
-        role: "user",
-        access_restrictions: []
-      });
+      setShowAddModal(false);
+      setFormData(emptyFormData);
 
       setActionMessage("User created successfully.");
       loadUsers(1);
@@ -569,100 +580,10 @@ function UserAccounts() {
                 icon: Plus,
                 label: "Add",
                 variant: "add",
-                onClick: () => setShowAddForm((value) => !value)
+                onClick: openCreateModal
               }
             ]}
           />
-
-          {showAddForm && (
-            <form
-              onSubmit={handleCreateUser}
-              className="mb-3 rounded border border-oa-border bg-black p-3"
-            >
-              <div className="mb-3 grid gap-2 md:grid-cols-3">
-                <Input
-                  name="login_id"
-                  value={formData.login_id}
-                  onChange={handleInputChange}
-                  placeholder="Login ID"
-                  required
-                />
-
-                <Input
-                  name="full_name"
-                  value={formData.full_name}
-                  onChange={handleInputChange}
-                  placeholder="Full Name"
-                  required
-                />
-
-                <Input
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  placeholder="Email ID"
-                  required
-                />
-
-                <Input
-                  name="mobile_number"
-                  value={formData.mobile_number}
-                  onChange={handleInputChange}
-                  placeholder="Mobile Number"
-                />
-
-                <Input
-                  name="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  placeholder="Password"
-                  required
-                />
-
-                <Select
-                  value={formData.role}
-                  onChange={(event) =>
-                    setFormData((previous) => ({
-                      ...previous,
-                      role: event.target.value
-                    }))
-                  }
-                  options={[
-                    { value: "user", label: "User" },
-                    { value: "admin", label: "Admin" },
-                    { value: "super_admin", label: "Super Admin" }
-                  ]}
-                  ariaLabel="New user role"
-                  minWidth="w-full"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <IconButton
-                  icon={X}
-                  label="Cancel"
-                  variant="default"
-                  tooltipSide="top"
-                  onClick={() => setShowAddForm(false)}
-                />
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-white text-black transition hover:bg-zinc-200 disabled:opacity-60"
-                  aria-label="Save user"
-                >
-                  {saving ? (
-                    <Spinner size="xs" color="dark" />
-                  ) : (
-                    <Plus size={15} />
-                  )}
-                </button>
-              </div>
-            </form>
-          )}
 
           {actionMessage && (
             <div className="mb-3 rounded border border-oa-border bg-black px-3 py-2 text-xs text-oa-muted">
@@ -727,6 +648,105 @@ function UserAccounts() {
           </div>
         </div>
       </section>
+
+      <Modal
+        open={showAddModal}
+        title="Add User"
+        subtitle="Create a new Open Analytics user account."
+        onClose={closeCreateModal}
+        width="max-w-2xl"
+        closeOnOverlay={!saving}
+        footer={
+          <>
+            <IconButton
+              icon={X}
+              label="Cancel"
+              variant="danger"
+              tooltipSide="top"
+              disabled={saving}
+              onClick={closeCreateModal}
+            />
+
+            <Tooltip text="Save user" side="top">
+              <button
+                type="submit"
+                form="create-user-form"
+                disabled={saving}
+                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-white text-black outline-none transition hover:bg-zinc-200 focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Save user"
+              >
+                {saving ? (
+                  <Spinner size="xs" color="dark" />
+                ) : (
+                  <Check size={15} />
+                )}
+              </button>
+            </Tooltip>
+          </>
+        }
+      >
+        <form id="create-user-form" onSubmit={handleCreateUser}>
+          <div className="grid gap-2 md:grid-cols-3">
+            <Input
+              name="login_id"
+              value={formData.login_id}
+              onChange={handleInputChange}
+              placeholder="Login ID"
+              required
+            />
+
+            <Input
+              name="full_name"
+              value={formData.full_name}
+              onChange={handleInputChange}
+              placeholder="Full Name"
+              required
+            />
+
+            <Input
+              name="email"
+              type="email"
+              value={formData.email}
+              onChange={handleInputChange}
+              placeholder="Email ID"
+              required
+            />
+
+            <Input
+              name="mobile_number"
+              value={formData.mobile_number}
+              onChange={handleInputChange}
+              placeholder="Mobile Number"
+            />
+
+            <Input
+              name="password"
+              type="password"
+              value={formData.password}
+              onChange={handleInputChange}
+              placeholder="Password"
+              required
+            />
+
+            <Select
+              value={formData.role}
+              onChange={(event) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  role: event.target.value
+                }))
+              }
+              options={[
+                { value: "user", label: "User" },
+                { value: "admin", label: "Admin" },
+                { value: "super_admin", label: "Super Admin" }
+              ]}
+              ariaLabel="New user role"
+              minWidth="w-full"
+            />
+          </div>
+        </form>
+      </Modal>
 
       <style>
         {`
