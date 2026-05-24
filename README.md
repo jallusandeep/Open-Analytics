@@ -48,8 +48,11 @@ It is visible only for users with `admin` or `super_admin` role.
 
 ## Version
 
-Current app version: `1.0.1`
+Current app version: `1.0.2`
 
 The `1.0.1` update fixes DuckDB path resolution so the backend always uses
 `backend/app/db/open_analytics.duckdb`, even when commands are launched from the
 project root.
+
+The `1.0.2` update fixes the sidebar admin menu visibility by storing the actual
+`/users/me` user object in frontend localStorage.

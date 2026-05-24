@@ -1,7 +1,9 @@
 import { Navigate } from "react-router-dom";
 
 function AdminRoute({ children }) {
-  const savedUser = localStorage.getItem("open_analytics_current_user");
+  const savedUser =
+    localStorage.getItem("open_analytics_current_user") ||
+    localStorage.getItem("open_analytics_user");
   const user = savedUser ? JSON.parse(savedUser) : null;
 
   if (!user) {

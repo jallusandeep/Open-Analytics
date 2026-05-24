@@ -20,7 +20,16 @@ C:\Projects\open-analytics
 
 ## Latest Fix
 
-Version: `1.0.1`
+Version: `1.0.2`
+
+Admin sidebar visibility fix:
+
+- `/api/v1/users/me` returns `{ status, user }`.
+- `frontend/src/routes/ProtectedRoute.jsx` now stores `response.data.user || response.data`.
+- `frontend/src/components/layout/MainLayout.jsx` and `frontend/src/routes/AdminRoute.jsx` fall back to `open_analytics_user` if `open_analytics_current_user` is missing.
+- This fixes the missing User Accounts icon for `admin` and `super_admin` users.
+
+Previous `1.0.1` fix:
 
 Admin user accounts were not reliably appearing because the backend resolved `DUCKDB_PATH=app/db/open_analytics.duckdb` relative to the current working directory. If code was run from the project root, it opened or created:
 

@@ -21,10 +21,11 @@ function ProtectedRoute({ children }) {
 
       try {
         const response = await getCurrentUser();
+        const currentUser = response.data.user || response.data;
 
         localStorage.setItem(
           "open_analytics_current_user",
-          JSON.stringify(response.data)
+          JSON.stringify(currentUser)
         );
 
         setAllowed(true);
