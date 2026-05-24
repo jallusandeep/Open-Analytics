@@ -4,7 +4,7 @@
 
 Open Analytics
 
-Path:
+Project path:
 
 ```txt
 C:\Projects\open-analytics
@@ -12,42 +12,474 @@ C:\Projects\open-analytics
 
 ## Current Status
 
-- FastAPI backend is in `backend/app`.
-- React/Vite frontend is in `frontend/src`.
-- DuckDB database is stored at `backend/app/db/open_analytics.duckdb`.
-- Git version control has been initialized in the project root.
-- `.gitignore` excludes virtualenvs, `node_modules`, build output, logs, `.env`, and DuckDB files.
+- Backend: FastAPI app in `backend/app`.
+- Frontend: React/Vite app in `frontend/src`.
+- Database: DuckDB file at `backend/app/db/open_analytics.duckdb`.
+- Version control: Git initialized on branch `main`.
+- Current local branch is ahead of `origin/main` with recent UI refactor commits.
+- Current app version in code: `backend/app/version.py` -> `APP_VERSION = "1.0.2"`.
 
-## Latest Fix
+## Recent Important Changes
 
-Version: `1.0.2`
-
-Admin sidebar visibility fix:
+### User Accounts Visibility Fix
 
 - `/api/v1/users/me` returns `{ status, user }`.
-- `frontend/src/routes/ProtectedRoute.jsx` now stores `response.data.user || response.data`.
-- `frontend/src/components/layout/MainLayout.jsx` and `frontend/src/routes/AdminRoute.jsx` fall back to `open_analytics_user` if `open_analytics_current_user` is missing.
-- This fixes the missing User Accounts icon for `admin` and `super_admin` users.
+- `frontend/src/routes/ProtectedRoute.jsx` stores `response.data.user || response.data`.
+- `MainLayout.jsx` and `AdminRoute.jsx` read `open_analytics_current_user`, with fallback to `open_analytics_user`.
+- This fixed the missing User Accounts icon for `admin` and `super_admin` users.
 
-Previous `1.0.1` fix:
+### DuckDB Path Fix
 
-Admin user accounts were not reliably appearing because the backend resolved `DUCKDB_PATH=app/db/open_analytics.duckdb` relative to the current working directory. If code was run from the project root, it opened or created:
+- `backend/app/config.py` loads `.env` from the backend folder.
+- `backend/app/database.py` resolves relative DB paths from `backend/`.
+- This prevents accidentally using `C:\Projects\open-analytics\app\db\open_analytics.duckdb`.
 
-```txt
-C:\Projects\open-analytics\app\db\open_analytics.duckdb
+### User Accounts Component Refactor
+
+- `UserAccounts.jsx` keeps the same visual look.
+- Common form/control pieces stay in `frontend/src/components/common`.
+- Table-specific reusable pieces moved to `frontend/src/components/tables`.
+- `UserAccounts.jsx` now imports:
+
+```jsx
+import DataTable from "../../components/tables/DataTable";
+import TableToolbar from "../../components/tables/TableToolbar";
 ```
 
-instead of the real database:
+## Architecture
+
+Open Analytics uses a simple layered architecture:
 
 ```txt
-C:\Projects\open-analytics\backend\app\db\open_analytics.duckdb
+Frontend pages
+  -> frontend API clients
+  -> FastAPI route modules
+  -> service modules
+  -> DuckDB database helpers
+  -> DuckDB tables
 ```
 
-Fix applied:
+Frontend rules:
 
-- `backend/app/config.py` now loads `.env` from the backend folder.
-- `backend/app/database.py` now resolves relative DuckDB paths from `backend/`.
-- `backend/app/version.py` is now `APP_VERSION = "1.0.1"`.
+- Pages own workflow state and page-specific rendering.
+- `components/common` owns small reusable controls.
+- `components/layout` owns application shell/navigation.
+- `components/tables` owns table/grid/filter UI.
+- `api` modules isolate Axios calls.
+- Route guards decide login/admin access.
+
+Backend rules:
+
+- `api/v1` route files define HTTP endpoints.
+- `services` files hold business logic.
+- `schemas` files hold Pydantic request/response models.
+- `database.py` owns DuckDB connection and schema initialization.
+- `dependencies.py` owns current-user and role guard dependencies.
+- `audit.py` owns history, sync log, and audit log helpers.
+
+## Root Folder Structure
+
+```txt
+open-analytics/
+  .gitignore
+  README.md
+  skill.md
+  start_all.bat
+  backend/
+  docs/
+  frontend/
+  scripts/
+```
+
+Descriptions:
+
+- `.gitignore`: excludes virtualenvs, `node_modules`, build output, logs, `.env`, and DuckDB files.
+- `README.md`: basic run instructions, URLs, admin login, and version notes.
+- `skill.md`: project handoff and architecture guide for future work.
+- `start_all.bat`: root shortcut to launch the application.
+- `backend/`: FastAPI backend, DuckDB setup, services, API routes, and scripts.
+- `frontend/`: React/Vite frontend, reusable components, pages, routes, and API clients.
+- `docs/`: architecture, API, database, and UI notes.
+- `scripts/`: helper batch scripts for install/start/backup workflows.
+
+## Backend Structure
+
+```txt
+backend/
+  requirements.txt
+  run_backend.bat
+  app/
+    main.py
+    config.py
+    database.py
+    dependencies.py
+    security.py
+    audit.py
+    version.py
+    api/v1/
+    db/
+    ml/
+    schemas/
+    services/
+    utils/
+```
+
+### Backend Core Files
+
+- `backend/requirements.txt`: Python dependencies.
+- `backend/run_backend.bat`: creates/uses backend venv, installs requirements, starts Uvicorn.
+- `backend/app/main.py`: FastAPI app creation, CORS, startup database initialization, router registration.
+- `backend/app/config.py`: environment/settings loader; loads backend `.env`.
+- `backend/app/database.py`: DuckDB path resolution, connection helper, schema/table creation, default admin setup.
+- `backend/app/dependencies.py`: JWT current-user dependency plus admin/super-admin guards.
+- `backend/app/security.py`: password hashing, password verification, JWT creation.
+- `backend/app/audit.py`: writes user history, sync log, and audit log rows.
+- `backend/app/version.py`: app and schema version constants.
+
+### Backend API Routes
+
+```txt
+backend/app/api/v1/
+  admin_routes.py
+  auth_routes.py
+  dashboard_routes.py
+  prediction_routes.py
+  stock_routes.py
+  user_routes.py
+```
+
+- `admin_routes.py`: admin-only user account endpoints.
+- `auth_routes.py`: register and login endpoints.
+- `dashboard_routes.py`: placeholder for dashboard APIs.
+- `prediction_routes.py`: placeholder for prediction APIs.
+- `stock_routes.py`: placeholder for stock APIs.
+- `user_routes.py`: user profile, user CRUD, user history, sync log, and audit log endpoints.
+
+Current important endpoints:
+
+```txt
+GET    /
+GET    /health
+POST   /api/v1/auth/register
+POST   /api/v1/auth/login
+GET    /api/v1/users/me
+GET    /api/v1/admin/users
+POST   /api/v1/admin/users
+DELETE /api/v1/admin/users/{user_id}
+```
+
+### Backend Services
+
+```txt
+backend/app/services/
+  admin_service.py
+  audit_service.py
+  auth_service.py
+  prediction_service.py
+  stock_service.py
+  user_service.py
+```
+
+- `admin_service.py`: lists, creates, and deactivates users for admin screens.
+- `auth_service.py`: register/login logic and JWT issuance.
+- `audit_service.py`: reserved for audit-specific service logic.
+- `prediction_service.py`: reserved for prediction business logic.
+- `stock_service.py`: reserved for stock business logic.
+- `user_service.py`: reserved for user-specific service logic.
+
+### Backend Schemas
+
+```txt
+backend/app/schemas/
+  admin_schema.py
+  auth_schema.py
+  prediction_schema.py
+  stock_schema.py
+  user_schema.py
+```
+
+- `admin_schema.py`: admin user create/list response models.
+- `auth_schema.py`: register/login/current auth response models.
+- `prediction_schema.py`: placeholder for prediction request/response models.
+- `stock_schema.py`: placeholder for stock request/response models.
+- `user_schema.py`: current-user response model.
+
+### Backend Database And Scripts
+
+```txt
+backend/app/db/
+  check_users.py
+  init_db.py
+  make_super_admin.py
+  seed_data.py
+  open_analytics.duckdb
+```
+
+- `check_users.py`: prints current users from the real DuckDB file.
+- `init_db.py`: placeholder/manual database init script.
+- `make_super_admin.py`: promotes a selected user to `super_admin`.
+- `seed_data.py`: placeholder for seed data.
+- `open_analytics.duckdb`: local database file; ignored by Git.
+
+### Backend ML And Utils
+
+```txt
+backend/app/ml/
+  data_loader.py
+  feature_engineering.py
+  predict_model.py
+  train_model.py
+```
+
+- `data_loader.py`: future data loading for ML.
+- `feature_engineering.py`: future feature preparation.
+- `predict_model.py`: future prediction runtime.
+- `train_model.py`: future model training.
+
+```txt
+backend/app/utils/
+  logger.py
+  password_utils.py
+  response_utils.py
+  token_utils.py
+```
+
+- Utility files are placeholders for reusable backend helpers.
+
+## Frontend Structure
+
+```txt
+frontend/
+  package.json
+  package-lock.json
+  run_frontend.bat
+  tailwind.config.js
+  vite.config.js
+  src/
+    main.jsx
+    App.jsx
+    index.css
+    App.css
+    api/
+    assets/
+    components/
+    pages/
+    routes/
+    store/
+    styles/
+    utils/
+```
+
+### Frontend App Entry
+
+- `frontend/package.json`: npm scripts and frontend dependencies.
+- `frontend/run_frontend.bat`: installs npm packages if needed and starts Vite.
+- `frontend/tailwind.config.js`: Tailwind theme configuration.
+- `frontend/vite.config.js`: Vite configuration.
+- `frontend/src/main.jsx`: React app mount point.
+- `frontend/src/App.jsx`: top-level route definitions.
+- `frontend/src/index.css`: Tailwind imports and base app styles.
+- `frontend/src/App.css`: app-specific CSS.
+
+### Frontend API Clients
+
+```txt
+frontend/src/api/
+  adminApi.js
+  authApi.js
+  axiosClient.js
+  predictionApi.js
+  stockApi.js
+```
+
+- `axiosClient.js`: Axios instance, base URL, auth token injection, 401/403 cleanup.
+- `authApi.js`: login, register, and current-user API calls.
+- `adminApi.js`: admin user list/create/delete API calls.
+- `predictionApi.js`: placeholder for prediction API calls.
+- `stockApi.js`: placeholder for stock API calls.
+
+### Frontend Components
+
+```txt
+frontend/src/components/
+  charts/
+  common/
+  layout/
+  tables/
+```
+
+#### Charts
+
+```txt
+frontend/src/components/charts/
+  PredictionChart.jsx
+  StockChart.jsx
+```
+
+- Chart files are placeholders for future prediction/stock chart components.
+
+#### Common Components
+
+```txt
+frontend/src/components/common/
+  Button.jsx
+  Dropdown.jsx
+  IconButton.jsx
+  Input.jsx
+  Loader.jsx
+  Modal.jsx
+  SearchBox.jsx
+  Select.jsx
+  Spinner.jsx
+  ThemeToggle.jsx
+  Tooltip.jsx
+```
+
+- `IconButton.jsx`: square icon button with tooltip and visual variants.
+- `Input.jsx`: compact shared input style used by forms.
+- `Select.jsx`: custom compact dropdown/select control.
+- `Spinner.jsx`: shared loading spinner.
+- `Tooltip.jsx`: compact hover tooltip.
+- `Button.jsx`: placeholder for shared button component.
+- `Dropdown.jsx`: placeholder for shared dropdown component.
+- `Loader.jsx`: placeholder for page/section loader.
+- `Modal.jsx`: placeholder for modal dialog component.
+- `SearchBox.jsx`: placeholder for shared search box.
+- `ThemeToggle.jsx`: placeholder for theme toggle.
+
+#### Layout Components
+
+```txt
+frontend/src/components/layout/
+  MainLayout.jsx
+  Navbar.jsx
+  PageHeader.jsx
+  Sidebar.jsx
+```
+
+- `MainLayout.jsx`: current app shell, fixed left sidebar, navigation, logout.
+- `Navbar.jsx`: placeholder for top navigation.
+- `PageHeader.jsx`: placeholder for reusable page header.
+- `Sidebar.jsx`: placeholder for sidebar extraction if layout is split later.
+
+#### Table Components
+
+```txt
+frontend/src/components/tables/
+  DataTable.jsx
+  DataTableHeaderFilter.jsx
+  FilterSearchInput.jsx
+  FilterSelect.jsx
+  PredictionTable.jsx
+  StockTable.jsx
+  TableFilterDropdown.jsx
+  TableToolbar.jsx
+```
+
+- `DataTable.jsx`: reusable grid/table wrapper with loading, empty state, row rendering, action column, and header filters.
+- `DataTableHeaderFilter.jsx`: header filter button plus portal-positioned filter dropdown.
+- `TableFilterDropdown.jsx`: Excel-like filter dropdown with sort, text/color filter menu stubs, search, multi-select values, apply/cancel.
+- `TableToolbar.jsx`: search input, role/status filters, search button, clear filters, and right-side icon actions.
+- `FilterSearchInput.jsx`: compact toolbar search input with clear button.
+- `FilterSelect.jsx`: select wrapper with floating clear badge.
+- `PredictionTable.jsx`: placeholder for prediction table.
+- `StockTable.jsx`: placeholder for stock table.
+
+### Frontend Pages
+
+```txt
+frontend/src/pages/
+  admin/
+  auth/
+  dashboard/
+  predictions/
+  settings/
+  stocks/
+```
+
+#### Admin Pages
+
+```txt
+frontend/src/pages/admin/
+  AuditLogs.jsx
+  UserAccounts.jsx
+  UserManagement.jsx
+```
+
+- `UserAccounts.jsx`: admin user account screen; owns page state and uses reusable table/common components.
+- `AuditLogs.jsx`: placeholder for audit log screen.
+- `UserManagement.jsx`: placeholder for user management screen.
+
+#### Auth Pages
+
+```txt
+frontend/src/pages/auth/
+  ForgotPassword.jsx
+  Login.jsx
+  Register.jsx
+  ResetPassword.jsx
+```
+
+- `Login.jsx`: current login screen; stores JWT token and login response.
+- `ForgotPassword.jsx`: placeholder.
+- `Register.jsx`: placeholder.
+- `ResetPassword.jsx`: placeholder.
+
+#### Other Pages
+
+```txt
+frontend/src/pages/dashboard/Dashboard.jsx
+frontend/src/pages/predictions/PredictionHome.jsx
+frontend/src/pages/predictions/PredictionResult.jsx
+frontend/src/pages/settings/ProfileSettings.jsx
+frontend/src/pages/stocks/StockDetails.jsx
+frontend/src/pages/stocks/StockList.jsx
+```
+
+- `Dashboard.jsx`: current dashboard screen.
+- Prediction, settings, and stock pages are placeholders for later workflows.
+
+### Frontend Routes
+
+```txt
+frontend/src/routes/
+  AdminRoute.jsx
+  AppRoutes.jsx
+  ProtectedRoute.jsx
+```
+
+- `ProtectedRoute.jsx`: verifies token with `/users/me`, stores current user, redirects to login if invalid.
+- `AdminRoute.jsx`: allows only `admin` and `super_admin` users.
+- `AppRoutes.jsx`: placeholder for future route extraction.
+
+### Frontend Store, Styles, Utils
+
+```txt
+frontend/src/store/
+  authStore.js
+  stockStore.js
+  themeStore.js
+```
+
+- Store files are placeholders for app state if needed later.
+
+```txt
+frontend/src/styles/
+  globals.css
+  table.css
+  theme.css
+```
+
+- Style files are placeholders for extracted global/table/theme CSS.
+
+```txt
+frontend/src/utils/
+  constants.js
+  formatDate.js
+  formatNumber.js
+```
+
+- Utility files are placeholders for shared frontend constants and formatters.
 
 ## Admin Users
 
@@ -75,104 +507,14 @@ super_admin
 
 Normal users are redirected away from `/admin/users`.
 
-## Backend
-
-Stack:
-
-```txt
-FastAPI
-DuckDB
-JWT authentication
-passlib bcrypt password hashing
-python-jose
-pydantic
-pydantic-settings
-uvicorn
-```
-
-Important files:
-
-```txt
-backend/app/main.py
-backend/app/config.py
-backend/app/database.py
-backend/app/dependencies.py
-backend/app/services/auth_service.py
-backend/app/services/admin_service.py
-backend/app/api/v1/auth_routes.py
-backend/app/api/v1/user_routes.py
-backend/app/api/v1/admin_routes.py
-backend/app/schemas/admin_schema.py
-backend/app/version.py
-```
-
-Admin APIs:
-
-```txt
-GET    /api/v1/admin/users
-POST   /api/v1/admin/users
-DELETE /api/v1/admin/users/{user_id}
-```
-
-General APIs:
-
-```txt
-GET  /
-GET  /health
-POST /api/v1/auth/register
-POST /api/v1/auth/login
-GET  /api/v1/users/me
-GET  /api/v1/users/me/ping
-```
-
-## Frontend
-
-Stack:
-
-```txt
-React
-Vite
-Tailwind CSS
-Axios
-React Router DOM
-Lucide React icons
-```
-
-Important files:
-
-```txt
-frontend/src/App.jsx
-frontend/src/api/axiosClient.js
-frontend/src/api/adminApi.js
-frontend/src/pages/auth/Login.jsx
-frontend/src/pages/dashboard/Dashboard.jsx
-frontend/src/pages/admin/UserAccounts.jsx
-frontend/src/components/layout/MainLayout.jsx
-frontend/src/routes/ProtectedRoute.jsx
-frontend/src/routes/AdminRoute.jsx
-```
-
-Reusable common components currently present:
-
-```txt
-Button.jsx
-Dropdown.jsx
-IconButton.jsx
-Input.jsx
-Loader.jsx
-Modal.jsx
-SearchBox.jsx
-Select.jsx
-Spinner.jsx
-ThemeToggle.jsx
-Tooltip.jsx
-```
-
 ## UI Rules
 
 - Keep the interface compact and professional.
 - Use the existing dark theme.
-- Use reusable common components instead of duplicating styles.
+- Keep visual look consistent when extracting reusable components.
+- Use `components/common` for small shared controls.
+- Use `components/tables` for table, filter, and toolbar components.
+- Use `components/layout` for navigation and app shell.
 - Sidebar stays fixed, minimized, and icon-only.
 - App logo is only the `>` symbol using Lucide `ChevronRight`.
 - Do not put the logo inside a pill, border, or box.
@@ -209,7 +551,7 @@ Frontend:     http://localhost:5173
 
 ## Verification Commands
 
-Compile backend files:
+Compile backend:
 
 ```powershell
 backend\venv\Scripts\python.exe -m py_compile backend\app\config.py backend\app\database.py backend\app\services\admin_service.py backend\app\api\v1\admin_routes.py
@@ -228,9 +570,21 @@ cd frontend
 npm run build
 ```
 
+## Git Notes
+
+Recent local commits:
+
+```txt
+1b602a0 Move reusable table components to tables folder
+8a9cebb Extract user accounts UI to common components
+8431088 user accounts table fixed
+3fead09 Fix admin sidebar user accounts visibility
+```
+
 ## Next Work
 
 - Add edit/update user account flow.
 - Add admin user history screen from `users_history`.
 - Add stronger frontend error display for 401/403 admin API failures.
 - Add backend tests for admin user listing and DB path resolution.
+- Fill placeholder common/layout/table components only when needed by real screens.
