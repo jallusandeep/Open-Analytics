@@ -350,7 +350,7 @@ export default function TableFilterDropdown({
         <button
           type="button"
           onClick={handleApply}
-          className="flex h-7 w-7 items-center justify-center rounded-sm border border-oa-border bg-white text-black transition hover:bg-zinc-200"
+          className="flex h-7 w-7 items-center justify-center rounded-sm border border-oa-border bg-black text-emerald-300 transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
           aria-label="Apply filter"
           title="Apply"
         >

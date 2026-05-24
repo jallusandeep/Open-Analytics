@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -130,6 +131,9 @@ function UserAccounts() {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [deleteUser, setDeleteUser] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [formData, setFormData] = useState(emptyFormData);
 
@@ -369,6 +373,19 @@ function UserAccounts() {
     setFormData(emptyFormData);
   }
 
+  function openDeleteModal(user) {
+    setActionMessage("");
+    setDeleteUser(user);
+  }
+
+  function closeDeleteModal() {
+    if (deleting) {
+      return;
+    }
+
+    setDeleteUser(null);
+  }
+
   function handleInputChange(event) {
     const { name, value } = event.target;
 
@@ -404,25 +421,25 @@ function UserAccounts() {
     }
   }
 
-  async function handleDeleteUser(userId) {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to deactivate this user?"
-    );
-
-    if (!confirmDelete) {
+  async function confirmDeleteUser() {
+    if (!deleteUser) {
       return;
     }
 
+    setDeleting(true);
     setActionMessage("");
 
     try {
-      await deleteAdminUser(userId);
+      await deleteAdminUser(deleteUser.user_id);
       setActionMessage("User deactivated successfully.");
+      setDeleteUser(null);
       loadUsers(page);
     } catch (error) {
       setActionMessage(
         error.response?.data?.detail || "Unable to deactivate user."
       );
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -524,7 +541,7 @@ function UserAccounts() {
         label="Deactivate"
         variant="danger"
         tooltipSide="left"
-        onClick={() => handleDeleteUser(user.user_id)}
+        onClick={() => openDeleteModal(user)}
       />
     );
   }
@@ -672,11 +689,11 @@ function UserAccounts() {
                 type="submit"
                 form="create-user-form"
                 disabled={saving}
-                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-white text-black outline-none transition hover:bg-zinc-200 focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Save user"
               >
                 {saving ? (
-                  <Spinner size="xs" color="dark" />
+                  <Spinner size="xs" color="light" />
                 ) : (
                   <Check size={15} />
                 )}
@@ -746,6 +763,76 @@ function UserAccounts() {
             />
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(deleteUser)}
+        title="Deactivate User"
+        subtitle="Please confirm before deactivating this user."
+        onClose={closeDeleteModal}
+        width="max-w-md"
+        closeOnOverlay={!deleting}
+        footer={
+          <>
+            <IconButton
+              icon={X}
+              label="Cancel"
+              variant="danger"
+              tooltipSide="top"
+              disabled={deleting}
+              onClick={closeDeleteModal}
+            />
+
+            <Tooltip text="Confirm deactivate" side="top">
+              <button
+                type="button"
+                onClick={confirmDeleteUser}
+                disabled={deleting}
+                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Confirm deactivate"
+              >
+                {deleting ? (
+                  <Spinner size="xs" color="light" />
+                ) : (
+                  <Check size={15} />
+                )}
+              </button>
+            </Tooltip>
+          </>
+        }
+      >
+        <div className="flex gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-red-500/40 bg-black text-red-300">
+            <AlertTriangle size={18} />
+          </div>
+
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white">
+              Are you sure you want to deactivate this user?
+            </p>
+
+            <div className="mt-2 space-y-1 text-xs text-oa-muted">
+              <p>
+                <span className="text-oa-text">Name:</span>{" "}
+                {deleteUser?.full_name || "--"}
+              </p>
+
+              <p>
+                <span className="text-oa-text">Email:</span>{" "}
+                {deleteUser?.email || "--"}
+              </p>
+
+              <p>
+                <span className="text-oa-text">Role:</span>{" "}
+                {formatRoleLabel(deleteUser?.role)}
+              </p>
+            </div>
+
+            <p className="mt-3 text-[11px] text-red-300">
+              This will deactivate access for this user.
+            </p>
+          </div>
+        </div>
       </Modal>
 
       <style>
