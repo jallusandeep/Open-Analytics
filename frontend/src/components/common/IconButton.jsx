@@ -17,7 +17,7 @@ function IconButton({
     refresh: "text-amber-300",
     search: "text-sky-300",
     filter: "text-indigo-300",
-    danger: "text-red-300"
+    danger: "text-red-400"
   };
 
   const buttonClass = {
@@ -34,14 +34,17 @@ function IconButton({
     filter:
       "border-oa-border bg-black hover:bg-oa-card",
     danger:
-      "border-oa-border bg-black hover:bg-oa-card"
+      "border-oa-border bg-black hover:bg-red-950/40 hover:border-red-500/60"
   };
+
+  const selectedButtonClass = buttonClass[variant] || buttonClass.default;
+  const selectedIconClass = iconClass[variant] || iconClass.default;
 
   const finalButtonClass = active
     ? "border-oa-border bg-oa-card"
-    : buttonClass[variant];
+    : selectedButtonClass;
 
-  const finalIconClass = active ? "text-white" : iconClass[variant];
+  const finalIconClass = active ? "text-white" : selectedIconClass;
 
   return (
     <Tooltip text={label} side={tooltipSide}>

@@ -223,7 +223,7 @@ export default function TableFilterDropdown({
         <button
           type="button"
           onClick={onClear}
-          className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-oa-muted transition hover:bg-oa-card hover:text-white"
+          className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-red-400 transition hover:bg-red-950/40 hover:text-red-300"
         >
           <X size={13} />
           <span className="truncate">Clear Filter from "{columnName}"</span>
@@ -303,7 +303,7 @@ export default function TableFilterDropdown({
         <button
           type="button"
           onClick={onCancel}
-          className="flex h-7 w-7 items-center justify-center rounded-sm border border-oa-border bg-black text-oa-muted transition hover:bg-oa-card hover:text-white"
+          className="flex h-7 w-7 items-center justify-center rounded-sm border border-oa-border bg-black text-red-400 transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-300"
           aria-label="Cancel filter"
           title="Cancel"
         >

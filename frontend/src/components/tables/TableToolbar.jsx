@@ -55,7 +55,7 @@ function TableToolbar({
           icon={X}
           label="Clear filters"
           type="button"
-          variant="default"
+          variant="danger"
           tooltipSide="top"
           onClick={onClearAll}
         />

@@ -25,7 +25,7 @@ function FilterSelect({
         <button
           type="button"
           onClick={onClear}
-          className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full border border-oa-border bg-black text-oa-muted shadow transition hover:bg-oa-card hover:text-white"
+          className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full border border-oa-border bg-black text-red-400 shadow transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-300"
           aria-label={`Clear ${ariaLabel}`}
           title={`Clear ${ariaLabel}`}
         >
