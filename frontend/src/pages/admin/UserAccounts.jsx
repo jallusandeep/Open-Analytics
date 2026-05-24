@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
-  Filter,
   Plus,
   RefreshCcw,
-  Search,
   Trash2,
   X
 } from "lucide-react";
@@ -18,8 +16,10 @@ import {
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
+import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
-import TableFilterDropdown from "../../components/common/TableFilterDropdown";
+import DataTable from "../../components/common/DataTable";
+import TableToolbar from "../../components/common/TableToolbar";
 
 const tableColumns = [
   { key: "login_id", label: "Login ID" },
@@ -101,6 +101,7 @@ function UserAccounts() {
   const [columnFilters, setColumnFilters] = useState({});
   const [draftColumnFilters, setDraftColumnFilters] = useState({});
   const [activeFilter, setActiveFilter] = useState(null);
+
   const [sortConfig, setSortConfig] = useState({
     key: null,
     direction: null
@@ -116,8 +117,6 @@ function UserAccounts() {
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  const filterRef = useRef(null);
 
   const [formData, setFormData] = useState({
     login_id: "",
@@ -187,17 +186,6 @@ function UserAccounts() {
   useEffect(() => {
     loadUsers(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (filterRef.current && !filterRef.current.contains(event.target)) {
-        setActiveFilter(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const headerValues = useMemo(() => {
@@ -316,7 +304,13 @@ function UserAccounts() {
       [key]: columnFilters[key] || []
     }));
 
-    setActiveFilter((previous) => (previous === key ? null : key));
+    setActiveFilter((previous) => {
+      if (previous === key) {
+        return null;
+      }
+
+      return key;
+    });
   }
 
   function applyColumnFilter(key) {
@@ -442,6 +436,88 @@ function UserAccounts() {
       : "border-red-500/40 bg-red-950/50 text-red-200";
   }
 
+  function renderUserCell(user, column) {
+    const accessText = accessTextForUser(user);
+
+    if (column.key === "login_id") {
+      return (
+        <span key={column.key} className="truncate font-semibold">
+          {user.login_id || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "email") {
+      return (
+        <span key={column.key} className="truncate">
+          {user.email}
+        </span>
+      );
+    }
+
+    if (column.key === "full_name") {
+      return (
+        <span key={column.key} className="truncate">
+          {user.full_name}
+        </span>
+      );
+    }
+
+    if (column.key === "mobile_number") {
+      return (
+        <span key={column.key} className="truncate">
+          {user.mobile_number || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "role") {
+      return (
+        <span key={column.key}>
+          <span
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getRolePill(
+              user.role
+            )}`}
+          >
+            {formatRoleLabel(user.role)}
+          </span>
+        </span>
+      );
+    }
+
+    if (column.key === "status") {
+      return (
+        <span key={column.key}>
+          <span
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getStatusPill(
+              user.is_active
+            )}`}
+          >
+            {user.is_active ? "active" : "inactive"}
+          </span>
+        </span>
+      );
+    }
+
+    return (
+      <span key={column.key} className="truncate">
+        {accessText}
+      </span>
+    );
+  }
+
+  function renderUserActions(user) {
+    return (
+      <IconButton
+        icon={Trash2}
+        label="Deactivate"
+        variant="danger"
+        tooltipSide="left"
+        onClick={() => handleDeleteUser(user.user_id)}
+      />
+    );
+  }
+
   return (
     <MainLayout>
       <section className="p-3">
@@ -453,114 +529,50 @@ function UserAccounts() {
             </p>
           </div>
 
-          <form
-            onSubmit={handleSearchSubmit}
-            className="mb-3 flex flex-wrap items-center gap-2"
-          >
-            <div className="relative flex h-8 w-[360px] max-w-full items-center gap-2 rounded border border-oa-border bg-black px-2">
-              <Search size={14} className="text-oa-muted" />
-
-              <input
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search users"
-                className="w-full bg-transparent pr-6 text-xs outline-none"
-              />
-
-              {searchText.trim() !== "" && (
-                <button
-                  type="button"
-                  onClick={clearSearchFilter}
-                  className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm border border-oa-border bg-black text-oa-muted transition hover:bg-oa-card hover:text-white"
-                  aria-label="Clear search"
-                  title="Clear search"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-
-            <div className="relative">
-              <Select
-                value={roleFilter}
-                onChange={(event) => setRoleFilter(event.target.value)}
-                options={roleOptions}
-                ariaLabel="Role filter"
-                minWidth="w-36"
-              />
-
-              {roleFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={clearRoleFilter}
-                  className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full border border-oa-border bg-black text-oa-muted shadow transition hover:bg-oa-card hover:text-white"
-                  aria-label="Clear role filter"
-                  title="Clear role filter"
-                >
-                  <X size={9} />
-                </button>
-              )}
-            </div>
-
-            <div className="relative">
-              <Select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                options={statusOptions}
-                ariaLabel="Status filter"
-                minWidth="w-36"
-              />
-
-              {statusFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={clearStatusFilter}
-                  className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full border border-oa-border bg-black text-oa-muted shadow transition hover:bg-oa-card hover:text-white"
-                  aria-label="Clear status filter"
-                  title="Clear status filter"
-                >
-                  <X size={9} />
-                </button>
-              )}
-            </div>
-
-            <IconButton
-              icon={Search}
-              label="Search"
-              type="submit"
-              variant="search"
-              tooltipSide="top"
-              disabled={loading}
-            />
-
-            {hasAnyActiveFilter() && (
-              <IconButton
-                icon={X}
-                label="Clear filters"
-                variant="default"
-                tooltipSide="top"
-                onClick={clearAllFilters}
-              />
-            )}
-
-            <div className="ml-auto flex items-center gap-2">
-              <IconButton
-                icon={RefreshCcw}
-                label="Refresh"
-                variant="refresh"
-                tooltipSide="top"
-                onClick={() => loadUsers(page)}
-              />
-
-              <IconButton
-                icon={Plus}
-                label="Add"
-                variant="add"
-                tooltipSide="top"
-                onClick={() => setShowAddForm((value) => !value)}
-              />
-            </div>
-          </form>
+          <TableToolbar
+            searchValue={searchText}
+            onSearchChange={setSearchText}
+            onSearchClear={clearSearchFilter}
+            onSearchSubmit={handleSearchSubmit}
+            searchPlaceholder="Search users"
+            filters={[
+              {
+                value: roleFilter,
+                onChange: (event) => setRoleFilter(event.target.value),
+                options: roleOptions,
+                onClear: clearRoleFilter,
+                showClear: roleFilter !== "all",
+                ariaLabel: "Role filter",
+                minWidth: "w-36"
+              },
+              {
+                value: statusFilter,
+                onChange: (event) => setStatusFilter(event.target.value),
+                options: statusOptions,
+                onClear: clearStatusFilter,
+                showClear: statusFilter !== "all",
+                ariaLabel: "Status filter",
+                minWidth: "w-36"
+              }
+            ]}
+            hasActiveFilter={hasAnyActiveFilter()}
+            onClearAll={clearAllFilters}
+            loading={loading}
+            rightActions={[
+              {
+                icon: RefreshCcw,
+                label: "Refresh",
+                variant: "refresh",
+                onClick: () => loadUsers(page)
+              },
+              {
+                icon: Plus,
+                label: "Add",
+                variant: "add",
+                onClick: () => setShowAddForm((value) => !value)
+              }
+            ]}
+          />
 
           {showAddForm && (
             <form
@@ -568,49 +580,44 @@ function UserAccounts() {
               className="mb-3 rounded border border-oa-border bg-black p-3"
             >
               <div className="mb-3 grid gap-2 md:grid-cols-3">
-                <input
+                <Input
                   name="login_id"
                   value={formData.login_id}
                   onChange={handleInputChange}
                   placeholder="Login ID"
-                  className="h-8 rounded border border-oa-border bg-oa-card px-2 text-xs outline-none"
                   required
                 />
 
-                <input
+                <Input
                   name="full_name"
                   value={formData.full_name}
                   onChange={handleInputChange}
                   placeholder="Full Name"
-                  className="h-8 rounded border border-oa-border bg-oa-card px-2 text-xs outline-none"
                   required
                 />
 
-                <input
+                <Input
                   name="email"
                   type="email"
                   value={formData.email}
                   onChange={handleInputChange}
                   placeholder="Email ID"
-                  className="h-8 rounded border border-oa-border bg-oa-card px-2 text-xs outline-none"
                   required
                 />
 
-                <input
+                <Input
                   name="mobile_number"
                   value={formData.mobile_number}
                   onChange={handleInputChange}
                   placeholder="Mobile Number"
-                  className="h-8 rounded border border-oa-border bg-oa-card px-2 text-xs outline-none"
                 />
 
-                <input
+                <Input
                   name="password"
                   type="password"
                   value={formData.password}
                   onChange={handleInputChange}
                   placeholder="Password"
-                  className="h-8 rounded border border-oa-border bg-oa-card px-2 text-xs outline-none"
                   required
                 />
 
@@ -663,148 +670,35 @@ function UserAccounts() {
             </div>
           )}
 
-          <div className="overflow-hidden rounded border border-oa-border bg-black oa-table-font">
-            <div className="min-w-[1080px]">
-              <div
-                ref={filterRef}
-                className="grid border-b border-oa-border bg-oa-panel px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-oa-muted"
-                style={{ gridTemplateColumns }}
-              >
-                {tableColumns.map((column) => {
-                  const active = isColumnFilterActive(column.key);
-
-                  return (
-                    <div
-                      key={column.key}
-                      className="relative flex min-w-0 items-center justify-between gap-2 pr-8"
-                    >
-                      <span className="truncate">{column.label}</span>
-
-                      <button
-                        type="button"
-                        onClick={() => openColumnFilter(column.key)}
-                        className={`absolute right-3 top-1/2 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border transition ${
-                          active
-                            ? "border-oa-border bg-oa-card text-white"
-                            : "border-oa-border bg-black text-oa-muted hover:bg-oa-card hover:text-white"
-                        }`}
-                        aria-label={`Filter ${column.label}`}
-                        title={`Filter ${column.label}`}
-                      >
-                        <Filter size={10} />
-
-                        {active && (
-                          <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-black bg-emerald-400" />
-                        )}
-                      </button>
-
-                      {activeFilter === column.key && (
-                        <div
-                          className={`absolute top-7 z-50 ${
-                            ["role", "status", "access"].includes(column.key)
-                              ? "right-3"
-                              : "left-0"
-                          }`}
-                        >
-                          <TableFilterDropdown
-                            columnName={column.label}
-                            values={headerValues[column.key] || []}
-                            selectedValues={columnFilters[column.key] || []}
-                            pendingValues={draftColumnFilters[column.key] || []}
-                            align={
-                              ["role", "status", "access"].includes(column.key)
-                                ? "right"
-                                : "left"
-                            }
-                            onChange={(values) =>
-                              setDraftColumnFilters((previous) => ({
-                                ...previous,
-                                [column.key]: values
-                              }))
-                            }
-                            onApply={() => applyColumnFilter(column.key)}
-                            onCancel={() => setActiveFilter(null)}
-                            onSortAsc={() => handleSort(column.key, "asc")}
-                            onSortDesc={() => handleSort(column.key, "desc")}
-                            onClear={() => clearColumnFilter(column.key)}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                <span className="text-center">Action</span>
-              </div>
-
-              {loading ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-8 text-xs text-oa-muted">
-                  <Spinner size="sm" color="light" />
-                  Loading users
-                </div>
-              ) : filteredUsers.length === 0 ? (
-                <div className="px-3 py-8 text-center text-xs text-oa-muted">
-                  No users found.
-                </div>
-              ) : (
-                filteredUsers.map((user) => {
-                  const accessText = accessTextForUser(user);
-
-                  return (
-                    <div
-                      key={user.user_id}
-                      className="grid items-center border-b border-oa-border px-3 py-2 text-[13px] last:border-b-0 hover:bg-oa-panel/60"
-                      style={{ gridTemplateColumns }}
-                    >
-                      <span className="truncate font-semibold">
-                        {user.login_id || "--"}
-                      </span>
-
-                      <span className="truncate">{user.email}</span>
-
-                      <span className="truncate">{user.full_name}</span>
-
-                      <span className="truncate">
-                        {user.mobile_number || "--"}
-                      </span>
-
-                      <span>
-                        <span
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getRolePill(
-                            user.role
-                          )}`}
-                        >
-                          {formatRoleLabel(user.role)}
-                        </span>
-                      </span>
-
-                      <span>
-                        <span
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getStatusPill(
-                            user.is_active
-                          )}`}
-                        >
-                          {user.is_active ? "active" : "inactive"}
-                        </span>
-                      </span>
-
-                      <span className="truncate">{accessText}</span>
-
-                      <span className="flex justify-center">
-                        <IconButton
-                          icon={Trash2}
-                          label="Deactivate"
-                          variant="danger"
-                          tooltipSide="left"
-                          onClick={() => handleDeleteUser(user.user_id)}
-                        />
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          <DataTable
+            columns={tableColumns}
+            rows={filteredUsers}
+            loading={loading}
+            loadingMessage="Loading users"
+            emptyMessage="No users found."
+            gridTemplateColumns={gridTemplateColumns}
+            getRowKey={(user) => user.user_id}
+            renderCell={renderUserCell}
+            renderActions={renderUserActions}
+            filterConfig={{
+              activeFilter,
+              headerValues,
+              columnFilters,
+              draftColumnFilters,
+              rightAlignedKeys: ["role", "status", "access"],
+              isColumnFilterActive,
+              onOpen: openColumnFilter,
+              onClose: () => setActiveFilter(null),
+              onChange: (key, values) =>
+                setDraftColumnFilters((previous) => ({
+                  ...previous,
+                  [key]: values
+                })),
+              onApply: applyColumnFilter,
+              onSort: handleSort,
+              onClear: clearColumnFilter
+            }}
+          />
 
           <div className="mt-3 flex flex-col gap-2 text-xs text-oa-muted md:flex-row md:items-center md:justify-between">
             <span>
