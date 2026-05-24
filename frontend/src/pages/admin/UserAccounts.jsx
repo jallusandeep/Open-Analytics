@@ -431,7 +431,7 @@ function UserAccounts() {
 
     try {
       await deleteAdminUser(deleteUser.user_id);
-      setActionMessage("User deactivated successfully.");
+      setActionMessage("User deleted successfully.");
       setDeleteUser(null);
       loadUsers(page);
     } catch (error) {
@@ -538,7 +538,7 @@ function UserAccounts() {
     return (
       <IconButton
         icon={Trash2}
-        label="Deactivate"
+        label="Delete"
         variant="danger"
         tooltipSide="left"
         onClick={() => openDeleteModal(user)}
@@ -767,8 +767,8 @@ function UserAccounts() {
 
       <Modal
         open={Boolean(deleteUser)}
-        title="Deactivate User"
-        subtitle="Please confirm before deactivating this user."
+        title="Delete User"
+        subtitle="Please confirm before deleting this user."
         onClose={closeDeleteModal}
         width="max-w-md"
         closeOnOverlay={!deleting}
@@ -783,13 +783,13 @@ function UserAccounts() {
               onClick={closeDeleteModal}
             />
 
-            <Tooltip text="Confirm deactivate" side="top">
+            <Tooltip text="Confirm delete" side="top">
               <button
                 type="button"
                 onClick={confirmDeleteUser}
                 disabled={deleting}
                 className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Confirm deactivate"
+                aria-label="Confirm delete"
               >
                 {deleting ? (
                   <Spinner size="xs" color="light" />
@@ -808,7 +808,7 @@ function UserAccounts() {
 
           <div className="min-w-0">
             <p className="text-sm font-semibold text-white">
-              Are you sure you want to deactivate this user?
+              Are you sure you want to delete this user?
             </p>
 
             <div className="mt-2 space-y-1 text-xs text-oa-muted">
@@ -829,7 +829,7 @@ function UserAccounts() {
             </div>
 
             <p className="mt-3 text-[11px] text-red-300">
-              This will deactivate access for this user.
+              This will remove this user from the User Accounts list.
             </p>
           </div>
         </div>

@@ -21,7 +21,7 @@ def list_users_service(
     page_size = min(max(page_size, 1), 100)
     offset = (page - 1) * page_size
 
-    filters = []
+    filters = ["COALESCE(record_status, 'S') != 'D'"]
     params = []
 
     if search:
@@ -52,8 +52,7 @@ def list_users_service(
         params.append(is_active)
 
     where_clause = ""
-    if filters:
-        where_clause = "WHERE " + " AND ".join(filters)
+    where_clause = "WHERE " + " AND ".join(filters)
 
     conn = get_connection()
 
@@ -227,6 +226,7 @@ def delete_user_service(user_id: str, current_user: dict):
         SELECT user_id, role
         FROM users
         WHERE user_id = ?
+          AND COALESCE(record_status, 'S') != 'D'
         """,
         [user_id]
     ).fetchone()
@@ -251,6 +251,7 @@ def delete_user_service(user_id: str, current_user: dict):
         """
         UPDATE users
         SET is_active = FALSE,
+            record_status = 'D',
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
         """,
@@ -260,6 +261,6 @@ def delete_user_service(user_id: str, current_user: dict):
     conn.close()
 
     return {
-        "message": "User deactivated successfully",
+        "message": "User deleted successfully",
         "user_id": user_id
     }   
