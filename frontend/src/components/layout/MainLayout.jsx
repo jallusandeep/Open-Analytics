@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Database,
   Home,
+  Link,
   LogOut,
   Search,
   Settings,
@@ -19,8 +20,8 @@ function MainLayout({ children }) {
   const savedUser =
     localStorage.getItem("open_analytics_current_user") ||
     localStorage.getItem("open_analytics_user");
-  const user = savedUser ? JSON.parse(savedUser) : null;
 
+  const user = savedUser ? JSON.parse(savedUser) : null;
   const isAdminUser = ["admin", "super_admin"].includes(user?.role);
 
   function handleLogout() {
@@ -64,6 +65,14 @@ function MainLayout({ children }) {
       activeLine: "bg-amber-300"
     },
     {
+      label: "Connections",
+      icon: Link,
+      path: "/connections",
+      show: isAdminUser,
+      color: "text-teal-300",
+      activeLine: "bg-teal-300"
+    },
+    {
       label: "User Accounts",
       icon: Users,
       path: "/admin/users",
@@ -104,9 +113,7 @@ function MainLayout({ children }) {
                   <button
                     onClick={() => navigate(item.path)}
                     className={`relative flex h-10 w-10 items-center justify-center rounded transition ${
-                      isActive
-                        ? "bg-oa-card"
-                        : "hover:bg-oa-card"
+                      isActive ? "bg-oa-card" : "hover:bg-oa-card"
                     }`}
                     aria-label={item.label}
                   >

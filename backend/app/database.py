@@ -239,6 +239,39 @@ def init_database():
         """)
 
         # -----------------------------
+        # External connections
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS external_connections (
+                connection_id VARCHAR PRIMARY KEY,
+                provider VARCHAR UNIQUE NOT NULL,
+                api_key VARCHAR,
+                api_secret VARCHAR,
+                redirect_url VARCHAR,
+                access_token VARCHAR,
+                connection_status VARCHAR DEFAULT 'saved',
+                last_tested_at TIMESTAMP,
+                record_status VARCHAR DEFAULT 'S',
+                version_no INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_secret VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN redirect_url VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN connection_status VARCHAR DEFAULT 'saved';")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN last_tested_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN created_by VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN updated_by VARCHAR;")
+
+        # -----------------------------
         # Stocks
         # -----------------------------
         conn.execute("""

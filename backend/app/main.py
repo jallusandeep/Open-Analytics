@@ -8,6 +8,7 @@ from app.version import APP_VERSION, SCHEMA_VERSION
 from app.api.v1.auth_routes import router as auth_router
 from app.api.v1.user_routes import router as user_router
 from app.api.v1.admin_routes import router as admin_router
+from app.api.v1.connection_routes import router as connection_router
 
 
 app = FastAPI(
@@ -36,6 +37,7 @@ def startup_event():
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(connection_router, prefix="/api/v1")
 
 
 @app.get("/")

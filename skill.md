@@ -33,6 +33,17 @@ C:\Projects\open-analytics
 - `backend/app/config.py` loads `.env` from the backend folder.
 - `backend/app/database.py` resolves relative DB paths from `backend/`.
 - This prevents accidentally using `C:\Projects\open-analytics\app\db\open_analytics.duckdb`.
+- The active app DB should resolve to `C:\Projects\open-analytics\backend\app\db\open_analytics.duckdb`.
+
+### Connections Feature
+
+- Admin users can open `/connections` from the left sidebar.
+- `backend/app/api/v1/connection_routes.py` exposes admin-only connection APIs.
+- `backend/app/services/connection_service.py` stores Upstox credentials in DuckDB and tests provider reachability.
+- `backend/app/schemas/connection_schema.py` owns request/response models for connection APIs.
+- `frontend/src/pages/admin/Connections.jsx` owns the Connections admin screen.
+- `frontend/src/api/connectionApi.js` isolates frontend connection API calls.
+- The `external_connections` table is initialized from `backend/app/database.py`.
 
 ### User Accounts Component Refactor
 
@@ -84,7 +95,6 @@ open-analytics/
   .gitignore
   README.md
   skill.md
-  start_all.bat
   backend/
   docs/
   frontend/
@@ -96,7 +106,6 @@ Descriptions:
 - `.gitignore`: excludes virtualenvs, `node_modules`, build output, logs, `.env`, and DuckDB files.
 - `README.md`: basic run instructions, URLs, admin login, and version notes.
 - `skill.md`: project handoff and architecture guide for future work.
-- `start_all.bat`: root shortcut to launch the application.
 - `backend/`: FastAPI backend, DuckDB setup, services, API routes, and scripts.
 - `frontend/`: React/Vite frontend, reusable components, pages, routes, and API clients.
 - `docs/`: architecture, API, database, and UI notes.
@@ -142,6 +151,7 @@ backend/
 backend/app/api/v1/
   admin_routes.py
   auth_routes.py
+  connection_routes.py
   dashboard_routes.py
   prediction_routes.py
   stock_routes.py
@@ -150,6 +160,7 @@ backend/app/api/v1/
 
 - `admin_routes.py`: admin-only user account endpoints.
 - `auth_routes.py`: register and login endpoints.
+- `connection_routes.py`: admin-only external provider connection endpoints.
 - `dashboard_routes.py`: placeholder for dashboard APIs.
 - `prediction_routes.py`: placeholder for prediction APIs.
 - `stock_routes.py`: placeholder for stock APIs.
@@ -166,6 +177,10 @@ GET    /api/v1/users/me
 GET    /api/v1/admin/users
 POST   /api/v1/admin/users
 DELETE /api/v1/admin/users/{user_id}
+GET    /api/v1/connections
+POST   /api/v1/connections/upstox
+POST   /api/v1/connections/upstox/test
+DELETE /api/v1/connections/upstox
 ```
 
 ### Backend Services
@@ -175,6 +190,7 @@ backend/app/services/
   admin_service.py
   audit_service.py
   auth_service.py
+  connection_service.py
   prediction_service.py
   stock_service.py
   user_service.py
@@ -182,6 +198,7 @@ backend/app/services/
 
 - `admin_service.py`: lists, creates, and deactivates users for admin screens.
 - `auth_service.py`: register/login logic and JWT issuance.
+- `connection_service.py`: stores, tests, lists, and disconnects external provider connections.
 - `audit_service.py`: reserved for audit-specific service logic.
 - `prediction_service.py`: reserved for prediction business logic.
 - `stock_service.py`: reserved for stock business logic.
@@ -193,6 +210,7 @@ backend/app/services/
 backend/app/schemas/
   admin_schema.py
   auth_schema.py
+  connection_schema.py
   prediction_schema.py
   stock_schema.py
   user_schema.py
@@ -200,6 +218,7 @@ backend/app/schemas/
 
 - `admin_schema.py`: admin user create/list response models.
 - `auth_schema.py`: register/login/current auth response models.
+- `connection_schema.py`: Upstox connection request and connection response models.
 - `prediction_schema.py`: placeholder for prediction request/response models.
 - `stock_schema.py`: placeholder for stock request/response models.
 - `user_schema.py`: current-user response model.
@@ -288,6 +307,7 @@ frontend/src/api/
   adminApi.js
   authApi.js
   axiosClient.js
+  connectionApi.js
   predictionApi.js
   stockApi.js
 ```
@@ -295,6 +315,7 @@ frontend/src/api/
 - `axiosClient.js`: Axios instance, base URL, auth token injection, 401/403 cleanup.
 - `authApi.js`: login, register, and current-user API calls.
 - `adminApi.js`: admin user list/create/delete API calls.
+- `connectionApi.js`: list, save, test, and disconnect provider connection API calls.
 - `predictionApi.js`: placeholder for prediction API calls.
 - `stockApi.js`: placeholder for stock API calls.
 
@@ -322,8 +343,6 @@ frontend/src/components/charts/
 
 ```txt
 frontend/src/components/common/
-  Button.jsx
-  Dropdown.jsx
   IconButton.jsx
   Input.jsx
   Loader.jsx
@@ -340,11 +359,9 @@ frontend/src/components/common/
 - `Select.jsx`: custom compact dropdown/select control.
 - `Spinner.jsx`: shared loading spinner.
 - `Tooltip.jsx`: compact hover tooltip.
-- `Button.jsx`: placeholder for shared button component.
-- `Dropdown.jsx`: placeholder for shared dropdown component.
 - `Loader.jsx`: placeholder for page/section loader.
 - `Modal.jsx`: placeholder for modal dialog component.
-- `SearchBox.jsx`: placeholder for shared search box.
+- `SearchBox.jsx`: shared toolbar/filter search control with compact focus styling.
 - `ThemeToggle.jsx`: placeholder for theme toggle.
 
 #### Layout Components
@@ -402,11 +419,13 @@ frontend/src/pages/
 ```txt
 frontend/src/pages/admin/
   AuditLogs.jsx
+  Connections.jsx
   UserAccounts.jsx
   UserManagement.jsx
 ```
 
 - `UserAccounts.jsx`: admin user account screen; owns page state and uses reusable table/common components.
+- `Connections.jsx`: admin external connection screen for saving/testing Upstox credentials.
 - `AuditLogs.jsx`: placeholder for audit log screen.
 - `UserManagement.jsx`: placeholder for user management screen.
 
@@ -486,9 +505,10 @@ frontend/src/utils/
 Current verified users in the real backend database:
 
 ```txt
-admin@openanalytics.com   role=admin        active=True
-sandeep@test.com          role=super_admin  active=True
-sandeep2@test.com         role=user         active=True
+admin@openanalytics.com       role=admin        active=True
+superadmin@openanalytics.com  role=super_admin  active=True
+sandeep@test.com              role=super_admin  active=False
+sandeep2@test.com             role=user         active=False
 ```
 
 Default admin login:
@@ -538,7 +558,7 @@ frontend\run_frontend.bat
 Full app:
 
 ```bat
-start_all.bat
+scripts\start_all.bat
 ```
 
 URLs:
@@ -554,7 +574,7 @@ Frontend:     http://localhost:5173
 Compile backend:
 
 ```powershell
-backend\venv\Scripts\python.exe -m py_compile backend\app\config.py backend\app\database.py backend\app\services\admin_service.py backend\app\api\v1\admin_routes.py
+backend\venv\Scripts\python.exe -m py_compile backend\app\config.py backend\app\database.py backend\app\main.py backend\app\services\admin_service.py backend\app\services\connection_service.py backend\app\api\v1\admin_routes.py backend\app\api\v1\connection_routes.py
 ```
 
 Check users:
@@ -583,8 +603,8 @@ Recent local commits:
 
 ## Next Work
 
-- Add edit/update user account flow.
+- Add Upstox OAuth/token refresh flow if live authenticated API calls are needed.
 - Add admin user history screen from `users_history`.
 - Add stronger frontend error display for 401/403 admin API failures.
 - Add backend tests for admin user listing and DB path resolution.
-- Fill placeholder common/layout/table components only when needed by real screens.
+- Add backend tests for external connection save/list/disconnect behavior.
