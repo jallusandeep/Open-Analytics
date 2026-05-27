@@ -24,6 +24,12 @@ import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
+import {
+  oaCardStyles,
+  oaFormTextStyles,
+  oaPillStyles,
+  oaTableStyles
+} from "../../components/common/uiStyles";
 import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
 
@@ -554,9 +560,7 @@ function UserAccounts() {
         role: editFormData.role,
         is_active: editFormData.is_active,
         access_restrictions:
-          editFormData.role === "user"
-            ? editFormData.access_restrictions
-            : []
+          editFormData.role === "user" ? editFormData.access_restrictions : []
       });
 
       setEditUser(null);
@@ -654,11 +658,7 @@ function UserAccounts() {
     if (column.key === "role") {
       return (
         <span key={column.key}>
-          <span
-            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getRolePill(
-              user.role
-            )}`}
-          >
+          <span className={`${oaPillStyles.base} ${getRolePill(user.role)}`}>
             {formatRoleLabel(user.role)}
           </span>
         </span>
@@ -668,11 +668,7 @@ function UserAccounts() {
     if (column.key === "status") {
       return (
         <span key={column.key}>
-          <span
-            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${getStatusPill(
-              user.is_active
-            )}`}
-          >
+          <span className={`${oaPillStyles.base} ${getStatusPill(user.is_active)}`}>
             {user.is_active ? "active" : "inactive"}
           </span>
         </span>
@@ -713,10 +709,10 @@ function UserAccounts() {
   return (
     <MainLayout>
       <section className="p-3">
-        <div className="rounded border border-oa-border bg-oa-card p-3">
+        <div className={`${oaCardStyles.wrapper} p-3`}>
           <div className="mb-3">
-            <h2 className="text-sm font-semibold">User Accounts</h2>
-            <p className="text-[11px] text-oa-muted">
+            <h2 className={oaCardStyles.headerTitle}>User Accounts</h2>
+            <p className={oaCardStyles.headerSubtitle}>
               Manage users, roles, restrictions, and active status.
             </p>
           </div>
@@ -768,7 +764,9 @@ function UserAccounts() {
           />
 
           {actionMessage && (
-            <div className="mb-3 rounded border border-oa-border bg-black px-3 py-2 text-xs text-oa-muted">
+            <div
+              className={`mb-3 rounded border border-oa-border bg-black px-3 py-2 ${oaTableStyles.mutedText}`}
+            >
               {actionMessage}
             </div>
           )}
@@ -803,7 +801,9 @@ function UserAccounts() {
             }}
           />
 
-          <div className="mt-3 flex flex-col gap-2 text-xs text-oa-muted md:flex-row md:items-center md:justify-between">
+          <div
+            className={`mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between ${oaTableStyles.mutedText}`}
+          >
             <span>
               Records: {totalRecords} | Page {page} of {totalPages}
             </span>
@@ -1080,23 +1080,23 @@ function UserAccounts() {
           </div>
 
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-white">
+            <p className={oaCardStyles.headerTitle}>
               Are you sure you want to delete this user?
             </p>
 
-            <div className="mt-2 space-y-1 text-xs text-oa-muted">
+            <div className={`mt-2 space-y-1 ${oaFormTextStyles.helper}`}>
               <p>
-                <span className="text-oa-text">Name:</span>{" "}
+                <span className={oaFormTextStyles.value}>Name:</span>{" "}
                 {deleteUser?.full_name || "--"}
               </p>
 
               <p>
-                <span className="text-oa-text">Email:</span>{" "}
+                <span className={oaFormTextStyles.value}>Email:</span>{" "}
                 {deleteUser?.email || "--"}
               </p>
 
               <p>
-                <span className="text-oa-text">Role:</span>{" "}
+                <span className={oaFormTextStyles.value}>Role:</span>{" "}
                 {formatRoleLabel(deleteUser?.role)}
               </p>
             </div>

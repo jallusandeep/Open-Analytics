@@ -10,6 +10,7 @@ import {
 import { useMemo, useState } from "react";
 
 import SearchBox from "../common/SearchBox";
+import { oaTableFilterDropdownStyles } from "../common/uiStyles";
 
 function normalizeValue(value) {
   if (value === null || value === undefined || value === "") {
@@ -19,30 +20,8 @@ function normalizeValue(value) {
   return String(value);
 }
 
-function checkboxClassName(checked) {
-  return checked
-    ? "border-white bg-white text-black"
-    : "border-oa-border bg-black text-transparent";
-}
-
-function menuButtonClassName(active) {
-  return `flex h-8 w-full items-center justify-between px-3 text-left text-xs normal-case tracking-normal transition ${
-    active
-      ? "bg-oa-card text-white"
-      : "text-oa-muted hover:bg-oa-card hover:text-white"
-  }`;
-}
-
-function flyoutOptionClassName(active) {
-  return `flex h-8 w-full items-center justify-between gap-2 px-3 text-left text-xs normal-case tracking-normal transition ${
-    active
-      ? "bg-sky-950/30 text-white"
-      : "text-oa-muted hover:bg-oa-card hover:text-white"
-  }`;
-}
-
 function SelectedDot() {
-  return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />;
+  return <span className={oaTableFilterDropdownStyles.selectedDot} />;
 }
 
 function FlyoutSection({
@@ -58,9 +37,16 @@ function FlyoutSection({
   }
 
   return (
-    <div className="group relative">
-      <button type="button" className={menuButtonClassName(Boolean(selectedValue))}>
-        <span className="flex items-center gap-2">
+    <div className={oaTableFilterDropdownStyles.flyoutWrapper}>
+      <button
+        type="button"
+        className={`${oaTableFilterDropdownStyles.menuButton} ${
+          selectedValue
+            ? oaTableFilterDropdownStyles.menuButtonActive
+            : oaTableFilterDropdownStyles.menuButtonDefault
+        }`}
+      >
+        <span className={oaTableFilterDropdownStyles.menuButtonLeft}>
           <Icon size={13} />
           {label}
           {selectedValue && <SelectedDot />}
@@ -70,8 +56,10 @@ function FlyoutSection({
       </button>
 
       <div
-        className={`absolute top-0 z-[70] hidden overflow-hidden rounded border border-oa-border bg-black shadow-2xl group-hover:block ${flyoutDirection} ${
-          label === "Text Filters" ? "w-48" : "w-44"
+        className={`${oaTableFilterDropdownStyles.flyoutMenu} ${flyoutDirection} ${
+          label === "Text Filters"
+            ? oaTableFilterDropdownStyles.flyoutWide
+            : oaTableFilterDropdownStyles.flyoutNormal
         }`}
       >
         {options.map((option) => {
@@ -82,7 +70,11 @@ function FlyoutSection({
               key={option}
               type="button"
               onClick={() => onSelect(option)}
-              className={flyoutOptionClassName(active)}
+              className={`${oaTableFilterDropdownStyles.flyoutOption} ${
+                active
+                  ? oaTableFilterDropdownStyles.flyoutOptionActive
+                  : oaTableFilterDropdownStyles.flyoutOptionDefault
+              }`}
             >
               <span className="truncate">{option}</span>
               {active && <SelectedDot />}
@@ -107,14 +99,6 @@ export default function TableFilterDropdown({
   onClear,
   align = "left",
 
-  /*
-    These are intentionally empty by default.
-
-    If a column really supports these options, pass them from the parent:
-    sortColorOptions={["No Color", "White", "Grey", "Black"]}
-    textFilterOptions={["Equals", "Contains"]}
-    filterColorOptions={["No Color", "White"]}
-  */
   sortColorOptions = [],
   textFilterOptions = [],
   filterColorOptions = []
@@ -161,6 +145,12 @@ export default function TableFilterDropdown({
       ? "right-full mr-1 left-auto"
       : "left-full ml-1 right-auto";
 
+  function getCheckboxClassName(checked) {
+    return checked
+      ? oaTableFilterDropdownStyles.checkboxChecked
+      : oaTableFilterDropdownStyles.checkboxUnchecked;
+  }
+
   function toggleValue(value) {
     const normalized = normalizeValue(value);
 
@@ -198,14 +188,14 @@ export default function TableFilterDropdown({
   }
 
   return (
-    <div className="w-[310px] max-w-[calc(100vw-32px)] overflow-visible rounded border border-oa-border bg-black text-oa-text shadow-2xl animate-[oaMenuIn_0.14s_ease-out]">
+    <div className={oaTableFilterDropdownStyles.wrapper}>
       {hasAnyTopOption && (
-        <div className="py-1">
+        <div className={oaTableFilterDropdownStyles.topSection}>
           {hasSortAsc && (
             <button
               type="button"
               onClick={onSortAsc}
-              className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-oa-muted transition hover:bg-oa-card hover:text-white"
+              className={oaTableFilterDropdownStyles.actionButton}
             >
               <ArrowDownAZ size={13} />
               <span>Sort A to Z</span>
@@ -216,7 +206,7 @@ export default function TableFilterDropdown({
             <button
               type="button"
               onClick={onSortDesc}
-              className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-oa-muted transition hover:bg-oa-card hover:text-white"
+              className={oaTableFilterDropdownStyles.actionButton}
             >
               <ArrowUpAZ size={13} />
               <span>Sort Z to A</span>
@@ -254,7 +244,7 @@ export default function TableFilterDropdown({
             <button
               type="button"
               onClick={handleClear}
-              className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-red-400 transition hover:bg-red-950/40 hover:text-red-300"
+              className={oaTableFilterDropdownStyles.clearColumnButton}
             >
               <X size={13} />
               <span className="truncate">Clear Filter from "{columnName}"</span>
@@ -263,7 +253,7 @@ export default function TableFilterDropdown({
         </div>
       )}
 
-      <div className="border-y border-oa-border p-2">
+      <div className={oaTableFilterDropdownStyles.searchSection}>
         <SearchBox
           value={searchText}
           onChange={setSearchText}
@@ -275,14 +265,14 @@ export default function TableFilterDropdown({
         />
       </div>
 
-      <div className="max-h-56 overflow-y-auto p-1">
+      <div className={oaTableFilterDropdownStyles.valuesSection}>
         <button
           type="button"
           onClick={toggleAll}
-          className="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-xs normal-case tracking-normal text-oa-muted transition hover:bg-oa-card hover:text-white"
+          className={oaTableFilterDropdownStyles.valueButton}
         >
           <span
-            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${checkboxClassName(
+            className={`${oaTableFilterDropdownStyles.checkbox} ${getCheckboxClassName(
               isAllSelected
             )}`}
           >
@@ -293,7 +283,7 @@ export default function TableFilterDropdown({
         </button>
 
         {filteredValues.length === 0 ? (
-          <div className="px-2 py-3 text-center text-[11px] normal-case tracking-normal text-oa-muted">
+          <div className={oaTableFilterDropdownStyles.emptyValues}>
             No values
           </div>
         ) : (
@@ -307,15 +297,15 @@ export default function TableFilterDropdown({
                 key={value}
                 type="button"
                 onClick={() => toggleValue(value)}
-                className={`flex h-8 w-full items-center justify-between gap-2 rounded-sm px-2 text-left text-xs normal-case tracking-normal transition ${
+                className={`${oaTableFilterDropdownStyles.valueRow} ${
                   selected
-                    ? "bg-oa-card/70 text-white"
-                    : "text-oa-muted hover:bg-oa-card hover:text-white"
+                    ? oaTableFilterDropdownStyles.valueRowSelected
+                    : oaTableFilterDropdownStyles.valueRowDefault
                 }`}
               >
-                <span className="flex min-w-0 items-center gap-2">
+                <span className={oaTableFilterDropdownStyles.valueLeft}>
                   <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${checkboxClassName(
+                    className={`${oaTableFilterDropdownStyles.checkbox} ${getCheckboxClassName(
                       selected
                     )}`}
                   >
@@ -326,7 +316,7 @@ export default function TableFilterDropdown({
                 </span>
 
                 {item.count !== undefined && (
-                  <span className="shrink-0 text-[10px] text-oa-muted">
+                  <span className={oaTableFilterDropdownStyles.valueCount}>
                     {item.count}
                   </span>
                 )}
@@ -336,11 +326,11 @@ export default function TableFilterDropdown({
         )}
       </div>
 
-      <div className="flex items-center justify-end gap-2 border-t border-oa-border px-2 py-2">
+      <div className={oaTableFilterDropdownStyles.footer}>
         <button
           type="button"
           onClick={onCancel}
-          className="flex h-7 w-7 items-center justify-center rounded-sm border border-oa-border bg-black text-red-400 transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-300"
+          className={oaTableFilterDropdownStyles.cancelButton}
           aria-label="Cancel filter"
           title="Cancel"
         >
@@ -350,7 +340,7 @@ export default function TableFilterDropdown({
         <button
           type="button"
           onClick={handleApply}
-          className="flex h-7 w-7 items-center justify-center rounded-sm border border-oa-border bg-black text-emerald-300 transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
+          className={oaTableFilterDropdownStyles.applyButton}
           aria-label="Apply filter"
           title="Apply"
         >

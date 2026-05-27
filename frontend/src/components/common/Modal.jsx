@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import IconButton from "./IconButton";
+import { oaCardStyles } from "./uiStyles";
 
 function Modal({
   open = false,
@@ -63,13 +64,15 @@ function Modal({
         <div className="flex items-start justify-between gap-4 rounded-t border-b border-oa-border bg-oa-panel px-4 py-3">
           <div className="min-w-0">
             {title && (
-              <h2 className="truncate text-[14px] font-semibold text-white">
+              <h2 className={`truncate ${oaCardStyles.modalTitle}`}>
                 {title}
               </h2>
             )}
 
             {subtitle && (
-              <p className="mt-0.5 text-[11px] text-oa-muted">{subtitle}</p>
+              <p className={`mt-0.5 ${oaCardStyles.modalSubtitle}`}>
+                {subtitle}
+              </p>
             )}
           </div>
 
@@ -84,7 +87,9 @@ function Modal({
           )}
         </div>
 
-        <div className="overflow-visible px-4 py-4">{children}</div>
+        <div className={`overflow-visible px-4 py-4 ${oaCardStyles.modalBody}`}>
+          {children}
+        </div>
 
         {footer && (
           <div className="flex items-center justify-end gap-2 rounded-b border-t border-oa-border bg-black px-4 py-3">

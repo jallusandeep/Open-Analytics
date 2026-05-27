@@ -1,6 +1,7 @@
 import { Search, X } from "lucide-react";
 
 import IconButton from "../common/IconButton";
+import { oaToolbarStyles } from "../common/uiStyles";
 import FilterSearchInput from "./FilterSearchInput";
 import FilterSelect from "./FilterSelect";
 
@@ -18,10 +19,7 @@ function TableToolbar({
   rightActions = []
 }) {
   return (
-    <form
-      onSubmit={onSearchSubmit}
-      className="mb-3 flex flex-wrap items-center gap-2"
-    >
+    <form onSubmit={onSearchSubmit} className={oaToolbarStyles.wrapper}>
       <FilterSearchInput
         value={searchValue}
         onChange={onSearchChange}
@@ -64,7 +62,7 @@ function TableToolbar({
       )}
 
       {rightActions.length > 0 && (
-        <div className="ml-auto flex items-center gap-2">
+        <div className={oaToolbarStyles.rightActions}>
           {rightActions.map((action) => (
             <IconButton
               key={action.label}

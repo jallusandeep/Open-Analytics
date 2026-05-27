@@ -1,4 +1,5 @@
 import Select from "../common/Select";
+import { oaFilterSelectStyles } from "../common/uiStyles";
 
 function FilterSelect({
   value,
@@ -9,7 +10,7 @@ function FilterSelect({
   minWidth = "w-36"
 }) {
   return (
-    <div className="relative">
+    <div className={oaFilterSelectStyles.wrapper}>
       <Select
         value={value}
         onChange={onChange}
@@ -20,7 +21,7 @@ function FilterSelect({
 
       {showClear && (
         <span
-          className="pointer-events-none absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-black bg-sky-400 shadow"
+          className={oaFilterSelectStyles.activeDot}
           aria-hidden="true"
           title={`${ariaLabel} active`}
         />

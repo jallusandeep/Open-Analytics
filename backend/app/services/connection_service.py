@@ -56,7 +56,7 @@ def get_upstox_connection_raw(conn):
             created_at,
             updated_at
         FROM external_connections
-        WHERE provider = ? AND record_status = 'S'
+        WHERE provider = ?
         LIMIT 1;
     """, [UPSTOX_PROVIDER]).fetchone()
 
@@ -91,15 +91,12 @@ def list_connections_service():
 
 
 def save_upstox_connection_service(request, current_user):
-    api_key = request.api_key.strip() if request.api_key else ""
-    api_secret = request.api_secret.strip() if request.api_secret else None
-    redirect_url = request.redirect_url.strip() if request.redirect_url else None
-    access_token = request.access_token.strip() if request.access_token else None
+    access_token = request.access_token.strip() if request.access_token else ""
 
-    if not api_key:
+    if not access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox API key is required."
+            detail="Upstox access token is required."
         )
 
     conn = get_connection()
@@ -109,28 +106,21 @@ def save_upstox_connection_service(request, current_user):
 
         if existing:
             connection_id = existing[0]
-            existing_api_secret = existing[3]
-            existing_access_token = existing[5]
-
-            final_api_secret = api_secret or existing_api_secret
-            final_access_token = access_token or existing_access_token
 
             conn.execute("""
                 UPDATE external_connections
                 SET
-                    api_key = ?,
-                    api_secret = ?,
-                    redirect_url = ?,
+                    api_key = NULL,
+                    api_secret = NULL,
+                    redirect_url = NULL,
                     access_token = ?,
                     connection_status = 'saved',
+                    record_status = 'S',
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = ?
                 WHERE connection_id = ?;
             """, [
-                api_key,
-                final_api_secret,
-                redirect_url,
-                final_access_token,
+                access_token,
                 current_user["user_id"],
                 connection_id
             ])
@@ -156,9 +146,9 @@ def save_upstox_connection_service(request, current_user):
             """, [
                 connection_id,
                 UPSTOX_PROVIDER,
-                api_key,
-                api_secret,
-                redirect_url,
+                None,
+                None,
+                None,
                 access_token,
                 "saved",
                 "S",
@@ -171,8 +161,11 @@ def save_upstox_connection_service(request, current_user):
 
         return {
             "status": "success",
-            "message": "Upstox credentials saved successfully."
+            "message": "Upstox token saved successfully."
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         try:
@@ -195,7 +188,7 @@ def test_upstox_connection_service(current_user):
     try:
         existing = get_upstox_connection_raw(conn)
 
-        if not existing:
+        if not existing or existing[6] == "disconnected":
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Upstox connection is not configured."
@@ -280,7 +273,7 @@ def disconnect_upstox_connection_service(current_user):
     try:
         existing = get_upstox_connection_raw(conn)
 
-        if not existing:
+        if not existing or existing[6] == "disconnected":
             return {
                 "status": "success",
                 "message": "Upstox connection is already disconnected."

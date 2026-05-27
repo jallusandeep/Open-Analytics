@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Filter } from "lucide-react";
 
+import { oaHeaderFilterStyles } from "../common/uiStyles";
 import TableFilterDropdown from "./TableFilterDropdown";
 
 const FILTER_DROPDOWN_WIDTH = 270;
@@ -95,8 +96,8 @@ function DataTableHeaderFilter({
   const selected = active || open;
 
   const buttonStateClass = selected
-    ? "border-blue-500 bg-sky-950/30 text-sky-300"
-    : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white";
+    ? oaHeaderFilterStyles.buttonSelected
+    : oaHeaderFilterStyles.buttonDefault;
 
   return (
     <>
@@ -104,22 +105,20 @@ function DataTableHeaderFilter({
         ref={buttonRef}
         type="button"
         onClick={onOpen}
-        className={`absolute right-3 top-1/2 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border outline-none transition ${buttonStateClass}`}
+        className={`${oaHeaderFilterStyles.button} ${buttonStateClass}`}
         aria-label={`Filter ${column.label}`}
         title={`Filter ${column.label}`}
       >
         <Filter size={10} />
 
-        {active && (
-          <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full border border-black bg-emerald-400" />
-        )}
+        {active && <span className={oaHeaderFilterStyles.activeDot} />}
       </button>
 
       {open &&
         createPortal(
           <div
             ref={dropdownRef}
-            className="fixed z-[9999]"
+            className={oaHeaderFilterStyles.portal}
             style={{
               top: `${position.top}px`,
               left: `${position.left}px`,

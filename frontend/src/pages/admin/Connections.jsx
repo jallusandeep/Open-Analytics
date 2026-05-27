@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
-  Link,
+  Building2,
+  CheckCircle2,
+  Edit3,
+  Info,
   PlugZap,
   RefreshCcw,
   Save,
-  ShieldCheck,
   Trash2
 } from "lucide-react";
 
@@ -14,6 +17,13 @@ import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
 import Tooltip from "../../components/common/Tooltip";
+import { useToast } from "../../components/common/ToastProvider";
+import {
+  oaCardStyles,
+  oaFormTextStyles,
+  oaPillStyles,
+  oaTableStyles
+} from "../../components/common/uiStyles";
 import {
   disconnectUpstoxConnection,
   getConnections,
@@ -27,6 +37,45 @@ const emptyFormData = {
   redirect_url: "",
   access_token: ""
 };
+
+const brokers = [
+  {
+    id: "upstox",
+    name: "Upstox",
+    description: "Token based broker connection.",
+    apiSupported: true
+  },
+  {
+    id: "zerodha",
+    name: "Zerodha",
+    description: "Kite Connect integration placeholder.",
+    apiSupported: false
+  },
+  {
+    id: "angel_one",
+    name: "Angel One",
+    description: "SmartAPI integration placeholder.",
+    apiSupported: false
+  },
+  {
+    id: "groww",
+    name: "Groww",
+    description: "Groww broker connection placeholder.",
+    apiSupported: false
+  },
+  {
+    id: "dhan",
+    name: "Dhan",
+    description: "DhanHQ integration placeholder.",
+    apiSupported: false
+  },
+  {
+    id: "icici_direct",
+    name: "ICICI Direct",
+    description: "ICICI Direct Breeze API placeholder.",
+    apiSupported: false
+  }
+];
 
 function getStoredCurrentUser() {
   try {
@@ -44,18 +93,6 @@ function getStoredCurrentUser() {
   }
 }
 
-function maskValue(value) {
-  if (!value) {
-    return "--";
-  }
-
-  if (value.length <= 8) {
-    return "********";
-  }
-
-  return `${value.slice(0, 4)}********${value.slice(-4)}`;
-}
-
 function formatRoleLabel(role) {
   if (!role) {
     return "--";
@@ -66,44 +103,193 @@ function formatRoleLabel(role) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatUserName(user) {
+  if (!user) {
+    return "--";
+  }
+
+  return user.full_name || user.name || user.email || user.login_id || "--";
+}
+
+function getConnectionStatus(connection) {
+  if (!connection) {
+    return "not_connected";
+  }
+
+  return connection.connection_status || "saved";
+}
+
+function getStatusLabel(status) {
+  if (status === "connected") {
+    return "Connected";
+  }
+
+  if (status === "failed") {
+    return "Failed";
+  }
+
+  if (status === "saved") {
+    return "Saved";
+  }
+
+  return "Not Connected";
+}
+
+function getStatusClass(status) {
+  if (status === "connected") {
+    return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
+  }
+
+  if (status === "failed") {
+    return "border-red-500/40 bg-red-950/50 text-red-200";
+  }
+
+  if (status === "saved") {
+    return "border-sky-500/40 bg-sky-950/50 text-sky-200";
+  }
+
+  return "border-zinc-600 bg-zinc-900 text-zinc-200";
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "--";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).replace(/:\d{2}(\.\d+)?$/, "");
+  }
+
+  return date.toLocaleString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true
+  });
+}
+
+function addOneYear(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  date.setFullYear(date.getFullYear() + 1);
+  return date;
+}
+
+function getLastUpdated(connection) {
+  return (
+    connection?.updated_at ||
+    connection?.last_updated_at ||
+    connection?.last_tested_at ||
+    connection?.created_at ||
+    ""
+  );
+}
+
+function getTokenExpiry(connection) {
+  if (!connection) {
+    return "--";
+  }
+
+  const explicitExpiry =
+    connection?.token_expires_at ||
+    connection?.access_token_expires_at ||
+    connection?.expires_at;
+
+  if (explicitExpiry) {
+    return formatDateTime(explicitExpiry);
+  }
+
+  const lastUpdated = getLastUpdated(connection);
+  const calculatedExpiry = addOneYear(lastUpdated);
+
+  if (calculatedExpiry) {
+    return formatDateTime(calculatedExpiry);
+  }
+
+  return "Valid for 1 year";
+}
+
+function InfoRow({ label, value, children }) {
+  return (
+    <div className="grid grid-cols-[140px_1fr] items-center gap-3 border-b border-oa-border/70 py-2.5 last:border-b-0">
+      <span className={oaFormTextStyles.label}>{label}</span>
+      <span className={`min-w-0 text-right ${oaFormTextStyles.value}`}>
+        {children || value}
+      </span>
+    </div>
+  );
+}
+
 function Connections() {
-  const [connection, setConnection] = useState(null);
+  const [connections, setConnections] = useState([]);
+  const [selectedBrokerId, setSelectedBrokerId] = useState("");
   const [formData, setFormData] = useState(emptyFormData);
+  const [editing, setEditing] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [actionMessage, setActionMessage] = useState("");
+
+  const { showToast } = useToast();
 
   const currentUser = useMemo(() => getStoredCurrentUser(), []);
   const isAdminControlAllowed = ["admin", "super_admin"].includes(
     currentUser?.role
   );
 
-  async function loadConnections() {
+  const connectionsByProvider = useMemo(() => {
+    return connections.reduce((accumulator, item) => {
+      accumulator[item.provider] = item;
+      return accumulator;
+    }, {});
+  }, [connections]);
+
+  const selectedBroker = useMemo(() => {
+    return brokers.find((item) => item.id === selectedBrokerId) || null;
+  }, [selectedBrokerId]);
+
+  const selectedConnection = selectedBroker
+    ? connectionsByProvider[selectedBroker.id] || null
+    : null;
+
+  const selectedStatus = getConnectionStatus(selectedConnection);
+  const isSelectedConnected = selectedStatus === "connected";
+  const hasSelectedBroker = Boolean(selectedBroker);
+  const isSelectedBrokerSupported = Boolean(selectedBroker?.apiSupported);
+
+  const controlsDisabled =
+    !isAdminControlAllowed ||
+    !hasSelectedBroker ||
+    !isSelectedBrokerSupported ||
+    (!editing && Boolean(selectedConnection));
+
+  async function loadConnections(showRefreshToast = false) {
     setLoading(true);
-    setActionMessage("");
 
     try {
       const response = await getConnections();
-      const upstoxConnection =
-        response.data.connections.find((item) => item.provider === "upstox") ||
-        null;
+      setConnections(response.data.connections || []);
 
-      setConnection(upstoxConnection);
-
-      if (upstoxConnection) {
-        setFormData({
-          api_key: upstoxConnection.api_key || "",
-          api_secret: "",
-          redirect_url: upstoxConnection.redirect_url || "",
-          access_token: ""
-        });
+      if (showRefreshToast) {
+        showToast("Connections refreshed successfully.", "success");
       }
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to load connections."
+      showToast(
+        error.response?.data?.detail || "Unable to load connections.",
+        "error"
       );
     } finally {
       setLoading(false);
@@ -111,8 +297,35 @@ function Connections() {
   }
 
   useEffect(() => {
-    loadConnections();
+    loadConnections(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!selectedBroker) {
+      setFormData(emptyFormData);
+      setEditing(false);
+      return;
+    }
+
+    if (selectedConnection) {
+      setFormData({
+        api_key: selectedConnection.api_key || "",
+        api_secret: "",
+        redirect_url: selectedConnection.redirect_url || "",
+        access_token: ""
+      });
+      setEditing(false);
+      return;
+    }
+
+    setFormData(emptyFormData);
+    setEditing(true);
+  }, [selectedBroker, selectedConnection]);
+
+  function handleBrokerSelect(brokerId) {
+    setSelectedBrokerId(brokerId);
+  }
 
   function handleInputChange(event) {
     const { name, value } = event.target;
@@ -126,27 +339,49 @@ function Connections() {
   async function handleSave(event) {
     event.preventDefault();
 
+    if (!selectedBroker) {
+      showToast("Select a broker before saving token.", "warning");
+      return;
+    }
+
+    if (!isSelectedBrokerSupported) {
+      showToast(
+        `${selectedBroker.name} backend APIs are not added yet.`,
+        "warning"
+      );
+      return;
+    }
+
     if (!isAdminControlAllowed) {
-      setActionMessage("Admin access required to save connections.");
+      showToast("Admin access required to save connections.", "error");
       return;
     }
 
     setSaving(true);
-    setActionMessage("");
 
     try {
-      await saveUpstoxConnection(formData);
-      setActionMessage("Upstox credentials saved successfully.");
-      await loadConnections();
+      if (selectedBroker.id === "upstox") {
+        await saveUpstoxConnection({
+          api_key: formData.api_key || "",
+          api_secret: formData.api_secret || "",
+          redirect_url: formData.redirect_url || "",
+          access_token: formData.access_token
+        });
+      }
+
+      showToast(`${selectedBroker.name} token saved successfully.`, "success");
+      await loadConnections(false);
 
       setFormData((previous) => ({
         ...previous,
-        api_secret: "",
         access_token: ""
       }));
+      setEditing(false);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to save Upstox credentials."
+      showToast(
+        error.response?.data?.detail ||
+          `Unable to save ${selectedBroker.name} token.`,
+        "error"
       );
     } finally {
       setSaving(false);
@@ -154,23 +389,44 @@ function Connections() {
   }
 
   async function handleTest() {
+    if (!selectedBroker) {
+      showToast("Select a broker before testing connection.", "warning");
+      return;
+    }
+
+    if (!isSelectedBrokerSupported) {
+      showToast(
+        `${selectedBroker.name} backend APIs are not added yet.`,
+        "warning"
+      );
+      return;
+    }
+
     if (!isAdminControlAllowed) {
-      setActionMessage("Admin access required to test connections.");
+      showToast("Admin access required to test connections.", "error");
       return;
     }
 
     setTesting(true);
-    setActionMessage("");
 
     try {
-      const response = await testUpstoxConnection();
-      setActionMessage(
-        response.data.message || "Upstox connection tested successfully."
+      let response = null;
+
+      if (selectedBroker.id === "upstox") {
+        response = await testUpstoxConnection();
+      }
+
+      showToast(
+        response?.data?.message ||
+          `${selectedBroker.name} connection tested successfully.`,
+        "success"
       );
-      await loadConnections();
+      await loadConnections(false);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to test Upstox connection."
+      showToast(
+        error.response?.data?.detail ||
+          `Unable to test ${selectedBroker.name} connection.`,
+        "error"
       );
     } finally {
       setTesting(false);
@@ -178,46 +434,64 @@ function Connections() {
   }
 
   async function handleDisconnect() {
+    if (!selectedBroker) {
+      showToast("Select a broker before disconnecting.", "warning");
+      return;
+    }
+
+    if (!isSelectedBrokerSupported) {
+      showToast(
+        `${selectedBroker.name} backend APIs are not added yet.`,
+        "warning"
+      );
+      return;
+    }
+
     if (!isAdminControlAllowed) {
-      setActionMessage("Admin access required to disconnect connections.");
+      showToast("Admin access required to disconnect connections.", "error");
       return;
     }
 
     setDisconnecting(true);
-    setActionMessage("");
 
     try {
-      await disconnectUpstoxConnection();
-      setConnection(null);
+      if (selectedBroker.id === "upstox") {
+        await disconnectUpstoxConnection();
+      }
+
+      setConnections((previous) =>
+        previous.filter((item) => item.provider !== selectedBroker.id)
+      );
       setFormData(emptyFormData);
-      setActionMessage("Upstox disconnected successfully.");
+      setEditing(true);
+      showToast(`${selectedBroker.name} disconnected successfully.`, "success");
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to disconnect Upstox."
+      showToast(
+        error.response?.data?.detail ||
+          `Unable to disconnect ${selectedBroker.name}.`,
+        "error"
       );
     } finally {
       setDisconnecting(false);
     }
   }
 
-  const isConnected = connection?.connection_status === "connected";
-  const controlsDisabled = !isAdminControlAllowed;
-
   return (
     <MainLayout>
       <section className="p-3">
-        <div className="rounded border border-oa-border bg-oa-card p-3">
+        <div className={`${oaCardStyles.wrapper} p-3`}>
           <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-sm font-semibold">Connections</h2>
-              <p className="text-[11px] text-oa-muted">
-                Admin controlled external market data provider credentials.
+              <h2 className={oaCardStyles.headerTitle}>Connections</h2>
+              <p className={oaCardStyles.headerSubtitle}>
+                Admin controlled external broker and market data provider
+                credentials.
               </p>
             </div>
 
             <div className="flex items-center gap-2">
               <span
-                className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                className={`${oaPillStyles.base} ${
                   isAdminControlAllowed
                     ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-200"
                     : "border-red-500/40 bg-red-950/50 text-red-200"
@@ -231,7 +505,7 @@ function Connections() {
                 label="Refresh"
                 variant="refresh"
                 disabled={loading}
-                onClick={loadConnections}
+                onClick={() => loadConnections(true)}
                 tooltipSide="left"
               />
             </div>
@@ -244,241 +518,290 @@ function Connections() {
               </div>
 
               <div>
-                <p className="text-sm font-semibold text-white">
+                <p className={oaCardStyles.headerTitle}>
                   Admin access required
                 </p>
-                <p className="mt-1 text-xs text-oa-muted">
-                  Only admin and super admin users can save, test, or disconnect
-                  provider connections.
+                <p className={`mt-1 ${oaFormTextStyles.helper}`}>
+                  Only admin and super admin users can save, test, edit, or
+                  disconnect provider connections.
                 </p>
               </div>
             </div>
           )}
 
-          {actionMessage && (
-            <div className="mb-3 rounded border border-oa-border bg-black px-3 py-2 text-xs text-oa-muted">
-              {actionMessage}
+          <div className="grid items-stretch gap-3 xl:grid-cols-[240px_minmax(420px,1fr)_360px]">
+            <div className={oaCardStyles.wrapper}>
+              <div className="h-full overflow-hidden rounded">
+                <div className={oaCardStyles.header}>
+                  <h3 className={oaCardStyles.headerTitle}>Brokers</h3>
+                  <p className={oaCardStyles.headerSubtitle}>
+                    Select a broker.
+                  </p>
+                </div>
+
+                <div className="space-y-1 p-2 oa-table-font">
+                  {brokers.map((broker) => {
+                    const isActive = selectedBrokerId === broker.id;
+
+                    return (
+                      <button
+                        key={broker.id}
+                        type="button"
+                        onClick={() => handleBrokerSelect(broker.id)}
+                        className={`block w-full rounded border px-3 py-2 text-left outline-none transition ${
+                          isActive
+                            ? "border-sky-500/50 bg-sky-950/30"
+                            : "border-transparent bg-black hover:border-oa-border hover:bg-oa-card"
+                        }`}
+                      >
+                        <span className={oaCardStyles.body}>
+                          {broker.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-          )}
 
-          <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="rounded border border-oa-border bg-black">
-              <div className="flex items-center justify-between border-b border-oa-border bg-oa-panel px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-teal-300">
-                    <Link size={16} />
-                  </span>
-
+            <div className={oaCardStyles.wrapper}>
+              <div className="flex h-full flex-col overflow-hidden rounded">
+                <div className="flex items-center justify-between border-b border-oa-border bg-oa-panel px-3 py-2.5">
                   <div>
-                    <h3 className="text-[13px] font-semibold text-white">
-                      Upstox
+                    <h3 className={oaCardStyles.headerTitle}>
+                      Connection Setup
                     </h3>
-                    <p className="text-[11px] text-oa-muted">
-                      API credentials for instruments and historical candles.
+                    <p className={oaCardStyles.headerSubtitle}>
+                      {selectedBroker
+                        ? selectedBroker.description
+                        : "Select a broker from the left panel."}
                     </p>
                   </div>
+
+                  {selectedBroker && (
+                    <span
+                      className={`${oaPillStyles.base} ${
+                        selectedBroker.apiSupported
+                          ? getStatusClass(selectedStatus)
+                          : "border-zinc-700 bg-zinc-950 text-zinc-400"
+                      }`}
+                    >
+                      {selectedBroker.apiSupported
+                        ? getStatusLabel(selectedStatus)
+                        : "Backend Pending"}
+                    </span>
+                  )}
                 </div>
 
-                <span
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-                    isConnected
-                      ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-200"
-                      : "border-zinc-600 bg-zinc-900 text-zinc-200"
-                  }`}
-                >
-                  {isConnected ? "Connected" : "Not Connected"}
-                </span>
-              </div>
-
-              <form onSubmit={handleSave} className="p-3">
-                <div className="grid gap-2 md:grid-cols-2">
-                  <Input
-                    name="api_key"
-                    value={formData.api_key}
-                    onChange={handleInputChange}
-                    placeholder="Upstox API Key"
-                    required
-                    disabled={controlsDisabled}
-                  />
-
-                  <Input
-                    name="api_secret"
-                    type="password"
-                    value={formData.api_secret}
-                    onChange={handleInputChange}
-                    placeholder={
-                      connection?.has_api_secret
-                        ? "API Secret saved - enter only to replace"
-                        : "Upstox API Secret"
-                    }
-                    required={!connection?.has_api_secret}
-                    disabled={controlsDisabled}
-                  />
-
-                  <Input
-                    name="redirect_url"
-                    value={formData.redirect_url}
-                    onChange={handleInputChange}
-                    placeholder="Redirect URL"
-                    disabled={controlsDisabled}
-                  />
-
-                  <Input
-                    name="access_token"
-                    type="password"
-                    value={formData.access_token}
-                    onChange={handleInputChange}
-                    placeholder={
-                      connection?.has_access_token
-                        ? "Access Token saved - enter only to replace"
-                        : "Access Token"
-                    }
-                    required={!connection?.has_access_token}
-                    disabled={controlsDisabled}
-                  />
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[11px] text-oa-muted">
-                    Only admin and super admin users can manage this connection.
-                  </p>
-
-                  <div className="flex items-center gap-2">
-                    <Tooltip text="Save credentials" side="top">
-                      <button
-                        type="submit"
-                        disabled={saving || controlsDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Save credentials"
-                      >
-                        {saving ? (
-                          <Spinner size="xs" color="light" />
-                        ) : (
-                          <Save size={15} />
-                        )}
-                      </button>
-                    </Tooltip>
-
-                    <Tooltip text="Test connection" side="top">
-                      <button
-                        type="button"
-                        disabled={testing || !connection || controlsDisabled}
-                        onClick={handleTest}
-                        className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Test connection"
-                      >
-                        {testing ? (
-                          <Spinner size="xs" color="light" />
-                        ) : (
-                          <PlugZap size={15} />
-                        )}
-                      </button>
-                    </Tooltip>
-
-                    <IconButton
-                      icon={Trash2}
-                      label="Disconnect"
-                      variant="danger"
-                      tooltipSide="top"
-                      disabled={!connection || disconnecting || controlsDisabled}
-                      onClick={handleDisconnect}
-                    />
+                {!selectedBroker ? (
+                  <div className="flex flex-1 items-center justify-center p-4">
+                    <div className="max-w-sm text-center oa-table-font">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded border border-oa-border bg-oa-panel text-oa-muted">
+                        <Building2 size={18} />
+                      </div>
+                      <p className={oaCardStyles.headerTitle}>
+                        No broker selected
+                      </p>
+                      <p className={`mt-1 leading-5 ${oaFormTextStyles.helper}`}>
+                        Select any broker from the left list to open token
+                        connection controls.
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </form>
-            </div>
+                ) : (
+                  <form
+                    onSubmit={handleSave}
+                    className="flex-1 p-3 oa-table-font"
+                  >
+                    {!selectedBroker.apiSupported && (
+                      <div className="mb-3 flex gap-3 rounded border border-amber-500/30 bg-amber-950/20 p-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-amber-500/40 bg-black text-amber-300">
+                          <Info size={18} />
+                        </div>
 
-            <div className="rounded border border-oa-border bg-black">
-              <div className="border-b border-oa-border bg-oa-panel px-3 py-2.5">
-                <h3 className="text-[13px] font-semibold text-white">
-                  Connection Summary
-                </h3>
-                <p className="text-[11px] text-oa-muted">
-                  Current saved provider details.
-                </p>
-              </div>
+                        <div>
+                          <p className={oaCardStyles.headerTitle}>
+                            Backend API not added yet
+                          </p>
+                          <p className={`mt-1 ${oaFormTextStyles.helper}`}>
+                            {selectedBroker.name} is visible in the broker
+                            list, but save, test, and disconnect will work
+                            after adding backend API support.
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
-              {loading ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-8 text-xs text-oa-muted">
-                  <Spinner size="sm" color="light" />
-                  Loading connection
-                </div>
-              ) : (
-                <div className="space-y-2 p-3 text-xs">
-                  <div className="flex items-center justify-between rounded border border-oa-border bg-oa-card px-3 py-2">
-                    <span className="text-oa-muted">Provider</span>
-                    <span className="font-medium text-white">Upstox</span>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded border border-oa-border bg-oa-card px-3 py-2">
-                    <span className="text-oa-muted">Control</span>
-                    <span className="font-medium text-white">
-                      {isAdminControlAllowed ? "Admin Enabled" : "Read Only"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded border border-oa-border bg-oa-card px-3 py-2">
-                    <span className="text-oa-muted">API Key</span>
-                    <span className="font-medium text-white">
-                      {maskValue(connection?.api_key)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded border border-oa-border bg-oa-card px-3 py-2">
-                    <span className="text-oa-muted">API Secret</span>
-                    <span className="font-medium text-white">
-                      {connection?.has_api_secret ? "Saved" : "--"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded border border-oa-border bg-oa-card px-3 py-2">
-                    <span className="text-oa-muted">Access Token</span>
-                    <span className="font-medium text-white">
-                      {connection?.has_access_token ? "Saved" : "--"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded border border-oa-border bg-oa-card px-3 py-2">
-                    <span className="text-oa-muted">Last Tested</span>
-                    <span className="font-medium text-white">
-                      {connection?.last_tested_at || "--"}
-                    </span>
-                  </div>
-
-                  <div className="rounded border border-emerald-500/30 bg-emerald-950/20 p-3">
-                    <div className="mb-2 flex items-center gap-2 text-emerald-200">
-                      <ShieldCheck size={15} />
-                      <span className="text-[12px] font-semibold">
-                        Next Step
-                      </span>
+                    <div className="grid gap-2">
+                      <Input
+                        name="access_token"
+                        type="password"
+                        value={formData.access_token}
+                        onChange={handleInputChange}
+                        placeholder={
+                          selectedConnection?.has_access_token
+                            ? "Token saved - enter only to replace"
+                            : `${selectedBroker.name} Access Token`
+                        }
+                        required={!selectedConnection?.has_access_token}
+                        disabled={controlsDisabled}
+                      />
                     </div>
 
-                    <p className="text-[11px] leading-5 text-oa-muted">
-                      After admin saves this connection, we can add Upstox
-                      instrument and candle download controls into DuckDB.
-                    </p>
-                  </div>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <p className={oaFormTextStyles.helper}>
+                        {selectedConnection && !editing
+                          ? "Click edit to replace saved token."
+                          : "Only admin and super admin users can manage this connection."}
+                      </p>
+
+                      <div className="flex items-center gap-2">
+                        <Tooltip text="Edit token" side="top">
+                          <button
+                            type="button"
+                            disabled={
+                              !selectedConnection ||
+                              !selectedBroker.apiSupported ||
+                              !isAdminControlAllowed
+                            }
+                            onClick={() => setEditing(true)}
+                            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-amber-300 outline-none transition hover:border-amber-500/60 hover:bg-amber-950/40 hover:text-amber-200 focus:border-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            aria-label="Edit token"
+                          >
+                            <Edit3 size={15} />
+                          </button>
+                        </Tooltip>
+
+                        <Tooltip text="Save token" side="top">
+                          <button
+                            type="submit"
+                            disabled={saving || controlsDisabled}
+                            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            aria-label="Save token"
+                          >
+                            {saving ? (
+                              <Spinner size="xs" color="light" />
+                            ) : (
+                              <Save size={15} />
+                            )}
+                          </button>
+                        </Tooltip>
+
+                        <Tooltip text="Test connection" side="top">
+                          <button
+                            type="button"
+                            disabled={
+                              testing ||
+                              !selectedConnection ||
+                              !selectedBroker.apiSupported ||
+                              !isAdminControlAllowed
+                            }
+                            onClick={handleTest}
+                            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            aria-label="Test connection"
+                          >
+                            {testing ? (
+                              <Spinner size="xs" color="light" />
+                            ) : (
+                              <PlugZap size={15} />
+                            )}
+                          </button>
+                        </Tooltip>
+
+                        <IconButton
+                          icon={Trash2}
+                          label="Disconnect"
+                          variant="danger"
+                          tooltipSide="top"
+                          disabled={
+                            !selectedConnection ||
+                            disconnecting ||
+                            !selectedBroker.apiSupported ||
+                            !isAdminControlAllowed
+                          }
+                          onClick={handleDisconnect}
+                        />
+                      </div>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
+
+            <div className={oaCardStyles.wrapper}>
+              <div className="flex h-full flex-col overflow-hidden rounded">
+                <div className={oaCardStyles.header}>
+                  <h3 className={oaCardStyles.headerTitle}>
+                    Connection Information
+                  </h3>
+                  <p className={oaCardStyles.headerSubtitle}>
+                    Selected broker token details.
+                  </p>
                 </div>
-              )}
+
+                {loading ? (
+                  <div
+                    className={`flex flex-1 items-center justify-center gap-2 px-3 py-8 oa-table-font ${oaTableStyles.mutedText}`}
+                  >
+                    <Spinner size="sm" color="light" />
+                    Loading connections
+                  </div>
+                ) : !selectedBroker ? (
+                  <div className="flex flex-1 items-center justify-center p-4">
+                    <div className="max-w-sm text-center oa-table-font">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded border border-oa-border bg-oa-panel text-oa-muted">
+                        <Activity size={18} />
+                      </div>
+                      <p className={oaCardStyles.headerTitle}>
+                        No broker selected
+                      </p>
+                      <p className={`mt-1 leading-5 ${oaFormTextStyles.helper}`}>
+                        Select a broker to view its token information.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 px-3 py-2 oa-table-font">
+                    <InfoRow label="Broker Name" value={selectedBroker.name} />
+
+                    <InfoRow label="Connection Status">
+                      <span
+                        className={`inline-flex items-center justify-end gap-1.5 ${
+                          isSelectedConnected
+                            ? "text-emerald-200"
+                            : "text-white"
+                        }`}
+                      >
+                        {isSelectedConnected && <CheckCircle2 size={13} />}
+                        {selectedBroker.apiSupported
+                          ? getStatusLabel(selectedStatus)
+                          : "Not Configured"}
+                      </span>
+                    </InfoRow>
+
+                    <InfoRow
+                      label="Updated At"
+                      value={formatDateTime(getLastUpdated(selectedConnection))}
+                    />
+
+                    <InfoRow
+                      label="Token Expiry"
+                      value={getTokenExpiry(selectedConnection)}
+                    />
+
+                    <InfoRow
+                      label="Updated By"
+                      value={
+                        selectedConnection ? formatUserName(currentUser) : "--"
+                      }
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </section>
-
-      <style>
-        {`
-          @keyframes oaMenuIn {
-            from {
-              opacity: 0;
-              transform: translateY(-4px) scale(0.98);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0) scale(1);
-            }
-          }
-        `}
-      </style>
     </MainLayout>
   );
 }

@@ -1,9 +1,12 @@
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { useState } from "react";
+
+import { oaSearchBoxStyles } from "./uiStyles";
 
 function SearchBox({
   value,
   onChange,
+  onClear,
   placeholder = "Search",
   className = "",
   inputClassName = "",
@@ -14,17 +17,21 @@ function SearchBox({
   const selected = focused;
 
   const wrapperStateClass = selected
-    ? "border-blue-500 bg-black"
-    : "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card";
+    ? oaSearchBoxStyles.wrapperFocused
+    : oaSearchBoxStyles.wrapperDefault;
+
+  function handleClear() {
+    onClear?.();
+  }
 
   return (
     <div
-      className={`relative flex h-8 w-[360px] max-w-full items-center gap-2 rounded border px-2 outline-none transition ${wrapperStateClass} ${className}`}
+      className={`${oaSearchBoxStyles.wrapper} ${wrapperStateClass} ${className}`}
     >
       <Search
         size={iconSize}
         className={`shrink-0 transition ${
-          selected ? "text-sky-300" : "text-oa-muted"
+          selected ? oaSearchBoxStyles.iconFocused : oaSearchBoxStyles.icon
         }`}
       />
 
@@ -34,12 +41,23 @@ function SearchBox({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         placeholder={placeholder}
-        className={`w-full bg-transparent pr-6 text-xs text-white outline-none placeholder:text-oa-muted ${inputClassName}`}
+        className={`${oaSearchBoxStyles.input} ${inputClassName}`}
       />
+
+      {value && (
+        <button
+          type="button"
+          onClick={handleClear}
+          className={oaSearchBoxStyles.clearButton}
+          aria-label="Clear search"
+        >
+          <X size={12} />
+        </button>
+      )}
 
       {active && (
         <span
-          className="pointer-events-none absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-black bg-sky-400 shadow"
+          className={oaSearchBoxStyles.activeDot}
           aria-hidden="true"
           title="Search active"
         />
