@@ -4,16 +4,16 @@ export const oaTableStyles = {
   headerRow:
     "grid rounded-t border-b border-oa-border bg-oa-panel px-3 py-2.5",
   headerText:
-    "text-[11px] font-bold uppercase tracking-wider text-oa-muted",
+    "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
   headerCell:
     "relative flex min-w-0 items-center justify-between gap-2 pr-8",
   dataRow:
     "grid items-center border-b border-oa-border px-3 py-2 last:border-b-0 hover:bg-oa-panel/60",
-  dataText: "text-[13px] font-medium text-oa-text",
-  mutedText: "text-xs text-oa-muted",
-  emptyText: "text-xs text-oa-muted",
+  dataText: "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
+  mutedText: "font-mono text-xs text-oa-muted",
+  emptyText: "font-mono text-xs text-oa-muted",
   actionHeader:
-    "text-center text-[11px] font-bold uppercase tracking-wider text-oa-muted",
+    "text-center font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
   actionCell: "flex justify-center"
 };
 
@@ -22,14 +22,14 @@ export const oaCardStyles = {
   header: "border-b border-oa-border bg-oa-panel px-4 py-3",
 
   headerTitle:
-    "text-[13px] font-semibold uppercase tracking-wide text-white",
-  headerSubtitle: "text-[12px] font-medium text-oa-muted",
-  body: "block truncate text-[13px] font-semibold text-white",
-  bodyMuted: "text-[12px] text-oa-muted",
+    "font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-white",
+  headerSubtitle: "font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
+  body: "block truncate font-mono text-[13px] font-semibold tracking-[-0.01em] text-white",
+  bodyMuted: "font-mono text-[12px] tracking-[-0.01em] text-oa-muted",
 
-  modalTitle: "text-[14px] font-semibold text-white",
-  modalSubtitle: "text-[11px] text-oa-muted",
-  modalBody: "text-[13px] text-oa-text"
+  modalTitle: "font-mono text-[14px] font-semibold tracking-[-0.01em] text-white",
+  modalSubtitle: "font-mono text-[11px] tracking-[-0.01em] text-oa-muted",
+  modalBody: "font-mono text-[13px] tracking-[-0.01em] text-oa-text"
 };
 
 export const oaToolbarStyles = {
@@ -46,7 +46,7 @@ export const oaSearchBoxStyles = {
   icon: "text-oa-muted",
   iconFocused: "text-sky-300",
   input:
-    "w-full bg-transparent pr-6 text-xs text-white outline-none placeholder:text-oa-muted",
+    "w-full bg-transparent pr-6 font-mono text-xs tracking-[-0.01em] text-white outline-none placeholder:text-oa-muted",
   clearButton:
     "absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-oa-muted transition hover:bg-oa-card hover:text-white",
   activeDot:
@@ -62,7 +62,7 @@ export const oaFilterSelectStyles = {
 export const oaSelectStyles = {
   wrapper: "relative",
   button:
-    "flex h-8 w-full items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 text-xs text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+    "flex h-8 w-full items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
   buttonOpen: "border-blue-500 bg-oa-card",
   chevron: "shrink-0 text-oa-muted transition duration-150",
   chevronOpen: "rotate-180 text-sky-300",
@@ -70,7 +70,7 @@ export const oaSelectStyles = {
     "absolute left-0 top-9 z-50 w-full min-w-[150px] overflow-hidden rounded border border-oa-border bg-black p-1 shadow-2xl animate-[oaMenuIn_0.14s_ease-out]",
   menuScroll: "max-h-64 overflow-y-auto",
   option:
-    "relative flex h-8 w-full items-center justify-between rounded-sm border-l px-2 text-left text-xs transition",
+    "relative flex h-8 w-full items-center justify-between rounded-sm border-l px-2 text-left font-mono text-xs tracking-[-0.01em] transition",
   optionSelected: "border-l-sky-400 bg-sky-950/30 text-white",
   optionDefault:
     "border-l-transparent text-oa-muted hover:border-l-oa-border hover:bg-oa-card/70 hover:text-white",
@@ -79,7 +79,7 @@ export const oaSelectStyles = {
 
 export const oaInputStyles = {
   base:
-    "h-8 w-full rounded border border-oa-border bg-black px-3 text-xs text-white outline-none placeholder:text-oa-muted transition focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+    "h-8 w-full rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-white outline-none placeholder:text-oa-muted transition focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
 };
 
 export const oaIconButtonStyles = {
@@ -137,14 +137,14 @@ export const oaHeaderFilterStyles = {
 
 export const oaTableFilterDropdownStyles = {
   wrapper:
-    "w-[310px] max-w-[calc(100vw-32px)] overflow-visible rounded border border-oa-border bg-black text-oa-text shadow-2xl animate-[oaMenuIn_0.14s_ease-out]",
+    "w-[310px] max-w-[calc(100vw-32px)] overflow-visible rounded border border-oa-border bg-black font-mono text-oa-text shadow-2xl animate-[oaMenuIn_0.14s_ease-out]",
   topSection: "py-1",
 
   actionButton:
-    "flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-oa-muted transition hover:bg-oa-card hover:text-white",
+    "flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-[-0.01em] text-oa-muted transition hover:bg-oa-card hover:text-white",
 
   menuButton:
-    "flex h-8 w-full items-center justify-between px-3 text-left text-xs normal-case tracking-normal transition",
+    "flex h-8 w-full items-center justify-between px-3 text-left text-xs normal-case tracking-[-0.01em] transition",
   menuButtonDefault: "text-oa-muted hover:bg-oa-card hover:text-white",
   menuButtonActive: "bg-oa-card text-white",
   menuButtonLeft: "flex items-center gap-2",
@@ -155,26 +155,26 @@ export const oaTableFilterDropdownStyles = {
   flyoutNormal: "w-44",
   flyoutWide: "w-48",
   flyoutOption:
-    "flex h-8 w-full items-center justify-between gap-2 px-3 text-left text-xs normal-case tracking-normal transition",
+    "flex h-8 w-full items-center justify-between gap-2 px-3 text-left text-xs normal-case tracking-[-0.01em] transition",
   flyoutOptionDefault: "text-oa-muted hover:bg-oa-card hover:text-white",
   flyoutOptionActive: "bg-sky-950/30 text-white",
 
   selectedDot: "h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400",
 
   clearColumnButton:
-    "flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-normal text-red-400 transition hover:bg-red-950/40 hover:text-red-300",
+    "flex h-8 w-full items-center gap-2 px-3 text-left text-xs normal-case tracking-[-0.01em] text-red-400 transition hover:bg-red-950/40 hover:text-red-300",
 
   searchSection: "border-y border-oa-border p-2",
   valuesSection: "max-h-56 overflow-y-auto p-1",
 
   valueButton:
-    "flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-xs normal-case tracking-normal text-oa-muted transition hover:bg-oa-card hover:text-white",
+    "flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-xs normal-case tracking-[-0.01em] text-oa-muted transition hover:bg-oa-card hover:text-white",
   valueRow:
-    "flex h-8 w-full items-center justify-between gap-2 rounded-sm px-2 text-left text-xs normal-case tracking-normal transition",
+    "flex h-8 w-full items-center justify-between gap-2 rounded-sm px-2 text-left text-xs normal-case tracking-[-0.01em] transition",
   valueRowDefault: "text-oa-muted hover:bg-oa-card hover:text-white",
   valueRowSelected: "bg-oa-card/70 text-white",
   valueLeft: "flex min-w-0 items-center gap-2",
-  valueCount: "shrink-0 text-[10px] text-oa-muted",
+  valueCount: "shrink-0 text-[10px] tracking-[-0.01em] text-oa-muted",
 
   checkbox:
     "flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border",
@@ -182,7 +182,7 @@ export const oaTableFilterDropdownStyles = {
   checkboxUnchecked: "border-oa-border bg-black text-transparent",
 
   emptyValues:
-    "px-2 py-3 text-center text-[11px] normal-case tracking-normal text-oa-muted",
+    "px-2 py-3 text-center text-[11px] normal-case tracking-[-0.01em] text-oa-muted",
 
   footer:
     "flex items-center justify-end gap-2 border-t border-oa-border px-2 py-2",
@@ -193,12 +193,13 @@ export const oaTableFilterDropdownStyles = {
 };
 
 export const oaFormTextStyles = {
-  label: "text-[12px] font-medium text-oa-muted",
-  value: "text-[13px] font-medium text-oa-text",
-  helper: "text-[12px] text-oa-muted",
-  error: "text-[12px] font-medium text-red-400"
+  label: "font-mono text-[12px] font-medium tracking-[-0.01em] text-oa-muted",
+  value: "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
+  helper: "font-mono text-[12px] tracking-[-0.01em] text-oa-muted",
+  error: "font-mono text-[12px] font-medium tracking-[-0.01em] text-red-400"
 };
 
 export const oaPillStyles = {
-  base: "rounded-full border px-2.5 py-0.5 text-[11px] font-medium"
+  base:
+    "rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-[-0.01em]"
 };
