@@ -39,6 +39,14 @@ function DataTable({
     return "left";
   }
 
+  function getHeaderCellClass(column) {
+    if (isFilterEnabled(column)) {
+      return oaTableStyles.headerCell;
+    }
+
+    return "relative flex min-w-0 items-center gap-2";
+  }
+
   return (
     <div className={oaTableStyles.wrapper}>
       <div className={oaTableStyles.inner}>
@@ -54,8 +62,10 @@ function DataTable({
               const open = filterConfig?.activeFilter === column.key;
 
               return (
-                <div key={column.key} className={oaTableStyles.headerCell}>
-                  <span className="truncate">{column.label}</span>
+                <div key={column.key} className={getHeaderCellClass(column)}>
+                  <span className="min-w-0 truncate leading-none">
+                    {column.label}
+                  </span>
 
                   {isFilterEnabled(column) && (
                     <DataTableHeaderFilter
@@ -91,7 +101,9 @@ function DataTable({
             })}
 
             {renderActions && (
-              <span className={oaTableStyles.actionHeader}>Action</span>
+              <div className="relative flex min-w-0 items-center justify-end">
+                <span className="min-w-0 truncate leading-none">Action</span>
+              </div>
             )}
           </div>
 
@@ -115,12 +127,16 @@ function DataTable({
                 className={`${oaTableStyles.dataRow} ${oaTableStyles.dataText}`}
                 style={{ gridTemplateColumns }}
               >
-                {columns.map((column) => renderCell(row, column))}
+                {columns.map((column) => (
+                  <div key={column.key} className="min-w-0 truncate">
+                    {renderCell(row, column)}
+                  </div>
+                ))}
 
                 {renderActions && (
-                  <span className={oaTableStyles.actionCell}>
+                  <div className="flex min-w-0 items-center justify-end">
                     {renderActions(row)}
-                  </span>
+                  </div>
                 )}
               </div>
             ))

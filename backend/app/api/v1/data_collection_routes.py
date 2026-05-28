@@ -1,0 +1,110 @@
+from fastapi import APIRouter, Depends, Query
+
+from app.dependencies import require_admin_or_super_admin
+from app.services.data_collection_service import (
+    get_data_collection_runs_service,
+    get_data_collection_summary_service,
+    get_upstox_expired_instruments_preview_service,
+    get_upstox_instruments_preview_service,
+    request_cancel_active_sync_runs_service,
+    sync_upstox_all_instruments_service,
+    sync_upstox_current_instruments_service,
+    sync_upstox_expired_instruments_service
+)
+
+
+router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
+
+
+@router.get("/upstox/summary")
+def get_upstox_data_collection_summary(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_data_collection_summary_service()
+    }
+
+
+@router.get("/upstox/runs")
+def get_upstox_data_collection_runs(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_data_collection_runs_service()
+    }
+
+
+@router.get("/upstox/instruments")
+def get_upstox_instruments_preview(
+    search: str = Query("", description="Search instrument key, symbol, name, segment, exchange, type, or underlying."),
+    source_type: str = Query("all", description="Filter by source type."),
+    segment: str = Query("all", description="Filter by segment."),
+    instrument_type: str = Query("all", description="Filter by instrument type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_instruments_preview_service(
+            search=search,
+            source_type=source_type,
+            segment=segment,
+            instrument_type=instrument_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/expired-instruments")
+def get_upstox_expired_instruments_preview(
+    search: str = Query("", description="Search instrument key, symbol, name, segment, exchange, type, or underlying."),
+    source_type: str = Query("all", description="Filter by source type."),
+    segment: str = Query("all", description="Filter by segment."),
+    instrument_type: str = Query("all", description="Filter by instrument type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_expired_instruments_preview_service(
+            search=search,
+            source_type=source_type,
+            segment=segment,
+            instrument_type=instrument_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.post("/upstox/sync-current")
+def sync_upstox_current_instruments(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_current_instruments_service(current_user)
+
+
+@router.post("/upstox/sync-all")
+def sync_upstox_all_instruments(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_all_instruments_service(current_user)
+
+
+@router.post("/upstox/cancel")
+def cancel_upstox_data_collection(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return request_cancel_active_sync_runs_service()
+
+
+@router.post("/upstox/sync-expired-default")
+def sync_upstox_expired_instruments(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_expired_instruments_service(current_user)

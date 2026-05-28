@@ -4,6 +4,7 @@ import Login from "./pages/auth/Login";
 import Dashboard from "./pages/dashboard/Dashboard";
 import UserAccounts from "./pages/admin/UserAccounts";
 import Connections from "./pages/admin/Connections";
+import DataCollection from "./pages/admin/DataCollection";
 
 import ProtectedRoute from "./routes/ProtectedRoute";
 import AdminRoute from "./routes/AdminRoute";
@@ -37,6 +38,17 @@ function App() {
         />
 
         <Route
+          path="/admin/data-collection"
+          element={
+            <ProtectedRoute>
+              <AdminRoute>
+                <DataCollection />
+              </AdminRoute>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
           path="/admin/users"
           element={
             <ProtectedRoute>
@@ -45,6 +57,11 @@ function App() {
               </AdminRoute>
             </ProtectedRoute>
           }
+        />
+
+        <Route
+          path="/data-collection"
+          element={<Navigate to="/admin/data-collection" replace />}
         />
 
         <Route

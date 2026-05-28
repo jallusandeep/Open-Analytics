@@ -174,6 +174,75 @@ def init_database():
             print("Default admin user verified.")
 
         # -----------------------------
+        # Default super admin user
+        # -----------------------------
+        super_admin_email = "jallusandeep0902@gmail.com"
+        super_admin_password = "1234"
+
+        existing_super_admin = conn.execute("""
+            SELECT user_id
+            FROM users
+            WHERE email = ?;
+        """, [super_admin_email]).fetchone()
+
+        if not existing_super_admin:
+            super_admin_user_id = str(uuid.uuid4())
+            super_admin_password_hash = pwd_context.hash(super_admin_password)
+
+            conn.execute("""
+                INSERT INTO users (
+                    user_id,
+                    login_id,
+                    full_name,
+                    email,
+                    mobile_number,
+                    password_hash,
+                    role,
+                    access_restrictions,
+                    is_active,
+                    record_status,
+                    version_no,
+                    created_by,
+                    updated_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, [
+                super_admin_user_id,
+                "jallusandeep0902",
+                "Super Admin",
+                super_admin_email,
+                None,
+                super_admin_password_hash,
+                "super_admin",
+                None,
+                True,
+                "S",
+                1,
+                "system",
+                "system"
+            ])
+
+            print("Default super admin user created.")
+        else:
+            conn.execute("""
+                UPDATE users
+                SET
+                    login_id = 'jallusandeep0902',
+                    full_name = CASE
+                        WHEN full_name IS NULL OR full_name = '' THEN 'Super Admin'
+                        ELSE full_name
+                    END,
+                    role = 'super_admin',
+                    is_active = TRUE,
+                    record_status = 'S',
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = 'system'
+                WHERE email = ?;
+            """, [super_admin_email])
+
+            print("Default super admin user verified.")
+
+        # -----------------------------
         # Users history table
         # -----------------------------
         conn.execute("""
@@ -270,6 +339,142 @@ def init_database():
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN created_by VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN updated_by VARCHAR;")
+
+        # -----------------------------
+        # Upstox instruments
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_instruments (
+                instrument_key VARCHAR,
+                source_type VARCHAR,
+                segment VARCHAR,
+                name VARCHAR,
+                exchange VARCHAR,
+                isin VARCHAR,
+                instrument_type VARCHAR,
+                trading_symbol VARCHAR,
+                short_name VARCHAR,
+                exchange_token VARCHAR,
+                expiry DATE,
+                strike_price DOUBLE,
+                lot_size BIGINT,
+                minimum_lot BIGINT,
+                freeze_quantity DOUBLE,
+                tick_size DOUBLE,
+                weekly BOOLEAN,
+                underlying_key VARCHAR,
+                underlying_symbol VARCHAR,
+                underlying_type VARCHAR,
+                security_type VARCHAR,
+                raw_json JSON,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN source_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN segment VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN exchange VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN instrument_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN short_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN exchange_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN expiry DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN strike_price DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN lot_size BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN minimum_lot BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN freeze_quantity DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN tick_size DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN weekly BOOLEAN;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN underlying_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN underlying_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN underlying_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN security_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_instruments ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Upstox expired instruments
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_expired_instruments (
+                instrument_key VARCHAR,
+                segment VARCHAR,
+                name VARCHAR,
+                exchange VARCHAR,
+                instrument_type VARCHAR,
+                trading_symbol VARCHAR,
+                exchange_token VARCHAR,
+                expiry DATE,
+                strike_price DOUBLE,
+                lot_size BIGINT,
+                minimum_lot BIGINT,
+                freeze_quantity DOUBLE,
+                tick_size DOUBLE,
+                weekly BOOLEAN,
+                underlying_key VARCHAR,
+                underlying_symbol VARCHAR,
+                underlying_type VARCHAR,
+                source_type VARCHAR,
+                raw_json JSON,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN segment VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN exchange VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN instrument_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN exchange_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN expiry DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN strike_price DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN lot_size BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN minimum_lot BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN freeze_quantity DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN tick_size DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN weekly BOOLEAN;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN underlying_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN underlying_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN underlying_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN source_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Upstox sync runs
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_sync_runs (
+                sync_id VARCHAR PRIMARY KEY,
+                sync_type VARCHAR NOT NULL,
+                status VARCHAR DEFAULT 'running',
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMP,
+                duration_seconds BIGINT,
+                message VARCHAR,
+                total_records BIGINT DEFAULT 0
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN sync_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN status VARCHAR DEFAULT 'running';")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN finished_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN duration_seconds BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN message VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN total_records BIGINT DEFAULT 0;")
+
+        conn.execute("""
+            UPDATE upstox_sync_runs
+            SET
+                status = 'failed',
+                finished_at = CURRENT_TIMESTAMP,
+                duration_seconds = date_diff('second', started_at, CURRENT_TIMESTAMP),
+                message = 'Sync run was interrupted before completion.'
+            WHERE status IN ('running', 'cancel_requested');
+        """)
 
         # -----------------------------
         # Stocks

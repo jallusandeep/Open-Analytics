@@ -9,7 +9,8 @@ export const oaTableStyles = {
     "relative flex min-w-0 items-center justify-between gap-2 pr-8",
   dataRow:
     "grid items-center border-b border-oa-border px-3 py-2 last:border-b-0 hover:bg-oa-panel/60",
-  dataText: "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
+  dataText:
+    "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
   actionHeader:
@@ -23,18 +24,43 @@ export const oaCardStyles = {
 
   headerTitle:
     "font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-white",
-  headerSubtitle: "font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
-  body: "block truncate font-mono text-[13px] font-semibold tracking-[-0.01em] text-white",
+  headerSubtitle:
+    "font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
+  body:
+    "block truncate font-mono text-[13px] font-semibold tracking-[-0.01em] text-white",
   bodyMuted: "font-mono text-[12px] tracking-[-0.01em] text-oa-muted",
 
-  modalTitle: "font-mono text-[14px] font-semibold tracking-[-0.01em] text-white",
+  modalTitle:
+    "font-mono text-[14px] font-semibold tracking-[-0.01em] text-white",
   modalSubtitle: "font-mono text-[11px] tracking-[-0.01em] text-oa-muted",
   modalBody: "font-mono text-[13px] tracking-[-0.01em] text-oa-text"
+};
+
+export const oaMetricCardStyles = {
+  wrapper: "rounded border border-oa-border bg-black",
+  body: "p-3",
+  label:
+    "font-mono text-[12px] font-medium tracking-[-0.01em] text-oa-muted",
+  value: "mt-2 truncate oa-code-font text-xl font-semibold",
+  helper: "mt-1 font-mono text-[12px] tracking-[-0.01em] text-oa-muted"
 };
 
 export const oaToolbarStyles = {
   wrapper: "mb-3 flex flex-wrap items-center gap-2",
   rightActions: "ml-auto flex items-center gap-2"
+};
+
+export const oaToggleStyles = {
+  wrapper:
+    "inline-flex items-center rounded border border-oa-border bg-black p-1 oa-table-font",
+  button:
+    "flex h-8 items-center gap-2 rounded border px-3 font-mono text-[12px] tracking-[-0.01em] outline-none transition",
+  buttonActive: "border-cyan-500/40 bg-cyan-950/40 text-cyan-200",
+  buttonInactive:
+    "border-transparent text-oa-muted hover:bg-oa-card hover:text-white",
+  emeraldActive: "border-emerald-500/40 bg-emerald-950/40 text-emerald-200",
+  emeraldInactive:
+    "border-transparent text-oa-muted hover:bg-oa-card hover:text-white"
 };
 
 export const oaSearchBoxStyles = {

@@ -73,6 +73,14 @@ function MainLayout({ children }) {
       activeLine: "bg-teal-300"
     },
     {
+      label: "Data Collection",
+      icon: Database,
+      path: "/admin/data-collection",
+      show: isAdminUser,
+      color: "text-amber-300",
+      activeLine: "bg-amber-300"
+    },
+    {
       label: "User Accounts",
       icon: Users,
       path: "/admin/users",
