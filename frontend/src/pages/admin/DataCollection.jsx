@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
-  Database,
   DownloadCloud,
   Eye,
   Play,
@@ -25,6 +24,7 @@ import {
   oaCardStyles,
   oaFormTextStyles,
   oaPillStyles,
+  oaTabStyles,
   oaTableStyles
 } from "../../components/common/uiStyles";
 import {
@@ -134,7 +134,7 @@ const previewColumns = [
 ];
 
 const previewGridTemplateColumns =
-  "1.65fr 1fr 1.25fr 0.75fr 0.75fr 0.7fr 0.75fr 0.7fr 0.9fr 1fr";
+  "280px 300px 300px 150px 150px 130px 150px 140px 190px 230px";
 
 function getStoredCurrentUser() {
   try {
@@ -284,7 +284,7 @@ function getLatestRunByTypes(runs, syncTypes = []) {
 
 function ViewToggle({ activeView, onChange }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className={oaTabStyles.wrapper}>
       {viewOptions.map((option) => {
         const Icon = option.icon;
         const isActive = activeView === option.key;
@@ -294,15 +294,15 @@ function ViewToggle({ activeView, onChange }) {
             key={option.key}
             type="button"
             onClick={() => onChange(option.key)}
-            className={`flex h-7 items-center gap-1.5 border-b px-2.5 text-[12px] transition ${
-              isActive
-                ? "border-cyan-400 text-white"
-                : "border-transparent text-oa-muted hover:border-oa-border hover:text-white"
+            className={`${oaTabStyles.button} ${
+              isActive ? oaTabStyles.active : oaTabStyles.inactive
             }`}
           >
             <Icon
               size={13}
-              className={isActive ? "text-cyan-300" : "text-oa-muted"}
+              className={
+                isActive ? oaTabStyles.activeIcon : oaTabStyles.inactiveIcon
+              }
             />
             {option.label}
           </button>
@@ -314,7 +314,7 @@ function ViewToggle({ activeView, onChange }) {
 
 function PreviewSourceToggle({ value, onChange }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className={oaTabStyles.wrapper}>
       {previewSourceOptions.map((option) => {
         const isActive = value === option.value;
 
@@ -323,10 +323,8 @@ function PreviewSourceToggle({ value, onChange }) {
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={`flex h-7 items-center border-b px-2.5 text-[12px] transition ${
-              isActive
-                ? "border-emerald-400 text-white"
-                : "border-transparent text-oa-muted hover:border-oa-border hover:text-white"
+            className={`${oaTabStyles.button} ${
+              isActive ? oaTabStyles.emeraldActive : oaTabStyles.emeraldInactive
             }`}
           >
             {option.label}
@@ -401,21 +399,13 @@ function DataCollectionShell({
   children
 }) {
   return (
-    <div className="overflow-hidden rounded border border-oa-border bg-black shadow-2xl">
-      <div className="flex items-center gap-3 border-b border-oa-border bg-oa-panel px-4 py-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-sky-500/25 bg-sky-950/20 text-sky-300">
-          <Database size={18} />
-        </div>
-
-        <div className="min-w-0">
-          <h2 className="truncate text-[15px] font-bold text-white">
-            Data Collection
-          </h2>
-          <p className="mt-0.5 truncate text-[12px] text-oa-muted">
-            Track Upstox instrument dumps, expired contracts, sync duration, and
-            saved database records.
-          </p>
-        </div>
+    <div className={oaCardStyles.wrapper}>
+      <div className={oaCardStyles.header}>
+        <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
+        <p className={oaCardStyles.headerSubtitle}>
+          Track Upstox instrument dumps, expired contracts, sync duration, and
+          saved database records.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
@@ -447,7 +437,7 @@ function DataCollectionShell({
         </div>
       </div>
 
-      {children}
+      <div className={oaCardStyles.body}>{children}</div>
     </div>
   );
 }
@@ -610,7 +600,7 @@ function DbPreviewContent({
           loadingMessage="Loading DB preview"
           emptyMessage="No dumped records found."
           gridTemplateColumns={previewGridTemplateColumns}
-          minWidth="min-w-[1380px]"
+          minWidth="min-w-[2020px]"
           getRowKey={(row, index) => `${row.instrument_key || index}-${index}`}
           renderCell={renderPreviewCell}
         />

@@ -19,7 +19,10 @@ function TableToolbar({
   rightActions = []
 }) {
   return (
-    <form onSubmit={onSearchSubmit} className={oaToolbarStyles.wrapper}>
+    <form
+      onSubmit={onSearchSubmit}
+      className="flex flex-wrap items-center gap-2"
+    >
       <FilterSearchInput
         value={searchValue}
         onChange={onSearchChange}
@@ -62,7 +65,7 @@ function TableToolbar({
       )}
 
       {rightActions.length > 0 && (
-        <div className={oaToolbarStyles.rightActions}>
+        <div className="flex items-center gap-2">
           {rightActions.map((action) => (
             <IconButton
               key={action.label}

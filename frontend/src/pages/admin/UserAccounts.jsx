@@ -625,66 +625,46 @@ function UserAccounts() {
 
     if (column.key === "login_id") {
       return (
-        <span key={column.key} className="truncate font-semibold">
+        <span className="truncate font-semibold">
           {user.login_id || "--"}
         </span>
       );
     }
 
     if (column.key === "email") {
-      return (
-        <span key={column.key} className="truncate">
-          {user.email}
-        </span>
-      );
+      return <span className="truncate">{user.email}</span>;
     }
 
     if (column.key === "full_name") {
-      return (
-        <span key={column.key} className="truncate">
-          {user.full_name}
-        </span>
-      );
+      return <span className="truncate">{user.full_name}</span>;
     }
 
     if (column.key === "mobile_number") {
-      return (
-        <span key={column.key} className="truncate">
-          {user.mobile_number || "--"}
-        </span>
-      );
+      return <span className="truncate">{user.mobile_number || "--"}</span>;
     }
 
     if (column.key === "role") {
       return (
-        <span key={column.key}>
-          <span className={`${oaPillStyles.base} ${getRolePill(user.role)}`}>
-            {formatRoleLabel(user.role)}
-          </span>
+        <span className={`${oaPillStyles.base} ${getRolePill(user.role)}`}>
+          {formatRoleLabel(user.role)}
         </span>
       );
     }
 
     if (column.key === "status") {
       return (
-        <span key={column.key}>
-          <span className={`${oaPillStyles.base} ${getStatusPill(user.is_active)}`}>
-            {user.is_active ? "active" : "inactive"}
-          </span>
+        <span className={`${oaPillStyles.base} ${getStatusPill(user.is_active)}`}>
+          {user.is_active ? "active" : "inactive"}
         </span>
       );
     }
 
-    return (
-      <span key={column.key} className="truncate">
-        {accessText}
-      </span>
-    );
+    return <span className="truncate">{accessText}</span>;
   }
 
   function renderUserActions(user) {
     return (
-      <span className="flex items-center justify-center gap-1">
+      <span className="flex items-center justify-end gap-1">
         {canEditUser(user) && (
           <IconButton
             icon={Pencil}
@@ -708,124 +688,130 @@ function UserAccounts() {
 
   return (
     <MainLayout>
-      <section className="p-3">
-        <div className={`${oaCardStyles.wrapper} p-3`}>
-          <div className="mb-3">
-            <h2 className={oaCardStyles.headerTitle}>User Accounts</h2>
-            <p className={oaCardStyles.headerSubtitle}>
-              Manage users, roles, restrictions, and active status.
-            </p>
-          </div>
-
-          <TableToolbar
-            searchValue={searchText}
-            onSearchChange={setSearchText}
-            onSearchClear={clearSearchFilter}
-            onSearchSubmit={handleSearchSubmit}
-            searchActive={appliedSearchText.trim() !== ""}
-            searchPlaceholder="Search users"
-            filters={[
-              {
-                value: roleFilter,
-                onChange: (event) => setRoleFilter(event.target.value),
-                options: roleOptions,
-                onClear: clearRoleFilter,
-                showClear: roleFilter !== "all",
-                ariaLabel: "Role filter",
-                minWidth: "w-36"
-              },
-              {
-                value: statusFilter,
-                onChange: (event) => setStatusFilter(event.target.value),
-                options: statusOptions,
-                onClear: clearStatusFilter,
-                showClear: statusFilter !== "all",
-                ariaLabel: "Status filter",
-                minWidth: "w-36"
-              }
-            ]}
-            hasActiveFilter={hasAnyActiveFilter()}
-            onClearAll={clearAllFilters}
-            loading={loading}
-            rightActions={[
-              {
-                icon: RefreshCcw,
-                label: "Refresh",
-                variant: "refresh",
-                onClick: () => loadUsers(page)
-              },
-              {
-                icon: Plus,
-                label: "Add",
-                variant: "add",
-                onClick: openCreateModal
-              }
-            ]}
-          />
-
-          {actionMessage && (
-            <div
-              className={`mb-3 rounded border border-oa-border bg-black px-3 py-2 ${oaTableStyles.mutedText}`}
-            >
-              {actionMessage}
+      <section className="min-h-screen bg-black p-3">
+        <div className="space-y-3">
+          <div className={oaCardStyles.wrapper}>
+            <div className={oaCardStyles.header}>
+              <h2 className={oaCardStyles.headerTitle}>User Accounts</h2>
+              <p className={oaCardStyles.headerSubtitle}>
+                Manage users, roles, restrictions, and active status.
+              </p>
             </div>
-          )}
 
-          <DataTable
-            columns={tableColumns}
-            rows={filteredUsers}
-            loading={loading}
-            loadingMessage="Loading users"
-            emptyMessage="No users found."
-            gridTemplateColumns={gridTemplateColumns}
-            getRowKey={(user) => user.user_id}
-            renderCell={renderUserCell}
-            renderActions={renderUserActions}
-            filterConfig={{
-              activeFilter,
-              headerValues,
-              columnFilters,
-              draftColumnFilters,
-              rightAlignedKeys: ["role", "status", "access"],
-              isColumnFilterActive,
-              onOpen: openColumnFilter,
-              onClose: () => setActiveFilter(null),
-              onChange: (key, values) =>
-                setDraftColumnFilters((previous) => ({
-                  ...previous,
-                  [key]: values
-                })),
-              onApply: applyColumnFilter,
-              onSort: handleSort,
-              onClear: clearColumnFilter
-            }}
-          />
-
-          <div
-            className={`mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between ${oaTableStyles.mutedText}`}
-          >
-            <span>
-              Records: {totalRecords} | Page {page} of {totalPages}
-            </span>
-
-            <div className="flex items-center gap-2">
-              <IconButton
-                icon={ChevronLeft}
-                label="Previous"
-                variant="default"
-                disabled={page <= 1 || loading}
-                onClick={() => loadUsers(page - 1)}
-                tooltipSide="top"
+            <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+              <TableToolbar
+                searchValue={searchText}
+                onSearchChange={setSearchText}
+                onSearchClear={clearSearchFilter}
+                onSearchSubmit={handleSearchSubmit}
+                searchActive={appliedSearchText.trim() !== ""}
+                searchPlaceholder="Search users"
+                filters={[
+                  {
+                    value: roleFilter,
+                    onChange: (event) => setRoleFilter(event.target.value),
+                    options: roleOptions,
+                    onClear: clearRoleFilter,
+                    showClear: roleFilter !== "all",
+                    ariaLabel: "Role filter",
+                    minWidth: "w-36"
+                  },
+                  {
+                    value: statusFilter,
+                    onChange: (event) => setStatusFilter(event.target.value),
+                    options: statusOptions,
+                    onClear: clearStatusFilter,
+                    showClear: statusFilter !== "all",
+                    ariaLabel: "Status filter",
+                    minWidth: "w-36"
+                  }
+                ]}
+                hasActiveFilter={hasAnyActiveFilter()}
+                onClearAll={clearAllFilters}
+                loading={loading}
+                rightActions={[
+                  {
+                    icon: RefreshCcw,
+                    label: "Refresh",
+                    variant: "refresh",
+                    onClick: () => loadUsers(page)
+                  },
+                  {
+                    icon: Plus,
+                    label: "Add",
+                    variant: "add",
+                    onClick: openCreateModal
+                  }
+                ]}
               />
+            </div>
 
-              <IconButton
-                icon={ChevronRight}
-                label="Next"
-                variant="default"
-                disabled={page >= totalPages || loading}
-                onClick={() => loadUsers(page + 1)}
-                tooltipSide="top"
+            {actionMessage && (
+              <div
+                className={`border-b border-oa-border bg-black px-3 py-2 ${oaTableStyles.mutedText}`}
+              >
+                {actionMessage}
+              </div>
+            )}
+
+            <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+              <DataTable
+                columns={tableColumns}
+                rows={filteredUsers}
+                loading={loading}
+                loadingMessage="Loading users"
+                emptyMessage="No users found."
+                gridTemplateColumns={gridTemplateColumns}
+                getRowKey={(user) => user.user_id}
+                renderCell={renderUserCell}
+                renderActions={renderUserActions}
+                filterConfig={{
+                  activeFilter,
+                  headerValues,
+                  columnFilters,
+                  draftColumnFilters,
+                  rightAlignedKeys: ["role", "status", "access"],
+                  isColumnFilterActive,
+                  onOpen: openColumnFilter,
+                  onClose: () => setActiveFilter(null),
+                  onChange: (key, values) =>
+                    setDraftColumnFilters((previous) => ({
+                      ...previous,
+                      [key]: values
+                    })),
+                  onApply: applyColumnFilter,
+                  onSort: handleSort,
+                  onClear: clearColumnFilter
+                }}
               />
+            </div>
+
+            <div
+              className={`flex flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 md:flex-row md:items-center md:justify-between ${oaTableStyles.mutedText}`}
+            >
+              <span>
+                Records: {totalRecords} | Page {page} of {totalPages}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <IconButton
+                  icon={ChevronLeft}
+                  label="Previous"
+                  variant="default"
+                  disabled={page <= 1 || loading}
+                  onClick={() => loadUsers(page - 1)}
+                  tooltipSide="top"
+                />
+
+                <IconButton
+                  icon={ChevronRight}
+                  label="Next"
+                  variant="default"
+                  disabled={page >= totalPages || loading}
+                  onClick={() => loadUsers(page + 1)}
+                  tooltipSide="top"
+                />
+              </div>
             </div>
           </div>
         </div>

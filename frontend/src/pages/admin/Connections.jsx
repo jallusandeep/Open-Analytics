@@ -22,7 +22,8 @@ import {
   oaCardStyles,
   oaFormTextStyles,
   oaPillStyles,
-  oaTableStyles
+  oaTableStyles,
+  oaTabStyles
 } from "../../components/common/uiStyles";
 import {
   disconnectUpstoxConnection,
@@ -44,36 +45,6 @@ const brokers = [
     name: "Upstox",
     description: "Token based broker connection.",
     apiSupported: true
-  },
-  {
-    id: "zerodha",
-    name: "Zerodha",
-    description: "Kite Connect integration placeholder.",
-    apiSupported: false
-  },
-  {
-    id: "angel_one",
-    name: "Angel One",
-    description: "SmartAPI integration placeholder.",
-    apiSupported: false
-  },
-  {
-    id: "groww",
-    name: "Groww",
-    description: "Groww broker connection placeholder.",
-    apiSupported: false
-  },
-  {
-    id: "dhan",
-    name: "Dhan",
-    description: "DhanHQ integration placeholder.",
-    apiSupported: false
-  },
-  {
-    id: "icici_direct",
-    name: "ICICI Direct",
-    description: "ICICI Direct Breeze API placeholder.",
-    apiSupported: false
   }
 ];
 
@@ -91,16 +62,6 @@ function getStoredCurrentUser() {
   } catch {
     return null;
   }
-}
-
-function formatRoleLabel(role) {
-  if (!role) {
-    return "--";
-  }
-
-  return String(role)
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function formatUserName(user) {
@@ -223,9 +184,9 @@ function getTokenExpiry(connection) {
 
 function InfoRow({ label, value, children }) {
   return (
-    <div className="grid grid-cols-[140px_1fr] items-center gap-3 border-b border-oa-border/70 py-2.5 last:border-b-0">
+    <div className="grid grid-cols-[130px_1fr] items-center gap-3 border-b border-oa-border/70 py-2.5 last:border-b-0">
       <span className={oaFormTextStyles.label}>{label}</span>
-      <span className={`min-w-0 text-right ${oaFormTextStyles.value}`}>
+      <span className={`min-w-0 truncate text-right ${oaFormTextStyles.value}`}>
         {children || value}
       </span>
     </div>
@@ -234,7 +195,7 @@ function InfoRow({ label, value, children }) {
 
 function Connections() {
   const [connections, setConnections] = useState([]);
-  const [selectedBrokerId, setSelectedBrokerId] = useState("");
+  const [selectedBrokerId, setSelectedBrokerId] = useState("upstox");
   const [formData, setFormData] = useState(emptyFormData);
   const [editing, setEditing] = useState(false);
 
@@ -478,10 +439,10 @@ function Connections() {
 
   return (
     <MainLayout>
-      <section className="p-3">
-        <div className={`${oaCardStyles.wrapper} p-3`}>
-          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <div>
+      <section className="min-h-screen bg-black p-3">
+        <div className="space-y-3">
+          <div className={oaCardStyles.wrapper}>
+            <div className={oaCardStyles.header}>
               <h2 className={oaCardStyles.headerTitle}>Connections</h2>
               <p className={oaCardStyles.headerSubtitle}>
                 Admin controlled external broker and market data provider
@@ -489,112 +450,73 @@ function Connections() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span
-                className={`${oaPillStyles.base} ${
-                  isAdminControlAllowed
-                    ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-200"
-                    : "border-red-500/40 bg-red-950/50 text-red-200"
-                }`}
-              >
-                {formatRoleLabel(currentUser?.role)} Control
-              </span>
+            <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
+              <div className={oaTabStyles.wrapper}>
+                {brokers.map((broker) => {
+                  const isActive = selectedBrokerId === broker.id;
 
-              <IconButton
-                icon={RefreshCcw}
-                label="Refresh"
-                variant="refresh"
-                disabled={loading}
-                onClick={() => loadConnections(true)}
-                tooltipSide="left"
-              />
-            </div>
-          </div>
-
-          {!isAdminControlAllowed && (
-            <div className="mb-3 flex gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-red-500/40 bg-black text-red-300">
-                <AlertTriangle size={18} />
+                  return (
+                    <button
+                      key={broker.id}
+                      type="button"
+                      onClick={() => handleBrokerSelect(broker.id)}
+                      className={`${oaTabStyles.button} ${
+                        isActive ? oaTabStyles.active : oaTabStyles.inactive
+                      }`}
+                    >
+                      {broker.name}
+                    </button>
+                  );
+                })}
               </div>
 
-              <div>
-                <p className={oaCardStyles.headerTitle}>
-                  Admin access required
-                </p>
-                <p className={`mt-1 ${oaFormTextStyles.helper}`}>
-                  Only admin and super admin users can save, test, edit, or
-                  disconnect provider connections.
-                </p>
+              <div className="flex items-center gap-2">
+                <IconButton
+                  icon={RefreshCcw}
+                  label="Refresh"
+                  variant="refresh"
+                  disabled={loading}
+                  onClick={() => loadConnections(true)}
+                  tooltipSide="top"
+                />
               </div>
             </div>
-          )}
 
-          <div className="grid items-stretch gap-3 xl:grid-cols-[240px_minmax(420px,1fr)_360px]">
-            <div className={oaCardStyles.wrapper}>
-              <div className="h-full overflow-hidden rounded">
-                <div className={oaCardStyles.header}>
-                  <h3 className={oaCardStyles.headerTitle}>Brokers</h3>
+            {!isAdminControlAllowed && (
+              <div className="border-b border-oa-border bg-black p-3">
+                <div className="flex gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-red-500/40 bg-black text-red-300">
+                    <AlertTriangle size={18} />
+                  </div>
+
+                  <div>
+                    <p className={oaCardStyles.headerTitle}>
+                      Admin access required
+                    </p>
+                    <p className={`mt-1 ${oaFormTextStyles.helper}`}>
+                      Only admin and super admin users can save, test, edit, or
+                      disconnect provider connections.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid min-h-[360px] gap-0 bg-black xl:grid-cols-[minmax(420px,1fr)_360px]">
+              <div className="border-b border-oa-border xl:border-b-0 xl:border-r">
+                <div className="border-b border-oa-border bg-black px-4 py-3">
+                  <h3 className={oaCardStyles.headerTitle}>
+                    Connection Setup
+                  </h3>
                   <p className={oaCardStyles.headerSubtitle}>
-                    Select a broker.
+                    {selectedBroker
+                      ? selectedBroker.description
+                      : "Select a broker from the top row."}
                   </p>
                 </div>
 
-                <div className="space-y-1 p-2 oa-table-font">
-                  {brokers.map((broker) => {
-                    const isActive = selectedBrokerId === broker.id;
-
-                    return (
-                      <button
-                        key={broker.id}
-                        type="button"
-                        onClick={() => handleBrokerSelect(broker.id)}
-                        className={`block w-full rounded border px-3 py-2 text-left outline-none transition ${
-                          isActive
-                            ? "border-sky-500/50 bg-sky-950/30"
-                            : "border-transparent bg-black hover:border-oa-border hover:bg-oa-card"
-                        }`}
-                      >
-                        <span className={oaCardStyles.body}>
-                          {broker.name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className={oaCardStyles.wrapper}>
-              <div className="flex h-full flex-col overflow-hidden rounded">
-                <div className="flex items-center justify-between border-b border-oa-border bg-oa-panel px-3 py-2.5">
-                  <div>
-                    <h3 className={oaCardStyles.headerTitle}>
-                      Connection Setup
-                    </h3>
-                    <p className={oaCardStyles.headerSubtitle}>
-                      {selectedBroker
-                        ? selectedBroker.description
-                        : "Select a broker from the left panel."}
-                    </p>
-                  </div>
-
-                  {selectedBroker && (
-                    <span
-                      className={`${oaPillStyles.base} ${
-                        selectedBroker.apiSupported
-                          ? getStatusClass(selectedStatus)
-                          : "border-zinc-700 bg-zinc-950 text-zinc-400"
-                      }`}
-                    >
-                      {selectedBroker.apiSupported
-                        ? getStatusLabel(selectedStatus)
-                        : "Backend Pending"}
-                    </span>
-                  )}
-                </div>
-
                 {!selectedBroker ? (
-                  <div className="flex flex-1 items-center justify-center p-4">
+                  <div className="flex min-h-[260px] items-center justify-center p-4">
                     <div className="max-w-sm text-center oa-table-font">
                       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded border border-oa-border bg-oa-panel text-oa-muted">
                         <Building2 size={18} />
@@ -603,16 +525,13 @@ function Connections() {
                         No broker selected
                       </p>
                       <p className={`mt-1 leading-5 ${oaFormTextStyles.helper}`}>
-                        Select any broker from the left list to open token
+                        Select a broker from the top row to open token
                         connection controls.
                       </p>
                     </div>
                   </div>
                 ) : (
-                  <form
-                    onSubmit={handleSave}
-                    className="flex-1 p-3 oa-table-font"
-                  >
+                  <form onSubmit={handleSave} className="p-3 oa-table-font">
                     {!selectedBroker.apiSupported && (
                       <div className="mb-3 flex gap-3 rounded border border-amber-500/30 bg-amber-950/20 p-3">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-amber-500/40 bg-black text-amber-300">
@@ -726,11 +645,9 @@ function Connections() {
                   </form>
                 )}
               </div>
-            </div>
 
-            <div className={oaCardStyles.wrapper}>
-              <div className="flex h-full flex-col overflow-hidden rounded">
-                <div className={oaCardStyles.header}>
+              <div>
+                <div className="border-b border-oa-border bg-black px-4 py-3">
                   <h3 className={oaCardStyles.headerTitle}>
                     Connection Information
                   </h3>
@@ -741,13 +658,13 @@ function Connections() {
 
                 {loading ? (
                   <div
-                    className={`flex flex-1 items-center justify-center gap-2 px-3 py-8 oa-table-font ${oaTableStyles.mutedText}`}
+                    className={`flex min-h-[260px] items-center justify-center gap-2 px-3 py-8 oa-table-font ${oaTableStyles.mutedText}`}
                   >
                     <Spinner size="sm" color="light" />
                     Loading connections
                   </div>
                 ) : !selectedBroker ? (
-                  <div className="flex flex-1 items-center justify-center p-4">
+                  <div className="flex min-h-[260px] items-center justify-center p-4">
                     <div className="max-w-sm text-center oa-table-font">
                       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded border border-oa-border bg-oa-panel text-oa-muted">
                         <Activity size={18} />
@@ -761,7 +678,7 @@ function Connections() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex-1 px-3 py-2 oa-table-font">
+                  <div className="px-3 py-2 oa-table-font">
                     <InfoRow label="Broker Name" value={selectedBroker.name} />
 
                     <InfoRow label="Connection Status">

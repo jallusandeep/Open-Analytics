@@ -7,26 +7,34 @@ export const oaTableStyles = {
     "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
   headerCell:
     "relative flex min-w-0 items-center justify-between gap-2 pr-8",
+  headerCellNoFilter:
+    "relative flex min-w-0 items-center gap-2",
+  headerLabel: "min-w-0 truncate leading-none",
   dataRow:
     "grid items-center border-b border-oa-border px-3 py-2 last:border-b-0 hover:bg-oa-panel/60",
   dataText:
     "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
+  dataCell: "min-w-0 truncate",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
   actionHeader:
-    "text-center font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
-  actionCell: "flex justify-center"
+    "relative flex min-w-0 items-center justify-end",
+  actionHeaderLabel:
+    "min-w-0 truncate font-mono text-[11px] font-bold uppercase leading-none tracking-[0.12em] text-oa-muted",
+  actionCell: "flex min-w-0 items-center justify-end"
 };
 
 export const oaCardStyles = {
-  wrapper: "rounded border border-oa-border bg-black",
+  wrapper: "overflow-hidden rounded border border-oa-border bg-black shadow-2xl",
   header: "border-b border-oa-border bg-oa-panel px-4 py-3",
+  body: "bg-black",
 
   headerTitle:
     "font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-white",
   headerSubtitle:
-    "font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
-  body:
+    "mt-0.5 font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
+
+  bodyText:
     "block truncate font-mono text-[13px] font-semibold tracking-[-0.01em] text-white",
   bodyMuted: "font-mono text-[12px] tracking-[-0.01em] text-oa-muted",
 
@@ -61,6 +69,20 @@ export const oaToggleStyles = {
   emeraldActive: "border-emerald-500/40 bg-emerald-950/40 text-emerald-200",
   emeraldInactive:
     "border-transparent text-oa-muted hover:bg-oa-card hover:text-white"
+};
+
+export const oaTabStyles = {
+  wrapper: "flex items-center gap-1",
+  button:
+    "flex h-7 items-center gap-1.5 border-b px-2.5 font-mono text-[12px] tracking-[-0.01em] outline-none transition",
+  active: "border-cyan-400 text-white",
+  inactive:
+    "border-transparent text-oa-muted hover:border-oa-border hover:text-white",
+  activeIcon: "text-cyan-300",
+  inactiveIcon: "text-oa-muted",
+  emeraldActive: "border-emerald-400 text-white",
+  emeraldInactive:
+    "border-transparent text-oa-muted hover:border-oa-border hover:text-white"
 };
 
 export const oaSearchBoxStyles = {

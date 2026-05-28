@@ -44,7 +44,7 @@ function DataTable({
       return oaTableStyles.headerCell;
     }
 
-    return "relative flex min-w-0 items-center gap-2";
+    return oaTableStyles.headerCellNoFilter;
   }
 
   return (
@@ -63,7 +63,7 @@ function DataTable({
 
               return (
                 <div key={column.key} className={getHeaderCellClass(column)}>
-                  <span className="min-w-0 truncate leading-none">
+                  <span className={oaTableStyles.headerLabel}>
                     {column.label}
                   </span>
 
@@ -101,8 +101,8 @@ function DataTable({
             })}
 
             {renderActions && (
-              <div className="relative flex min-w-0 items-center justify-end">
-                <span className="min-w-0 truncate leading-none">Action</span>
+              <div className={oaTableStyles.actionHeader}>
+                <span className={oaTableStyles.actionHeaderLabel}>Action</span>
               </div>
             )}
           </div>
@@ -128,13 +128,13 @@ function DataTable({
                 style={{ gridTemplateColumns }}
               >
                 {columns.map((column) => (
-                  <div key={column.key} className="min-w-0 truncate">
+                  <div key={column.key} className={oaTableStyles.dataCell}>
                     {renderCell(row, column)}
                   </div>
                 ))}
 
                 {renderActions && (
-                  <div className="flex min-w-0 items-center justify-end">
+                  <div className={oaTableStyles.actionCell}>
                     {renderActions(row)}
                   </div>
                 )}
