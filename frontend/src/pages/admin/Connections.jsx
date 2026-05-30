@@ -790,7 +790,7 @@ function Connections() {
                 loadingMessage="Loading connections"
                 emptyMessage="No provider connections found."
                 gridTemplateColumns={connectionGridTemplateColumns}
-                minWidth="min-w-[1080px]"
+                minWidth="min-w-full"
                 getRowKey={(row) => row.id}
                 renderCell={renderCell}
                 renderActions={renderActions}
