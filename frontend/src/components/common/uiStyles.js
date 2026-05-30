@@ -2,7 +2,7 @@ export const oaTableStyles = {
   wrapper: "relative rounded border border-oa-border bg-black oa-table-font",
   inner: "overflow-visible rounded",
   headerRow:
-    "grid rounded-t border-b border-oa-border bg-zinc-900/80 px-3 py-2.5",
+    "grid rounded-t bg-[#121316] px-3 py-2.5",
   headerText:
     "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
   headerCell:
@@ -25,7 +25,7 @@ export const oaTableStyles = {
 
 export const oaCardStyles = {
   wrapper: "overflow-hidden rounded border border-oa-border bg-black shadow-2xl",
-  header: "border-b border-oa-border bg-zinc-900/80 px-4 py-3",
+  header: "border-b border-oa-border bg-zinc-800/70 px-4 py-3",
   body: "bg-black",
 
   headerTitle:

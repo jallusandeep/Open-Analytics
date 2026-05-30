@@ -15,7 +15,6 @@ function DataTable({
   renderActions,
   filterConfig
 }) {
-  const solidHeaderBg = "bg-[#121316]";
   const compactDataRowClass = `${oaTableStyles.dataRow} !py-1`;
 
   function isFilterEnabled(column) {
@@ -43,11 +42,9 @@ function DataTable({
   }
 
   function getHeaderCellClass(column) {
-    const baseClass = isFilterEnabled(column)
+    return isFilterEnabled(column)
       ? oaTableStyles.headerCell
       : oaTableStyles.headerCellNoFilter;
-
-    return `${baseClass} ${solidHeaderBg}`;
   }
 
   function renderStateMessage(type) {
@@ -72,7 +69,7 @@ function DataTable({
       <div className="min-h-0 overflow-visible rounded">
         <div className={minWidth}>
           <div
-            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} ${solidHeaderBg} sticky top-0 z-10 rounded-t border-b border-oa-border shadow-[0_1px_0_rgba(255,255,255,0.04)]`}
+            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 rounded-t border-b border-oa-border`}
             style={{ gridTemplateColumns }}
           >
             {columns.map((column) => {
@@ -121,7 +118,7 @@ function DataTable({
             })}
 
             {renderActions && (
-              <div className={`${oaTableStyles.actionHeader} ${solidHeaderBg}`}>
+              <div className={oaTableStyles.actionHeader}>
                 <span className={oaTableStyles.actionHeaderLabel}>Action</span>
               </div>
             )}
