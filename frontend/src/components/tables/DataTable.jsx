@@ -15,6 +15,9 @@ function DataTable({
   renderActions,
   filterConfig
 }) {
+  const solidHeaderBg = "bg-[#121316]";
+  const compactDataRowClass = `${oaTableStyles.dataRow} !py-1`;
+
   function isFilterEnabled(column) {
     if (!filterConfig) {
       return false;
@@ -40,19 +43,36 @@ function DataTable({
   }
 
   function getHeaderCellClass(column) {
-    if (isFilterEnabled(column)) {
-      return oaTableStyles.headerCell;
-    }
+    const baseClass = isFilterEnabled(column)
+      ? oaTableStyles.headerCell
+      : oaTableStyles.headerCellNoFilter;
 
-    return oaTableStyles.headerCellNoFilter;
+    return `${baseClass} ${solidHeaderBg}`;
+  }
+
+  function renderStateMessage(type) {
+    const isLoading = type === "loading";
+
+    return (
+      <div className="sticky left-0 flex min-h-[260px] w-[calc(100vw-96px)] max-w-full items-center justify-center px-3">
+        <div
+          className={`flex items-center justify-center gap-2 text-center ${
+            isLoading ? oaTableStyles.mutedText : oaTableStyles.emptyText
+          }`}
+        >
+          {isLoading && <Spinner size="sm" color="light" />}
+          <span>{isLoading ? loadingMessage : emptyMessage}</span>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className={oaTableStyles.wrapper}>
-      <div className={oaTableStyles.inner}>
+    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0`}>
+      <div className="min-h-0 overflow-visible rounded">
         <div className={minWidth}>
           <div
-            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText}`}
+            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} ${solidHeaderBg} sticky top-0 z-10 rounded-t border-b border-oa-border shadow-[0_1px_0_rgba(255,255,255,0.04)]`}
             style={{ gridTemplateColumns }}
           >
             {columns.map((column) => {
@@ -101,30 +121,21 @@ function DataTable({
             })}
 
             {renderActions && (
-              <div className={oaTableStyles.actionHeader}>
+              <div className={`${oaTableStyles.actionHeader} ${solidHeaderBg}`}>
                 <span className={oaTableStyles.actionHeaderLabel}>Action</span>
               </div>
             )}
           </div>
 
           {loading ? (
-            <div
-              className={`flex items-center justify-center gap-2 px-3 py-8 ${oaTableStyles.mutedText}`}
-            >
-              <Spinner size="sm" color="light" />
-              {loadingMessage}
-            </div>
+            renderStateMessage("loading")
           ) : rows.length === 0 ? (
-            <div
-              className={`px-3 py-8 text-center ${oaTableStyles.emptyText}`}
-            >
-              {emptyMessage}
-            </div>
+            renderStateMessage("empty")
           ) : (
             rows.map((row, rowIndex) => (
               <div
-                key={getRowKey ? getRowKey(row) : rowIndex}
-                className={`${oaTableStyles.dataRow} ${oaTableStyles.dataText}`}
+                key={getRowKey ? getRowKey(row, rowIndex) : rowIndex}
+                className={`${compactDataRowClass} ${oaTableStyles.dataText}`}
                 style={{ gridTemplateColumns }}
               >
                 {columns.map((column) => (

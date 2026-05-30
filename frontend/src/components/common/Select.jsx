@@ -48,7 +48,9 @@ function Select({
         aria-label={ariaLabel}
         onClick={() => setOpen((previous) => !previous)}
         className={`${oaSelectStyles.button} ${
-          open ? oaSelectStyles.buttonOpen : ""
+          open
+            ? `${oaSelectStyles.buttonOpen} !border-sky-500/70 shadow-[0_0_0_1px_rgba(14,165,233,0.25)]`
+            : "hover:border-sky-500/40"
         }`}
       >
         <span className="truncate">{selectedOption?.label || "Select"}</span>
@@ -56,13 +58,13 @@ function Select({
         <ChevronDown
           size={12}
           className={`${oaSelectStyles.chevron} ${
-            open ? oaSelectStyles.chevronOpen : ""
+            open ? `${oaSelectStyles.chevronOpen} text-sky-300` : ""
           }`}
         />
       </button>
 
       {open && (
-        <div className={oaSelectStyles.menu}>
+        <div className={`${oaSelectStyles.menu} !border-sky-500/50`}>
           <div className={oaSelectStyles.menuScroll}>
             {options.map((option) => {
               const selected = option.value === value;

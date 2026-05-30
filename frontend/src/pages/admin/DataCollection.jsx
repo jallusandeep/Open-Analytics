@@ -290,6 +290,44 @@ function isPreviewView(activeView) {
   return activeView === "current_preview" || activeView === "expired_preview";
 }
 
+function getPaginationItems(currentPage, totalPages) {
+  const pages = [];
+  const safeTotalPages = Math.max(1, Number(totalPages) || 1);
+  const safeCurrentPage = Math.min(
+    Math.max(1, Number(currentPage) || 1),
+    safeTotalPages
+  );
+
+  if (safeTotalPages <= 7) {
+    for (let page = 1; page <= safeTotalPages; page += 1) {
+      pages.push(page);
+    }
+
+    return pages;
+  }
+
+  pages.push(1);
+
+  if (safeCurrentPage > 4) {
+    pages.push("left-ellipsis");
+  }
+
+  const startPage = Math.max(2, safeCurrentPage - 1);
+  const endPage = Math.min(safeTotalPages - 1, safeCurrentPage + 1);
+
+  for (let page = startPage; page <= endPage; page += 1) {
+    pages.push(page);
+  }
+
+  if (safeCurrentPage < safeTotalPages - 3) {
+    pages.push("right-ellipsis");
+  }
+
+  pages.push(safeTotalPages);
+
+  return pages;
+}
+
 function ViewToggle({ activeView, onChange }) {
   return (
     <div className={oaTabStyles.wrapper}>
@@ -367,20 +405,22 @@ function DumpJobActions({
 
 function DataCollectionShell({ activeView, onViewChange, children }) {
   return (
-    <div className={oaCardStyles.wrapper}>
-      <div className={oaCardStyles.header}>
-        <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
-        <p className={oaCardStyles.headerSubtitle}>
-          Track Upstox instrument dumps, expired contracts, sync duration, and
-          saved database records.
-        </p>
+    <div
+      className={`${oaCardStyles.wrapper} flex h-[calc(100vh-24px)] min-h-0 flex-col overflow-hidden`}
+    >
+      <div className="shrink-0">
+        <div className={oaCardStyles.header}>
+          <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
+        </div>
+
+        <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
+          <ViewToggle activeView={activeView} onChange={onViewChange} />
+        </div>
       </div>
 
-      <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
-        <ViewToggle activeView={activeView} onChange={onViewChange} />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-black">
+        {children}
       </div>
-
-      <div className={oaCardStyles.body}>{children}</div>
     </div>
   );
 }
@@ -400,8 +440,8 @@ function MonitorContent({
   renderActions
 }) {
   return (
-    <>
-      <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 xl:flex-row xl:items-center">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
         <form
           onSubmit={onSearchSubmit}
           className="flex flex-wrap items-center gap-2"
@@ -461,7 +501,7 @@ function MonitorContent({
         </form>
       </div>
 
-      <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
         <DataTable
           columns={dumpJobColumns}
           rows={rows}
@@ -475,7 +515,7 @@ function MonitorContent({
           renderActions={renderActions}
         />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -498,7 +538,8 @@ function DbPreviewContent({
   onRefresh,
   onBulkSync,
   onPreviousPage,
-  onNextPage
+  onNextPage,
+  onPageChange
 }) {
   function renderPreviewCell(row, column) {
     if (column.key === "source_type") {
@@ -553,8 +594,8 @@ function DbPreviewContent({
   }
 
   return (
-    <>
-      <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 xl:flex-row xl:items-center">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
         <form
           onSubmit={onSearchSubmit}
           className="flex flex-wrap items-center gap-2"
@@ -638,7 +679,7 @@ function DbPreviewContent({
         </form>
       </div>
 
-      <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
         <DataTable
           columns={previewColumns}
           rows={previewData.rows}
@@ -653,14 +694,14 @@ function DbPreviewContent({
       </div>
 
       <div
-        className={`flex flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 md:flex-row md:items-center md:justify-between ${oaTableStyles.mutedText}`}
+        className={`flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 md:flex-row md:items-center md:justify-between ${oaTableStyles.mutedText}`}
       >
         <span>
           Records: {formatNumber(previewData.total_records)} | Page{" "}
           {previewData.page} of {previewData.total_pages}
         </span>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <IconButton
             icon={ChevronLeft}
             label="Previous"
@@ -669,6 +710,42 @@ function DbPreviewContent({
             onClick={onPreviousPage}
             tooltipSide="top"
           />
+
+          <div className="flex items-center gap-1">
+            {getPaginationItems(previewData.page, previewData.total_pages).map(
+              (item) => {
+                if (String(item).includes("ellipsis")) {
+                  return (
+                    <span
+                      key={item}
+                      className="flex h-8 min-w-8 items-center justify-center px-1 text-[12px] text-oa-muted"
+                    >
+                      ...
+                    </span>
+                  );
+                }
+
+                const active = Number(item) === Number(previewData.page);
+
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    disabled={loading || active}
+                    onClick={() => onPageChange(item)}
+                    className={`flex h-8 min-w-8 items-center justify-center rounded border px-2 text-[12px] font-semibold outline-none transition ${
+                      active
+                        ? "border-sky-500/60 bg-sky-950/40 text-sky-200"
+                        : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white focus:border-sky-500"
+                    } disabled:cursor-default`}
+                    aria-label={`Go to page ${item}`}
+                  >
+                    {item}
+                  </button>
+                );
+              }
+            )}
+          </div>
 
           <IconButton
             icon={ChevronRight}
@@ -680,7 +757,7 @@ function DbPreviewContent({
           />
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1233,10 +1310,10 @@ function DataCollection() {
 
   return (
     <MainLayout>
-      <section className="min-h-screen bg-black p-3">
-        <div className="space-y-3">
+      <section className="h-screen overflow-hidden bg-black p-3">
+        <div className="flex h-full min-h-0 flex-col gap-3">
           {!isAdminControlAllowed && (
-            <div className="flex gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
+            <div className="flex shrink-0 gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-red-500/40 bg-black text-red-300">
                 <AlertTriangle size={18} />
               </div>
@@ -1253,64 +1330,69 @@ function DataCollection() {
             </div>
           )}
 
-          <DataCollectionShell
-            activeView={activeView}
-            onViewChange={handleViewChange}
-          >
-            {activeView === "monitor" ? (
-              <MonitorContent
-                searchValue={monitorSearch}
-                onSearchChange={setMonitorSearch}
-                onSearchSubmit={handleMonitorSearchSubmit}
-                onClearSearch={handleClearMonitorSearch}
-                rows={filteredDumpJobRows}
-                loading={loading}
-                canRunAll={shouldShowRunAllButton}
-                runAllDisabled={!isAdminControlAllowed || loading}
-                onRefresh={() => loadData(true)}
-                onBulkSync={handleBulkSync}
-                renderCell={renderDumpJobCell}
-                renderActions={renderDumpJobActions}
-              />
-            ) : (
-              <DbPreviewContent
-                previewLabel={previewLabel}
-                searchValue={previewSearch}
-                onSearchChange={setPreviewSearch}
-                onSearchSubmit={handlePreviewSearchSubmit}
-                onClearSearch={handleClearPreviewSearch}
-                sourceType={previewSourceType}
-                onSourceTypeChange={(value) => {
-                  setPreviewSourceType(value);
-                  setPreviewPage(1);
-                }}
-                segment={previewSegment}
-                onSegmentChange={(value) => {
-                  setPreviewSegment(value);
-                  setPreviewPage(1);
-                }}
-                instrumentType={previewInstrumentType}
-                onInstrumentTypeChange={(value) => {
-                  setPreviewInstrumentType(value);
-                  setPreviewPage(1);
-                }}
-                previewData={previewData}
-                loading={previewLoading}
-                canRunAll={shouldShowRunAllButton}
-                runAllDisabled={!isAdminControlAllowed || loading || previewLoading}
-                onRefresh={() => loadPreview(previewPage)}
-                onBulkSync={handleBulkSync}
-                onPreviousPage={() =>
-                  setPreviewPage((value) => Math.max(1, value - 1))
-                }
-                onNextPage={() =>
-                  setPreviewPage((value) =>
-                    Math.min(previewData.total_pages || 1, value + 1)
-                  )
-                }
-              />
-            )}
-          </DataCollectionShell>
+          <div className="min-h-0 flex-1">
+            <DataCollectionShell
+              activeView={activeView}
+              onViewChange={handleViewChange}
+            >
+              {activeView === "monitor" ? (
+                <MonitorContent
+                  searchValue={monitorSearch}
+                  onSearchChange={setMonitorSearch}
+                  onSearchSubmit={handleMonitorSearchSubmit}
+                  onClearSearch={handleClearMonitorSearch}
+                  rows={filteredDumpJobRows}
+                  loading={loading}
+                  canRunAll={shouldShowRunAllButton}
+                  runAllDisabled={!isAdminControlAllowed || loading}
+                  onRefresh={() => loadData(true)}
+                  onBulkSync={handleBulkSync}
+                  renderCell={renderDumpJobCell}
+                  renderActions={renderDumpJobActions}
+                />
+              ) : (
+                <DbPreviewContent
+                  previewLabel={previewLabel}
+                  searchValue={previewSearch}
+                  onSearchChange={setPreviewSearch}
+                  onSearchSubmit={handlePreviewSearchSubmit}
+                  onClearSearch={handleClearPreviewSearch}
+                  sourceType={previewSourceType}
+                  onSourceTypeChange={(value) => {
+                    setPreviewSourceType(value);
+                    setPreviewPage(1);
+                  }}
+                  segment={previewSegment}
+                  onSegmentChange={(value) => {
+                    setPreviewSegment(value);
+                    setPreviewPage(1);
+                  }}
+                  instrumentType={previewInstrumentType}
+                  onInstrumentTypeChange={(value) => {
+                    setPreviewInstrumentType(value);
+                    setPreviewPage(1);
+                  }}
+                  previewData={previewData}
+                  loading={previewLoading}
+                  canRunAll={shouldShowRunAllButton}
+                  runAllDisabled={
+                    !isAdminControlAllowed || loading || previewLoading
+                  }
+                  onRefresh={() => loadPreview(previewPage)}
+                  onBulkSync={handleBulkSync}
+                  onPreviousPage={() =>
+                    setPreviewPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setPreviewPage((value) =>
+                      Math.min(previewData.total_pages || 1, value + 1)
+                    )
+                  }
+                  onPageChange={(page) => setPreviewPage(page)}
+                />
+              )}
+            </DataCollectionShell>
+          </div>
         </div>
       </section>
     </MainLayout>
