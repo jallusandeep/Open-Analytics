@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   DownloadCloud,
-  Eye,
   Play,
   RefreshCcw,
   Search,
@@ -65,19 +64,16 @@ const emptyPreviewData = {
 const viewOptions = [
   {
     key: "monitor",
-    label: "Collection Monitor",
-    icon: DownloadCloud
+    label: "Collection Monitor"
   },
   {
-    key: "preview",
-    label: "DB Preview",
-    icon: Eye
+    key: "current_preview",
+    label: "Current Instruments Preview"
+  },
+  {
+    key: "expired_preview",
+    label: "Expired Instruments Preview"
   }
-];
-
-const previewSourceOptions = [
-  { value: "current", label: "Current Instruments" },
-  { value: "expired", label: "Expired Instruments" }
 ];
 
 const sourceTypeOptions = [
@@ -282,11 +278,22 @@ function getLatestRunByTypes(runs, syncTypes = []) {
   return runs.find((run) => syncTypes.includes(run.sync_type)) || null;
 }
 
+function getPreviewTypeFromView(activeView) {
+  if (activeView === "expired_preview") {
+    return "expired";
+  }
+
+  return "current";
+}
+
+function isPreviewView(activeView) {
+  return activeView === "current_preview" || activeView === "expired_preview";
+}
+
 function ViewToggle({ activeView, onChange }) {
   return (
     <div className={oaTabStyles.wrapper}>
       {viewOptions.map((option) => {
-        const Icon = option.icon;
         const isActive = activeView === option.key;
 
         return (
@@ -298,36 +305,7 @@ function ViewToggle({ activeView, onChange }) {
               isActive ? oaTabStyles.active : oaTabStyles.inactive
             }`}
           >
-            <Icon
-              size={13}
-              className={
-                isActive ? oaTabStyles.activeIcon : oaTabStyles.inactiveIcon
-              }
-            />
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function PreviewSourceToggle({ value, onChange }) {
-  return (
-    <div className={oaTabStyles.wrapper}>
-      {previewSourceOptions.map((option) => {
-        const isActive = value === option.value;
-
-        return (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={`${oaTabStyles.button} ${
-              isActive ? oaTabStyles.emeraldActive : oaTabStyles.emeraldInactive
-            }`}
-          >
-            {option.label}
+            <span>{option.label}</span>
           </button>
         );
       })}
@@ -387,17 +365,7 @@ function DumpJobActions({
   );
 }
 
-function DataCollectionShell({
-  activeView,
-  onViewChange,
-  loading,
-  previewLoading,
-  shouldShowRunAllButton,
-  isAdminControlAllowed,
-  onBulkSync,
-  onRefresh,
-  children
-}) {
+function DataCollectionShell({ activeView, onViewChange, children }) {
   return (
     <div className={oaCardStyles.wrapper}>
       <div className={oaCardStyles.header}>
@@ -410,13 +378,78 @@ function DataCollectionShell({
 
       <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
         <ViewToggle activeView={activeView} onChange={onViewChange} />
+      </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {shouldShowRunAllButton && (
+      <div className={oaCardStyles.body}>{children}</div>
+    </div>
+  );
+}
+
+function MonitorContent({
+  searchValue,
+  onSearchChange,
+  onSearchSubmit,
+  onClearSearch,
+  rows,
+  loading,
+  canRunAll,
+  runAllDisabled,
+  onRefresh,
+  onBulkSync,
+  renderCell,
+  renderActions
+}) {
+  return (
+    <>
+      <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 xl:flex-row xl:items-center">
+        <form
+          onSubmit={onSearchSubmit}
+          className="flex flex-wrap items-center gap-2"
+        >
+          <div className="relative w-full md:w-80">
+            <Input
+              value={searchValue}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search collection monitor"
+              className="pr-9"
+            />
+
+            {searchValue ? (
+              <button
+                type="button"
+                onClick={onClearSearch}
+                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+                aria-label="Clear search"
+              >
+                <X size={13} />
+              </button>
+            ) : null}
+          </div>
+
+          <Tooltip text="Search collection monitor" side="top">
+            <button
+              type="submit"
+              className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
+              aria-label="Search collection monitor"
+            >
+              <Search size={14} />
+            </button>
+          </Tooltip>
+
+          <IconButton
+            icon={RefreshCcw}
+            label="Refresh"
+            variant="refresh"
+            disabled={loading}
+            onClick={onRefresh}
+            tooltipSide="top"
+          />
+
+          {canRunAll && (
             <Tooltip text="Run all dumps" side="top">
               <button
                 type="button"
-                disabled={!isAdminControlAllowed || loading}
+                disabled={runAllDisabled}
                 onClick={onBulkSync}
                 className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Run all data collection dumps"
@@ -425,26 +458,29 @@ function DataCollectionShell({
               </button>
             </Tooltip>
           )}
-
-          <IconButton
-            icon={RefreshCcw}
-            label="Refresh"
-            variant="refresh"
-            disabled={loading || previewLoading}
-            onClick={onRefresh}
-            tooltipSide="top"
-          />
-        </div>
+        </form>
       </div>
 
-      <div className={oaCardStyles.body}>{children}</div>
-    </div>
+      <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        <DataTable
+          columns={dumpJobColumns}
+          rows={rows}
+          loading={loading}
+          loadingMessage="Loading data collection status"
+          emptyMessage="No data collection jobs found."
+          gridTemplateColumns={dumpJobGridTemplateColumns}
+          minWidth="min-w-[980px]"
+          getRowKey={(row) => row.id}
+          renderCell={renderCell}
+          renderActions={renderActions}
+        />
+      </div>
+    </>
   );
 }
 
 function DbPreviewContent({
-  previewType,
-  onPreviewTypeChange,
+  previewLabel,
   searchValue,
   onSearchChange,
   onSearchSubmit,
@@ -457,7 +493,10 @@ function DbPreviewContent({
   onInstrumentTypeChange,
   previewData,
   loading,
+  canRunAll,
+  runAllDisabled,
   onRefresh,
+  onBulkSync,
   onPreviousPage,
   onNextPage
 }) {
@@ -515,7 +554,7 @@ function DbPreviewContent({
 
   return (
     <>
-      <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 xl:flex-row xl:items-center">
         <form
           onSubmit={onSearchSubmit}
           className="flex flex-wrap items-center gap-2"
@@ -524,7 +563,7 @@ function DbPreviewContent({
             <Input
               value={searchValue}
               onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Search key, symbol, name, segment"
+              placeholder={`Search ${previewLabel.toLowerCase()}`}
               className="pr-9"
             />
 
@@ -573,23 +612,30 @@ function DbPreviewContent({
               <Search size={14} />
             </button>
           </Tooltip>
-        </form>
-
-        <div className="flex items-center gap-2">
-          <PreviewSourceToggle
-            value={previewType}
-            onChange={onPreviewTypeChange}
-          />
 
           <IconButton
             icon={RefreshCcw}
-            label="Refresh preview"
+            label="Refresh"
             variant="refresh"
             disabled={loading}
             onClick={onRefresh}
-            tooltipSide="left"
+            tooltipSide="top"
           />
-        </div>
+
+          {canRunAll && (
+            <Tooltip text="Run all dumps" side="top">
+              <button
+                type="button"
+                disabled={runAllDisabled}
+                onClick={onBulkSync}
+                className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Run all data collection dumps"
+              >
+                <DownloadCloud size={14} />
+              </button>
+            </Tooltip>
+          )}
+        </form>
       </div>
 
       <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
@@ -597,7 +643,7 @@ function DbPreviewContent({
           columns={previewColumns}
           rows={previewData.rows}
           loading={loading}
-          loadingMessage="Loading DB preview"
+          loadingMessage={`Loading ${previewLabel.toLowerCase()}`}
           emptyMessage="No dumped records found."
           gridTemplateColumns={previewGridTemplateColumns}
           minWidth="min-w-[2020px]"
@@ -649,7 +695,9 @@ function DataCollection() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const activeSyncControllerRef = useRef(null);
 
-  const [previewType, setPreviewType] = useState("current");
+  const [monitorSearch, setMonitorSearch] = useState("");
+  const [appliedMonitorSearch, setAppliedMonitorSearch] = useState("");
+
   const [previewSearch, setPreviewSearch] = useState("");
   const [appliedPreviewSearch, setAppliedPreviewSearch] = useState("");
   const [previewSourceType, setPreviewSourceType] = useState("all");
@@ -666,6 +714,12 @@ function DataCollection() {
   const isAdminControlAllowed = ["admin", "super_admin"].includes(
     currentUser?.role
   );
+
+  const previewType = getPreviewTypeFromView(activeView);
+  const previewLabel =
+    previewType === "expired"
+      ? "Expired Instruments Preview"
+      : "Current Instruments Preview";
 
   const hasActiveJob = Boolean(runningJob || summary.active_job);
   const isCancelRequested =
@@ -742,7 +796,8 @@ function DataCollection() {
       {
         id: "expired",
         title: "Expired Instruments",
-        description: "Pulls expired options and futures using saved Upstox token.",
+        description:
+          "Pulls expired options and futures using saved Upstox token.",
         records: summary.total_expired_instruments,
         lastSyncedAt: summary.expired_last_sync_at || summary.last_sync_at,
         duration: summary.expired_duration_seconds,
@@ -768,6 +823,27 @@ function DataCollection() {
     hasActiveJob,
     shouldShowCancelButton
   ]);
+
+  const filteredDumpJobRows = useMemo(() => {
+    const query = appliedMonitorSearch.trim().toLowerCase();
+
+    if (!query) {
+      return dumpJobRows;
+    }
+
+    return dumpJobRows.filter((row) => {
+      const values = [
+        row.title,
+        row.description,
+        formatNumber(row.records),
+        formatDateTime(row.lastSyncedAt),
+        formatDuration(row.duration),
+        getStatusLabel(row.lastStatus)
+      ];
+
+      return values.some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [dumpJobRows, appliedMonitorSearch]);
 
   async function loadPreview(customPage = previewPage) {
     setPreviewLoading(true);
@@ -828,7 +904,7 @@ function DataCollection() {
       }
 
       await loadData(false);
-      if (activeView === "preview") {
+      if (isPreviewView(activeView)) {
         await loadPreview(1);
       }
     } catch (error) {
@@ -947,7 +1023,7 @@ function DataCollection() {
       }
 
       await loadData(false);
-      if (activeView === "preview" && previewType === "current") {
+      if (activeView === "current_preview") {
         await loadPreview(1);
       }
     } catch (error) {
@@ -993,7 +1069,7 @@ function DataCollection() {
       }
 
       await loadData(false);
-      if (activeView === "preview" && previewType === "expired") {
+      if (activeView === "expired_preview") {
         await loadPreview(1);
       }
     } catch (error) {
@@ -1013,6 +1089,16 @@ function DataCollection() {
     }
   }
 
+  function handleMonitorSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedMonitorSearch(monitorSearch.trim());
+  }
+
+  function handleClearMonitorSearch() {
+    setMonitorSearch("");
+    setAppliedMonitorSearch("");
+  }
+
   function handlePreviewSearchSubmit(event) {
     event.preventDefault();
     setAppliedPreviewSearch(previewSearch.trim());
@@ -1025,12 +1111,17 @@ function DataCollection() {
     setPreviewPage(1);
   }
 
-  function handlePreviewTypeChange(value) {
-    setPreviewType(value);
-    setPreviewSourceType("all");
-    setPreviewSegment("all");
-    setPreviewInstrumentType("all");
-    setPreviewPage(1);
+  function handleViewChange(nextView) {
+    setActiveView(nextView);
+
+    if (isPreviewView(nextView)) {
+      setPreviewSearch("");
+      setAppliedPreviewSearch("");
+      setPreviewSourceType("all");
+      setPreviewSegment("all");
+      setPreviewInstrumentType("all");
+      setPreviewPage(1);
+    }
   }
 
   function renderDumpJobCell(row, column) {
@@ -1093,7 +1184,7 @@ function DataCollection() {
   }, []);
 
   useEffect(() => {
-    if (activeView !== "preview") {
+    if (!isPreviewView(activeView)) {
       return;
     }
 
@@ -1101,7 +1192,6 @@ function DataCollection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeView,
-    previewType,
     appliedPreviewSearch,
     previewSourceType,
     previewSegment,
@@ -1165,39 +1255,26 @@ function DataCollection() {
 
           <DataCollectionShell
             activeView={activeView}
-            onViewChange={setActiveView}
-            loading={loading}
-            previewLoading={previewLoading}
-            shouldShowRunAllButton={shouldShowRunAllButton}
-            isAdminControlAllowed={isAdminControlAllowed}
-            onBulkSync={handleBulkSync}
-            onRefresh={() => {
-              if (activeView === "preview") {
-                loadPreview(previewPage);
-              } else {
-                loadData(true);
-              }
-            }}
+            onViewChange={handleViewChange}
           >
             {activeView === "monitor" ? (
-              <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-                <DataTable
-                  columns={dumpJobColumns}
-                  rows={dumpJobRows}
-                  loading={loading}
-                  loadingMessage="Loading data collection status"
-                  emptyMessage="No data collection jobs found."
-                  gridTemplateColumns={dumpJobGridTemplateColumns}
-                  minWidth="min-w-[980px]"
-                  getRowKey={(row) => row.id}
-                  renderCell={renderDumpJobCell}
-                  renderActions={renderDumpJobActions}
-                />
-              </div>
+              <MonitorContent
+                searchValue={monitorSearch}
+                onSearchChange={setMonitorSearch}
+                onSearchSubmit={handleMonitorSearchSubmit}
+                onClearSearch={handleClearMonitorSearch}
+                rows={filteredDumpJobRows}
+                loading={loading}
+                canRunAll={shouldShowRunAllButton}
+                runAllDisabled={!isAdminControlAllowed || loading}
+                onRefresh={() => loadData(true)}
+                onBulkSync={handleBulkSync}
+                renderCell={renderDumpJobCell}
+                renderActions={renderDumpJobActions}
+              />
             ) : (
               <DbPreviewContent
-                previewType={previewType}
-                onPreviewTypeChange={handlePreviewTypeChange}
+                previewLabel={previewLabel}
                 searchValue={previewSearch}
                 onSearchChange={setPreviewSearch}
                 onSearchSubmit={handlePreviewSearchSubmit}
@@ -1219,7 +1296,10 @@ function DataCollection() {
                 }}
                 previewData={previewData}
                 loading={previewLoading}
+                canRunAll={shouldShowRunAllButton}
+                runAllDisabled={!isAdminControlAllowed || loading || previewLoading}
                 onRefresh={() => loadPreview(previewPage)}
+                onBulkSync={handleBulkSync}
                 onPreviousPage={() =>
                   setPreviewPage((value) => Math.max(1, value - 1))
                 }

@@ -17,10 +17,16 @@ from app.database import get_connection
 UPSTOX_PROVIDER = "upstox"
 UPSTOX_BASE_URL = "https://api.upstox.com/v2"
 
-UPSTOX_INSTRUMENT_FILES = {
-    "bod_complete": "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz",
-    "suspended": "https://assets.upstox.com/market-quote/instruments/exchange/suspended-instrument.json.gz"
-}
+APP_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = APP_ROOT / "data" / "upstox"
+MASTER_INSTRUMENT_FILE = DATA_DIR / "upstox_instruments.json"
+
+# One-time current instruments master download.
+# This downloads the official gz file once, extracts it locally,
+# then DuckDB imports from the local JSON file.
+UPSTOX_CURRENT_MASTER_URL = (
+    "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
+)
 
 DEFAULT_UNDERLYING_KEYS = [
     "NSE_INDEX|Nifty 50",
@@ -31,12 +37,11 @@ DEFAULT_UNDERLYING_KEYS = [
     "BSE_INDEX|BANKEX"
 ]
 
-REQUEST_TIMEOUT_SECONDS = 60
+REQUEST_TIMEOUT_SECONDS = 180
 API_SLEEP_SECONDS = 0.45
 STALE_RUNNING_RUN_HOURS = 2
-CURRENT_INSERT_BATCH_SIZE = 5000
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4
 
-APP_ROOT = Path(__file__).resolve().parents[1]
 CANCEL_SIGNAL_DIR = APP_ROOT / "runtime"
 CANCEL_SIGNAL_FILE = CANCEL_SIGNAL_DIR / "upstox_data_collection.cancel"
 
@@ -63,6 +68,14 @@ def clear_cancel_signal():
 
 def has_cancel_signal() -> bool:
     return CANCEL_SIGNAL_FILE.exists()
+
+
+def duration_seconds(started_at: datetime) -> int:
+    return max(0, int((datetime.now() - started_at).total_seconds()))
+
+
+def normalize_duckdb_file_path(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "/")
 
 
 def normalize_expiry(value: Any) -> Optional[str]:
@@ -133,17 +146,17 @@ def safe_bool(value: Any) -> Optional[bool]:
     return bool(value)
 
 
-def duration_seconds(started_at: datetime) -> int:
-    return max(0, int((datetime.now() - started_at).total_seconds()))
-
-
 def get_upstox_access_token(conn) -> str:
     row = conn.execute("""
-        SELECT access_token
+        SELECT
+            access_token,
+            connection_status
         FROM external_connections
         WHERE provider = ?
           AND record_status = 'S'
-          AND connection_status IN ('saved', 'connected')
+          AND access_token IS NOT NULL
+          AND TRIM(access_token) <> ''
+        ORDER BY updated_at DESC
         LIMIT 1;
     """, [UPSTOX_PROVIDER]).fetchone()
 
@@ -337,99 +350,217 @@ def request_cancel_active_sync_runs_service():
         conn.close()
 
 
-def download_json_gzip(url: str) -> List[Dict[str, Any]]:
+def download_upstox_master_file_once(force_download: bool = False) -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    if (
+        MASTER_INSTRUMENT_FILE.exists()
+        and MASTER_INSTRUMENT_FILE.stat().st_size > 0
+        and not force_download
+    ):
+        print(f"Using existing local Upstox master file: {MASTER_INSTRUMENT_FILE}")
+        return MASTER_INSTRUMENT_FILE
+
+    temp_gz_file = MASTER_INSTRUMENT_FILE.with_suffix(".json.gz.download")
+    temp_json_file = MASTER_INSTRUMENT_FILE.with_suffix(".json.download")
+
     request = urllib.request.Request(
-        url,
+        UPSTOX_CURRENT_MASTER_URL,
         headers={"User-Agent": "OpenAnalytics/1.0"}
     )
 
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-        content = response.read()
+    print("Downloading Upstox current instruments master file once...")
+    print(f"URL  : {UPSTOX_CURRENT_MASTER_URL}")
+    print(f"Save : {MASTER_INSTRUMENT_FILE}")
 
     try:
-        return json.loads(gzip.decompress(content).decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            with open(temp_gz_file, "wb") as output_file:
+                while True:
+                    chunk = response.read(DOWNLOAD_CHUNK_SIZE)
+
+                    if not chunk:
+                        break
+
+                    output_file.write(chunk)
+
+        with gzip.open(temp_gz_file, "rb") as gzip_file:
+            with open(temp_json_file, "wb") as output_file:
+                while True:
+                    chunk = gzip_file.read(DOWNLOAD_CHUNK_SIZE)
+
+                    if not chunk:
+                        break
+
+                    output_file.write(chunk)
+
+        temp_json_file.replace(MASTER_INSTRUMENT_FILE)
+
+        try:
+            temp_gz_file.unlink()
+        except Exception:
+            pass
+
+        print(f"Download completed: {MASTER_INSTRUMENT_FILE}")
+        return MASTER_INSTRUMENT_FILE
+
     except Exception:
-        return json.loads(content.decode("utf-8"))
+        try:
+            if temp_gz_file.exists():
+                temp_gz_file.unlink()
+
+            if temp_json_file.exists():
+                temp_json_file.unlink()
+        except Exception:
+            pass
+
+        raise
 
 
-def map_current_instrument(row: Dict[str, Any], source_type: str):
-    return [
-        safe_text(row.get("instrument_key")),
-        source_type,
-        safe_text(row.get("segment")),
-        safe_text(row.get("name")),
-        safe_text(row.get("exchange")),
-        safe_text(row.get("isin")),
-        safe_text(row.get("instrument_type")),
-        safe_text(row.get("trading_symbol")),
-        safe_text(row.get("short_name")),
-        safe_text(row.get("exchange_token")),
-        normalize_expiry(row.get("expiry")),
-        safe_float(row.get("strike_price")),
-        safe_int(row.get("lot_size")),
-        safe_int(row.get("minimum_lot")),
-        safe_float(row.get("freeze_quantity")),
-        safe_float(row.get("tick_size")),
-        safe_bool(row.get("weekly")),
-        safe_text(row.get("underlying_key")),
-        safe_text(row.get("underlying_symbol")),
-        safe_text(row.get("underlying_type")),
-        safe_text(row.get("security_type")),
-        json.dumps(row, ensure_ascii=False),
-        datetime.now()
-    ]
+def get_current_instrument_count(conn) -> int:
+    try:
+        row = conn.execute("""
+            SELECT COUNT(*)
+            FROM upstox_instruments
+            WHERE source_type = 'bod_complete';
+        """).fetchone()
 
-
-def insert_current_instruments(
-    conn,
-    rows: List[Dict[str, Any]],
-    source_type: str,
-    sync_id: str
-) -> int:
-    if not rows:
+        return int(row[0] or 0)
+    except Exception:
         return 0
 
-    total_inserted = 0
 
-    for start_index in range(0, len(rows), CURRENT_INSERT_BATCH_SIZE):
-        check_sync_cancelled(conn, sync_id)
+def import_current_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
+    check_sync_cancelled(conn, sync_id)
 
-        batch_rows = rows[start_index:start_index + CURRENT_INSERT_BATCH_SIZE]
-        mapped_rows = [map_current_instrument(row, source_type) for row in batch_rows]
+    duckdb_path = normalize_duckdb_file_path(local_file)
 
-        conn.executemany("""
-            INSERT INTO upstox_instruments (
-                instrument_key,
-                source_type,
-                segment,
-                name,
-                exchange,
-                isin,
-                instrument_type,
-                trading_symbol,
-                short_name,
-                exchange_token,
-                expiry,
-                strike_price,
-                lot_size,
-                minimum_lot,
-                freeze_quantity,
-                tick_size,
-                weekly,
-                underlying_key,
-                underlying_symbol,
-                underlying_type,
-                security_type,
-                raw_json,
-                synced_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """, mapped_rows)
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_current")
 
-        total_inserted += len(mapped_rows)
-        check_sync_cancelled(conn, sync_id)
+    read_started_at = time.time()
 
-    return total_inserted
+    print("Reading required columns directly with DuckDB...")
+
+    conn.execute(
+        """
+        CREATE TEMP TABLE temp_upstox_current AS
+        SELECT *
+        FROM read_json(
+            ?,
+            format = 'array',
+            maximum_object_size = 16777216,
+            columns = {
+                instrument_key: 'VARCHAR',
+                segment: 'VARCHAR',
+                name: 'VARCHAR',
+                exchange: 'VARCHAR',
+                isin: 'VARCHAR',
+                instrument_type: 'VARCHAR',
+                trading_symbol: 'VARCHAR',
+                short_name: 'VARCHAR',
+                exchange_token: 'VARCHAR',
+                expiry: 'VARCHAR',
+                strike_price: 'DOUBLE',
+                lot_size: 'BIGINT',
+                minimum_lot: 'BIGINT',
+                freeze_quantity: 'DOUBLE',
+                tick_size: 'DOUBLE',
+                weekly: 'BOOLEAN',
+                underlying_key: 'VARCHAR',
+                underlying_symbol: 'VARCHAR',
+                underlying_type: 'VARCHAR',
+                security_type: 'VARCHAR'
+            }
+        );
+        """,
+        [duckdb_path]
+    )
+
+    print(f"DuckDB JSON read time: {round(time.time() - read_started_at, 2)} seconds")
+
+    check_sync_cancelled(conn, sync_id)
+
+    total_rows = conn.execute("""
+        SELECT COUNT(*)
+        FROM temp_upstox_current;
+    """).fetchone()[0]
+
+    print(f"Rows loaded into temp table: {total_rows}")
+
+    insert_started_at = time.time()
+
+    conn.execute("""
+        DELETE FROM upstox_instruments
+        WHERE source_type = 'bod_complete';
+    """)
+
+    check_sync_cancelled(conn, sync_id)
+
+    conn.execute("""
+        INSERT INTO upstox_instruments (
+            instrument_key,
+            source_type,
+            segment,
+            name,
+            exchange,
+            isin,
+            instrument_type,
+            trading_symbol,
+            short_name,
+            exchange_token,
+            expiry,
+            strike_price,
+            lot_size,
+            minimum_lot,
+            freeze_quantity,
+            tick_size,
+            weekly,
+            underlying_key,
+            underlying_symbol,
+            underlying_type,
+            security_type,
+            raw_json,
+            synced_at
+        )
+        SELECT
+            instrument_key,
+            'bod_complete' AS source_type,
+            segment,
+            name,
+            exchange,
+            isin,
+            instrument_type,
+            trading_symbol,
+            short_name,
+            exchange_token,
+
+            CASE
+                WHEN expiry IS NULL THEN NULL
+                WHEN TRY_CAST(expiry AS BIGINT) IS NOT NULL
+                    THEN CAST(epoch_ms(TRY_CAST(expiry AS BIGINT)) AS DATE)
+                ELSE TRY_CAST(expiry AS DATE)
+            END AS expiry,
+
+            strike_price,
+            lot_size,
+            minimum_lot,
+            freeze_quantity,
+            tick_size,
+            weekly,
+            underlying_key,
+            underlying_symbol,
+            underlying_type,
+            security_type,
+            NULL AS raw_json,
+            CURRENT_TIMESTAMP AS synced_at
+        FROM temp_upstox_current;
+    """)
+
+    print(f"DuckDB insert time: {round(time.time() - insert_started_at, 2)} seconds")
+
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_current")
+
+    return int(total_rows or 0)
 
 
 def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]] = None):
@@ -712,6 +843,8 @@ def sync_upstox_current_instruments_service(
 
         ensure_no_active_sync_run(conn)
 
+        existing_count = get_current_instrument_count(conn)
+
         sync_id = create_sync_run(
             conn,
             "upstox_current_instruments",
@@ -719,35 +852,51 @@ def sync_upstox_current_instruments_service(
             "Current instrument dump started."
         )
 
-        for source_type, url in UPSTOX_INSTRUMENT_FILES.items():
-            check_sync_cancelled(conn, sync_id)
+        local_file = download_upstox_master_file_once(force_download=False)
 
-            rows = download_json_gzip(url)
+        check_sync_cancelled(conn, sync_id)
 
-            check_sync_cancelled(conn, sync_id)
+        if (
+            existing_count > 0
+            and local_file.exists()
+            and local_file.stat().st_size > 0
+        ):
+            total_records = existing_count
 
-            conn.execute("""
-                DELETE FROM upstox_instruments
-                WHERE source_type = ?;
-            """, [source_type])
-
-            check_sync_cancelled(conn, sync_id)
-
-            total_records += insert_current_instruments(
+            finish_sync_run(
                 conn,
-                rows,
-                source_type,
-                sync_id
+                sync_id,
+                "success",
+                "Current instruments already exist. Reused local/database records.",
+                total_records,
+                started_at
             )
 
-            conn.commit()
-            check_sync_cancelled(conn, sync_id)
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            return {
+                "status": "success",
+                "message": "Current instruments already exist. No re-import needed.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at)
+            }
+
+        conn.execute("BEGIN TRANSACTION")
+
+        total_records = import_current_instruments_from_local_file(
+            conn=conn,
+            sync_id=sync_id,
+            local_file=local_file
+        )
+
+        conn.execute("COMMIT")
 
         finish_sync_run(
             conn,
             sync_id,
             "success",
-            "Current instruments dumped successfully.",
+            "Current instruments dumped successfully from local master file.",
             total_records,
             started_at
         )
@@ -757,7 +906,7 @@ def sync_upstox_current_instruments_service(
 
         return {
             "status": "success",
-            "message": "Current instruments dumped successfully.",
+            "message": "Current instruments dumped successfully from local master file.",
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at)
         }
@@ -789,6 +938,11 @@ def sync_upstox_current_instruments_service(
         }
 
     except HTTPException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
         if sync_id:
             finish_sync_run(
                 conn,
@@ -801,6 +955,7 @@ def sync_upstox_current_instruments_service(
 
         if clear_cancel_at_start:
             clear_cancel_signal()
+
         raise
 
     except Exception as e:
@@ -952,6 +1107,11 @@ def sync_upstox_expired_instruments_service(
         }
 
     except HTTPException as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
         if sync_id:
             finish_sync_run(
                 conn,
@@ -964,6 +1124,7 @@ def sync_upstox_expired_instruments_service(
 
         if clear_cancel_at_start:
             clear_cancel_signal()
+
         raise
 
     except Exception as e:
@@ -995,84 +1156,35 @@ def sync_upstox_expired_instruments_service(
 
 
 def sync_upstox_all_instruments_service(current_user: dict):
-    conn = get_connection()
-
-    try:
-        clear_cancel_signal()
-        ensure_no_active_sync_run(conn)
-    finally:
-        conn.close()
-
     started_at = datetime.now()
 
     current_result = sync_upstox_current_instruments_service(
         current_user,
-        clear_cancel_at_start=False
+        clear_cancel_at_start=True
     )
+
+    total_records = int(current_result.get("total_records") or 0)
 
     if current_result.get("status") == "cancelled":
-        clear_cancel_signal()
-
         return {
             "status": "cancelled",
-            "message": "All Upstox instrument dumps cancelled.",
-            "total_records": int(current_result.get("total_records") or 0),
-            "duration_seconds": duration_seconds(started_at),
-            "jobs": {
-                "current": current_result
-            }
-        }
-
-    if has_cancel_signal():
-        clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "All Upstox instrument dumps cancelled before expired instruments started.",
-            "total_records": int(current_result.get("total_records") or 0),
-            "duration_seconds": duration_seconds(started_at),
-            "jobs": {
-                "current": current_result
-            }
-        }
-
-    expired_result = sync_upstox_expired_instruments_service(
-        current_user,
-        clear_cancel_at_start=False
-    )
-
-    total_records = (
-        int(current_result.get("total_records") or 0) +
-        int(expired_result.get("total_records") or 0)
-    )
-
-    if expired_result.get("status") == "cancelled":
-        clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "All Upstox instrument dumps cancelled.",
+            "message": "Current Upstox instrument dump cancelled.",
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at),
             "jobs": {
-                "current": current_result,
-                "expired": expired_result
+                "current": current_result
             }
         }
 
-    clear_cancel_signal()
-
     return {
         "status": "success",
-        "message": "All Upstox instrument dumps completed successfully.",
+        "message": "Current Upstox master instruments completed successfully. Expired instruments were not run because they require a non-read-only Upstox token.",
         "total_records": total_records,
         "duration_seconds": duration_seconds(started_at),
         "jobs": {
-            "current": current_result,
-            "expired": expired_result
+            "current": current_result
         }
     }
-
 
 def normalize_page(value: int) -> int:
     try:

@@ -58,14 +58,6 @@ function MainLayout({ children }) {
     },
     {
       label: "Database",
-      icon: Database,
-      path: "/database",
-      show: true,
-      color: "text-amber-300",
-      activeLine: "bg-amber-300"
-    },
-    {
-      label: "Connections",
       icon: Link,
       path: "/connections",
       show: isAdminUser,

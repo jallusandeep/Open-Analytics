@@ -2,7 +2,7 @@ export const oaTableStyles = {
   wrapper: "relative rounded border border-oa-border bg-black oa-table-font",
   inner: "overflow-visible rounded",
   headerRow:
-    "grid rounded-t border-b border-oa-border bg-oa-panel px-3 py-2.5",
+    "grid rounded-t border-b border-oa-border bg-zinc-900/80 px-3 py-2.5",
   headerText:
     "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
   headerCell:
@@ -17,8 +17,7 @@ export const oaTableStyles = {
   dataCell: "min-w-0 truncate",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
-  actionHeader:
-    "relative flex min-w-0 items-center justify-end",
+  actionHeader: "relative flex min-w-0 items-center justify-end",
   actionHeaderLabel:
     "min-w-0 truncate font-mono text-[11px] font-bold uppercase leading-none tracking-[0.12em] text-oa-muted",
   actionCell: "flex min-w-0 items-center justify-end"
@@ -26,13 +25,12 @@ export const oaTableStyles = {
 
 export const oaCardStyles = {
   wrapper: "overflow-hidden rounded border border-oa-border bg-black shadow-2xl",
-  header: "border-b border-oa-border bg-oa-panel px-4 py-3",
+  header: "border-b border-oa-border bg-zinc-900/80 px-4 py-3",
   body: "bg-black",
 
   headerTitle:
     "font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-white",
-  headerSubtitle:
-    "mt-0.5 font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
+  headerSubtitle: "hidden",
 
   bodyText:
     "block truncate font-mono text-[13px] font-semibold tracking-[-0.01em] text-white",

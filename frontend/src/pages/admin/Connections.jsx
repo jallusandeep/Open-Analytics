@@ -21,7 +21,6 @@ import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
   oaFormTextStyles,
-  oaPillStyles,
   oaTableStyles,
   oaTabStyles
 } from "../../components/common/uiStyles";
@@ -47,6 +46,8 @@ const brokers = [
     apiSupported: true
   }
 ];
+
+const sectionHeaderClass = "border-b border-oa-border bg-zinc-900/80 px-4 py-3";
 
 function getStoredCurrentUser() {
   try {
@@ -94,22 +95,6 @@ function getStatusLabel(status) {
   }
 
   return "Not Connected";
-}
-
-function getStatusClass(status) {
-  if (status === "connected") {
-    return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
-  }
-
-  if (status === "failed") {
-    return "border-red-500/40 bg-red-950/50 text-red-200";
-  }
-
-  if (status === "saved") {
-    return "border-sky-500/40 bg-sky-950/50 text-sky-200";
-  }
-
-  return "border-zinc-600 bg-zinc-900 text-zinc-200";
 }
 
 function formatDateTime(value) {
@@ -504,7 +489,7 @@ function Connections() {
 
             <div className="grid min-h-[360px] gap-0 bg-black xl:grid-cols-[minmax(420px,1fr)_360px]">
               <div className="border-b border-oa-border xl:border-b-0 xl:border-r">
-                <div className="border-b border-oa-border bg-black px-4 py-3">
+                <div className={sectionHeaderClass}>
                   <h3 className={oaCardStyles.headerTitle}>
                     Connection Setup
                   </h3>
@@ -647,7 +632,7 @@ function Connections() {
               </div>
 
               <div>
-                <div className="border-b border-oa-border bg-black px-4 py-3">
+                <div className={sectionHeaderClass}>
                   <h3 className={oaCardStyles.headerTitle}>
                     Connection Information
                   </h3>

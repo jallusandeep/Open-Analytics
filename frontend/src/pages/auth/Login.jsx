@@ -45,7 +45,7 @@ function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-oa-dark px-3 text-oa-text">
+    <div className="oa-app-font flex min-h-screen items-center justify-center bg-oa-dark px-3 text-oa-text">
       <div className="w-full max-w-sm rounded-xl border border-oa-border bg-oa-card p-5 shadow-2xl">
         <div className="mb-5 flex items-center justify-center gap-1">
           <ChevronRight
