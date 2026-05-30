@@ -29,6 +29,32 @@ textarea {
 .oa-table-font {
   font-family: "JetBrains Mono", "IBM Plex Mono", Consolas, monospace;
 }
+
+.oa-app-font {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+}
+
+/* Global menu / popup animation */
+@keyframes oaMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Open Analytics dark scrollbars */
 * {
   scrollbar-width: thin;
@@ -58,28 +84,7 @@ textarea {
 *::-webkit-scrollbar-corner {
   background: #000000;
 }
-.oa-app-font {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    "Liberation Mono",
-    "Courier New",
-    monospace;
-}
-.oa-app-font {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    "Liberation Mono",
-    "Courier New",
-    monospace;
-}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,

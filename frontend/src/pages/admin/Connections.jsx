@@ -1,28 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
-  Building2,
+  Check,
   CheckCircle2,
   Edit3,
-  Info,
+  Plus,
   PlugZap,
   RefreshCcw,
-  Save,
-  Trash2
+  Search,
+  Trash2,
+  X
 } from "lucide-react";
 
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
-import Tooltip from "../../components/common/Tooltip";
+import Select from "../../components/common/Select";
+import Modal from "../../components/common/Modal";
+import DataTable from "../../components/tables/DataTable";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
   oaFormTextStyles,
-  oaTableStyles,
-  oaTabStyles
+  oaPillStyles
 } from "../../components/common/uiStyles";
 import {
   disconnectUpstoxConnection,
@@ -32,9 +33,7 @@ import {
 } from "../../api/connectionApi";
 
 const emptyFormData = {
-  api_key: "",
-  api_secret: "",
-  redirect_url: "",
+  provider: "upstox",
   access_token: ""
 };
 
@@ -47,7 +46,20 @@ const brokers = [
   }
 ];
 
-const sectionHeaderClass = "border-b border-oa-border bg-zinc-900/80 px-4 py-3";
+const providerOptions = brokers.map((broker) => ({
+  value: broker.id,
+  label: broker.name
+}));
+
+const connectionColumns = [
+  { key: "provider", label: "Provider", filterable: false },
+  { key: "status", label: "Status", filterable: false },
+  { key: "updated_at", label: "Updated At", filterable: false },
+  { key: "token_expiry", label: "Token Expiry", filterable: false },
+  { key: "updated_by", label: "Updated By", filterable: false }
+];
+
+const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 132px";
 
 function getStoredCurrentUser() {
   try {
@@ -95,6 +107,22 @@ function getStatusLabel(status) {
   }
 
   return "Not Connected";
+}
+
+function getStatusClass(status) {
+  if (status === "connected") {
+    return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
+  }
+
+  if (status === "failed") {
+    return "border-red-500/40 bg-red-950/50 text-red-200";
+  }
+
+  if (status === "saved") {
+    return "border-sky-500/40 bg-sky-950/50 text-sky-200";
+  }
+
+  return "border-zinc-600 bg-zinc-900 text-zinc-200";
 }
 
 function formatDateTime(value) {
@@ -167,27 +195,147 @@ function getTokenExpiry(connection) {
   return "Valid for 1 year";
 }
 
-function InfoRow({ label, value, children }) {
+function StatusBadge({ status }) {
   return (
-    <div className="grid grid-cols-[130px_1fr] items-center gap-3 border-b border-oa-border/70 py-2.5 last:border-b-0">
-      <span className={oaFormTextStyles.label}>{label}</span>
-      <span className={`min-w-0 truncate text-right ${oaFormTextStyles.value}`}>
-        {children || value}
-      </span>
-    </div>
+    <span className={`${oaPillStyles.base} ${getStatusClass(status)}`}>
+      {status === "connected" && <CheckCircle2 size={12} />}
+      {getStatusLabel(status)}
+    </span>
+  );
+}
+
+function ConnectionFormModal({
+  open,
+  mode,
+  formData,
+  selectedConnection,
+  saving,
+  isAdminControlAllowed,
+  onClose,
+  onSave,
+  onInputChange
+}) {
+  const title = mode === "edit" ? "Edit Connection" : "Add Connection";
+  const subtitle =
+    mode === "edit"
+      ? "Replace the saved provider token. Existing token number will not be shown."
+      : "Select provider and enter token number to save a new connection.";
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    onSave();
+  }
+
+  return (
+    <Modal
+      open={open}
+      title={title}
+      subtitle={subtitle}
+      onClose={onClose}
+      width="max-w-lg"
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          <IconButton
+            icon={X}
+            label="Cancel"
+            variant="default"
+            disabled={saving}
+            onClick={onClose}
+            tooltipSide="top"
+          />
+
+          <IconButton
+            icon={Check}
+            label={mode === "edit" ? "Update connection" : "Save connection"}
+            variant="default"
+            disabled={
+              saving || !isAdminControlAllowed || !formData.access_token.trim()
+            }
+            onClick={onSave}
+            tooltipSide="top"
+          />
+        </div>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-3 oa-table-font">
+        <div>
+          <label className={oaFormTextStyles.label}>Provider</label>
+          <div className="mt-1">
+            <Select
+              value={formData.provider}
+              onChange={(event) =>
+                onInputChange({
+                  target: {
+                    name: "provider",
+                    value: event.target.value
+                  }
+                })
+              }
+              options={providerOptions}
+              ariaLabel="Provider"
+              minWidth="w-full"
+              disabled={mode === "edit"}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className={oaFormTextStyles.label}>Token Number</label>
+          <div className="relative mt-1">
+            <Input
+              name="access_token"
+              type="password"
+              value={formData.access_token}
+              onChange={onInputChange}
+              placeholder={
+                selectedConnection
+                  ? "Token saved - enter new token to replace"
+                  : "Enter token number"
+              }
+              className="pr-9"
+              autoFocus
+            />
+
+            {formData.access_token ? (
+              <button
+                type="button"
+                onClick={() =>
+                  onInputChange({
+                    target: {
+                      name: "access_token",
+                      value: ""
+                    }
+                  })
+                }
+                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+                aria-label="Clear token number"
+              >
+                <X size={13} />
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <button type="submit" className="hidden" aria-hidden="true">
+          Submit
+        </button>
+      </form>
+    </Modal>
   );
 }
 
 function Connections() {
   const [connections, setConnections] = useState([]);
-  const [selectedBrokerId, setSelectedBrokerId] = useState("upstox");
   const [formData, setFormData] = useState(emptyFormData);
-  const [editing, setEditing] = useState(false);
+  const [formMode, setFormMode] = useState("closed");
+
+  const [searchValue, setSearchValue] = useState("");
+  const [appliedSearchValue, setAppliedSearchValue] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
+  const [testingProvider, setTestingProvider] = useState("");
+  const [disconnectingProvider, setDisconnectingProvider] = useState("");
 
   const { showToast } = useToast();
 
@@ -203,24 +351,51 @@ function Connections() {
     }, {});
   }, [connections]);
 
-  const selectedBroker = useMemo(() => {
-    return brokers.find((item) => item.id === selectedBrokerId) || null;
-  }, [selectedBrokerId]);
+  const rows = useMemo(() => {
+    return brokers.map((broker) => {
+      const connection = connectionsByProvider[broker.id] || null;
 
-  const selectedConnection = selectedBroker
-    ? connectionsByProvider[selectedBroker.id] || null
-    : null;
+      return {
+        id: broker.id,
+        broker,
+        connection,
+        provider: broker.name,
+        description: broker.description,
+        status: getConnectionStatus(connection),
+        updated_at: getLastUpdated(connection),
+        token_expiry: getTokenExpiry(connection),
+        updated_by: connection ? formatUserName(currentUser) : "--"
+      };
+    });
+  }, [connectionsByProvider, currentUser]);
 
-  const selectedStatus = getConnectionStatus(selectedConnection);
-  const isSelectedConnected = selectedStatus === "connected";
-  const hasSelectedBroker = Boolean(selectedBroker);
-  const isSelectedBrokerSupported = Boolean(selectedBroker?.apiSupported);
+  const filteredRows = useMemo(() => {
+    const query = appliedSearchValue.trim().toLowerCase();
 
-  const controlsDisabled =
-    !isAdminControlAllowed ||
-    !hasSelectedBroker ||
-    !isSelectedBrokerSupported ||
-    (!editing && Boolean(selectedConnection));
+    if (!query) {
+      return rows;
+    }
+
+    return rows.filter((row) => {
+      const values = [
+        row.provider,
+        row.description,
+        getStatusLabel(row.status),
+        formatDateTime(row.updated_at),
+        row.token_expiry,
+        row.updated_by
+      ];
+
+      return values.some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [rows, appliedSearchValue]);
+
+  const formBroker = useMemo(() => {
+    return brokers.find((item) => item.id === formData.provider) || brokers[0];
+  }, [formData.provider]);
+
+  const selectedConnection = connectionsByProvider[formData.provider] || null;
+  const formOpen = formMode !== "closed";
 
   async function loadConnections(showRefreshToast = false) {
     setLoading(true);
@@ -247,30 +422,26 @@ function Connections() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!selectedBroker) {
-      setFormData(emptyFormData);
-      setEditing(false);
-      return;
-    }
-
-    if (selectedConnection) {
-      setFormData({
-        api_key: selectedConnection.api_key || "",
-        api_secret: "",
-        redirect_url: selectedConnection.redirect_url || "",
-        access_token: ""
-      });
-      setEditing(false);
-      return;
-    }
-
+  function openAddForm() {
+    setFormMode("add");
     setFormData(emptyFormData);
-    setEditing(true);
-  }, [selectedBroker, selectedConnection]);
+  }
 
-  function handleBrokerSelect(brokerId) {
-    setSelectedBrokerId(brokerId);
+  function openEditForm(provider) {
+    setFormMode("edit");
+    setFormData({
+      provider,
+      access_token: ""
+    });
+  }
+
+  function closeForm() {
+    if (saving) {
+      return;
+    }
+
+    setFormMode("closed");
+    setFormData(emptyFormData);
   }
 
   function handleInputChange(event) {
@@ -282,19 +453,24 @@ function Connections() {
     }));
   }
 
-  async function handleSave(event) {
+  function handleSearchSubmit(event) {
     event.preventDefault();
+    setAppliedSearchValue(searchValue.trim());
+  }
 
-    if (!selectedBroker) {
-      showToast("Select a broker before saving token.", "warning");
+  function handleClearSearch() {
+    setSearchValue("");
+    setAppliedSearchValue("");
+  }
+
+  async function handleSave() {
+    if (!formBroker) {
+      showToast("Select a provider before saving token.", "warning");
       return;
     }
 
-    if (!isSelectedBrokerSupported) {
-      showToast(
-        `${selectedBroker.name} backend APIs are not added yet.`,
-        "warning"
-      );
+    if (!formBroker.apiSupported) {
+      showToast(`${formBroker.name} backend APIs are not added yet.`, "warning");
       return;
     }
 
@@ -303,30 +479,31 @@ function Connections() {
       return;
     }
 
+    if (!formData.access_token.trim()) {
+      showToast("Enter token number before saving connection.", "warning");
+      return;
+    }
+
     setSaving(true);
 
     try {
-      if (selectedBroker.id === "upstox") {
+      if (formBroker.id === "upstox") {
         await saveUpstoxConnection({
-          api_key: formData.api_key || "",
-          api_secret: formData.api_secret || "",
-          redirect_url: formData.redirect_url || "",
-          access_token: formData.access_token
+          api_key: "",
+          api_secret: "",
+          redirect_url: "",
+          access_token: formData.access_token.trim()
         });
       }
 
-      showToast(`${selectedBroker.name} token saved successfully.`, "success");
+      showToast(`${formBroker.name} token saved successfully.`, "success");
       await loadConnections(false);
-
-      setFormData((previous) => ({
-        ...previous,
-        access_token: ""
-      }));
-      setEditing(false);
+      setFormMode("closed");
+      setFormData(emptyFormData);
     } catch (error) {
       showToast(
         error.response?.data?.detail ||
-          `Unable to save ${selectedBroker.name} token.`,
+          `Unable to save ${formBroker.name} token.`,
         "error"
       );
     } finally {
@@ -334,17 +511,16 @@ function Connections() {
     }
   }
 
-  async function handleTest() {
-    if (!selectedBroker) {
-      showToast("Select a broker before testing connection.", "warning");
+  async function handleTest(provider) {
+    const broker = brokers.find((item) => item.id === provider);
+
+    if (!broker) {
+      showToast("Select a provider before testing connection.", "warning");
       return;
     }
 
-    if (!isSelectedBrokerSupported) {
-      showToast(
-        `${selectedBroker.name} backend APIs are not added yet.`,
-        "warning"
-      );
+    if (!broker.apiSupported) {
+      showToast(`${broker.name} backend APIs are not added yet.`, "warning");
       return;
     }
 
@@ -353,109 +529,248 @@ function Connections() {
       return;
     }
 
-    setTesting(true);
+    setTestingProvider(provider);
 
     try {
       let response = null;
 
-      if (selectedBroker.id === "upstox") {
+      if (broker.id === "upstox") {
         response = await testUpstoxConnection();
       }
 
       showToast(
         response?.data?.message ||
-          `${selectedBroker.name} connection tested successfully.`,
+          `${broker.name} connection tested successfully.`,
         "success"
       );
       await loadConnections(false);
     } catch (error) {
       showToast(
         error.response?.data?.detail ||
-          `Unable to test ${selectedBroker.name} connection.`,
+          `Unable to test ${broker.name} connection.`,
         "error"
       );
     } finally {
-      setTesting(false);
+      setTestingProvider("");
     }
   }
 
-  async function handleDisconnect() {
-    if (!selectedBroker) {
-      showToast("Select a broker before disconnecting.", "warning");
+  async function handleDisconnect(provider) {
+    const broker = brokers.find((item) => item.id === provider);
+
+    if (!broker) {
+      showToast("Select a provider before deleting connection.", "warning");
       return;
     }
 
-    if (!isSelectedBrokerSupported) {
-      showToast(
-        `${selectedBroker.name} backend APIs are not added yet.`,
-        "warning"
-      );
+    if (!broker.apiSupported) {
+      showToast(`${broker.name} backend APIs are not added yet.`, "warning");
       return;
     }
 
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to disconnect connections.", "error");
+      showToast("Admin access required to delete connections.", "error");
       return;
     }
 
-    setDisconnecting(true);
+    setDisconnectingProvider(provider);
 
     try {
-      if (selectedBroker.id === "upstox") {
+      if (broker.id === "upstox") {
         await disconnectUpstoxConnection();
       }
 
       setConnections((previous) =>
-        previous.filter((item) => item.provider !== selectedBroker.id)
+        previous.filter((item) => item.provider !== provider)
       );
-      setFormData(emptyFormData);
-      setEditing(true);
-      showToast(`${selectedBroker.name} disconnected successfully.`, "success");
+
+      if (formData.provider === provider) {
+        setFormMode("closed");
+        setFormData(emptyFormData);
+      }
+
+      showToast(`${broker.name} connection deleted successfully.`, "success");
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to disconnect ${selectedBroker.name}.`,
+        error.response?.data?.detail || `Unable to delete ${broker.name}.`,
         "error"
       );
     } finally {
-      setDisconnecting(false);
+      setDisconnectingProvider("");
     }
+  }
+
+  function renderCell(row, column) {
+    if (column.key === "provider") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-white">
+          {row.provider}
+        </span>
+      );
+    }
+
+    if (column.key === "status") {
+      return <StatusBadge status={row.status} />;
+    }
+
+    if (column.key === "updated_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row.updated_at)}
+        </span>
+      );
+    }
+
+    if (column.key === "token_expiry") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {row.token_expiry}
+        </span>
+      );
+    }
+
+    if (column.key === "updated_by") {
+      return (
+        <span className="truncate oa-code-font text-oa-muted">
+          {row.updated_by}
+        </span>
+      );
+    }
+
+    return <span className="truncate">--</span>;
+  }
+
+  function renderActions(row) {
+    const hasConnection = Boolean(row.connection);
+    const isTesting = testingProvider === row.broker.id;
+    const isDeleting = disconnectingProvider === row.broker.id;
+
+    return (
+      <div className="flex justify-end gap-2">
+        <IconButton
+          icon={Edit3}
+          label="Edit token"
+          variant="default"
+          disabled={
+            !hasConnection || !row.broker.apiSupported || !isAdminControlAllowed
+          }
+          onClick={() => openEditForm(row.broker.id)}
+          tooltipSide="left"
+        />
+
+        <button
+          type="button"
+          disabled={
+            isTesting ||
+            !hasConnection ||
+            !row.broker.apiSupported ||
+            !isAdminControlAllowed
+          }
+          onClick={() => handleTest(row.broker.id)}
+          className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={isTesting ? "Testing connection" : "Test connection"}
+          title={isTesting ? "Testing connection" : "Test connection"}
+        >
+          {isTesting ? (
+            <Spinner size="xs" color="light" />
+          ) : (
+            <PlugZap size={15} />
+          )}
+        </button>
+
+        <button
+          type="button"
+          disabled={
+            isDeleting ||
+            !hasConnection ||
+            !row.broker.apiSupported ||
+            !isAdminControlAllowed
+          }
+          onClick={() => handleDisconnect(row.broker.id)}
+          className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={isDeleting ? "Deleting connection" : "Delete connection"}
+          title={isDeleting ? "Deleting connection" : "Delete connection"}
+        >
+          {isDeleting ? (
+            <Spinner size="xs" color="light" />
+          ) : (
+            <Trash2 size={15} />
+          )}
+        </button>
+      </div>
+    );
   }
 
   return (
     <MainLayout>
       <section className="min-h-screen bg-black p-3">
         <div className="space-y-3">
+          {!isAdminControlAllowed && (
+            <div className="flex gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-red-500/40 bg-black text-red-300">
+                <AlertTriangle size={18} />
+              </div>
+
+              <div>
+                <p className={oaCardStyles.headerTitle}>
+                  Admin access required
+                </p>
+                <p className={`mt-1 ${oaFormTextStyles.helper}`}>
+                  Only admin and super admin users can save, test, edit, or
+                  delete provider connections.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className={oaCardStyles.wrapper}>
             <div className={oaCardStyles.header}>
               <h2 className={oaCardStyles.headerTitle}>Connections</h2>
-              <p className={oaCardStyles.headerSubtitle}>
-                Admin controlled external broker and market data provider
-                credentials.
-              </p>
             </div>
 
-            <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
-              <div className={oaTabStyles.wrapper}>
-                {brokers.map((broker) => {
-                  const isActive = selectedBrokerId === broker.id;
+            <div className="relative z-30 border-b border-oa-border bg-black px-3 py-1.5">
+              <form
+                onSubmit={handleSearchSubmit}
+                className="flex flex-wrap items-center gap-2"
+              >
+                <div className="relative w-full md:w-80">
+                  <Input
+                    value={searchValue}
+                    onChange={(event) => setSearchValue(event.target.value)}
+                    placeholder="Search connections"
+                    className="pr-9"
+                  />
 
-                  return (
+                  {searchValue ? (
                     <button
-                      key={broker.id}
                       type="button"
-                      onClick={() => handleBrokerSelect(broker.id)}
-                      className={`${oaTabStyles.button} ${
-                        isActive ? oaTabStyles.active : oaTabStyles.inactive
-                      }`}
+                      onClick={handleClearSearch}
+                      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+                      aria-label="Clear search"
                     >
-                      {broker.name}
+                      <X size={13} />
                     </button>
-                  );
-                })}
-              </div>
+                  ) : null}
+                </div>
 
-              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
+                  aria-label="Search connections"
+                  title="Search connections"
+                >
+                  <Search size={14} />
+                </button>
+
+                <IconButton
+                  icon={Plus}
+                  label="Add connection"
+                  variant="default"
+                  disabled={!isAdminControlAllowed}
+                  onClick={openAddForm}
+                  tooltipSide="top"
+                />
+
                 <IconButton
                   icon={RefreshCcw}
                   label="Refresh"
@@ -464,245 +779,37 @@ function Connections() {
                   onClick={() => loadConnections(true)}
                   tooltipSide="top"
                 />
-              </div>
+              </form>
             </div>
 
-            {!isAdminControlAllowed && (
-              <div className="border-b border-oa-border bg-black p-3">
-                <div className="flex gap-3 rounded border border-red-500/30 bg-red-950/20 p-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-red-500/40 bg-black text-red-300">
-                    <AlertTriangle size={18} />
-                  </div>
-
-                  <div>
-                    <p className={oaCardStyles.headerTitle}>
-                      Admin access required
-                    </p>
-                    <p className={`mt-1 ${oaFormTextStyles.helper}`}>
-                      Only admin and super admin users can save, test, edit, or
-                      disconnect provider connections.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="grid min-h-[360px] gap-0 bg-black xl:grid-cols-[minmax(420px,1fr)_360px]">
-              <div className="border-b border-oa-border xl:border-b-0 xl:border-r">
-                <div className={sectionHeaderClass}>
-                  <h3 className={oaCardStyles.headerTitle}>
-                    Connection Setup
-                  </h3>
-                  <p className={oaCardStyles.headerSubtitle}>
-                    {selectedBroker
-                      ? selectedBroker.description
-                      : "Select a broker from the top row."}
-                  </p>
-                </div>
-
-                {!selectedBroker ? (
-                  <div className="flex min-h-[260px] items-center justify-center p-4">
-                    <div className="max-w-sm text-center oa-table-font">
-                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded border border-oa-border bg-oa-panel text-oa-muted">
-                        <Building2 size={18} />
-                      </div>
-                      <p className={oaCardStyles.headerTitle}>
-                        No broker selected
-                      </p>
-                      <p className={`mt-1 leading-5 ${oaFormTextStyles.helper}`}>
-                        Select a broker from the top row to open token
-                        connection controls.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <form onSubmit={handleSave} className="p-3 oa-table-font">
-                    {!selectedBroker.apiSupported && (
-                      <div className="mb-3 flex gap-3 rounded border border-amber-500/30 bg-amber-950/20 p-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-amber-500/40 bg-black text-amber-300">
-                          <Info size={18} />
-                        </div>
-
-                        <div>
-                          <p className={oaCardStyles.headerTitle}>
-                            Backend API not added yet
-                          </p>
-                          <p className={`mt-1 ${oaFormTextStyles.helper}`}>
-                            {selectedBroker.name} is visible in the broker
-                            list, but save, test, and disconnect will work
-                            after adding backend API support.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="grid gap-2">
-                      <Input
-                        name="access_token"
-                        type="password"
-                        value={formData.access_token}
-                        onChange={handleInputChange}
-                        placeholder={
-                          selectedConnection?.has_access_token
-                            ? "Token saved - enter only to replace"
-                            : `${selectedBroker.name} Access Token`
-                        }
-                        required={!selectedConnection?.has_access_token}
-                        disabled={controlsDisabled}
-                      />
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      <p className={oaFormTextStyles.helper}>
-                        {selectedConnection && !editing
-                          ? "Click edit to replace saved token."
-                          : "Only admin and super admin users can manage this connection."}
-                      </p>
-
-                      <div className="flex items-center gap-2">
-                        <Tooltip text="Edit token" side="top">
-                          <button
-                            type="button"
-                            disabled={
-                              !selectedConnection ||
-                              !selectedBroker.apiSupported ||
-                              !isAdminControlAllowed
-                            }
-                            onClick={() => setEditing(true)}
-                            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-amber-300 outline-none transition hover:border-amber-500/60 hover:bg-amber-950/40 hover:text-amber-200 focus:border-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
-                            aria-label="Edit token"
-                          >
-                            <Edit3 size={15} />
-                          </button>
-                        </Tooltip>
-
-                        <Tooltip text="Save token" side="top">
-                          <button
-                            type="submit"
-                            disabled={saving || controlsDisabled}
-                            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                            aria-label="Save token"
-                          >
-                            {saving ? (
-                              <Spinner size="xs" color="light" />
-                            ) : (
-                              <Save size={15} />
-                            )}
-                          </button>
-                        </Tooltip>
-
-                        <Tooltip text="Test connection" side="top">
-                          <button
-                            type="button"
-                            disabled={
-                              testing ||
-                              !selectedConnection ||
-                              !selectedBroker.apiSupported ||
-                              !isAdminControlAllowed
-                            }
-                            onClick={handleTest}
-                            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-                            aria-label="Test connection"
-                          >
-                            {testing ? (
-                              <Spinner size="xs" color="light" />
-                            ) : (
-                              <PlugZap size={15} />
-                            )}
-                          </button>
-                        </Tooltip>
-
-                        <IconButton
-                          icon={Trash2}
-                          label="Disconnect"
-                          variant="danger"
-                          tooltipSide="top"
-                          disabled={
-                            !selectedConnection ||
-                            disconnecting ||
-                            !selectedBroker.apiSupported ||
-                            !isAdminControlAllowed
-                          }
-                          onClick={handleDisconnect}
-                        />
-                      </div>
-                    </div>
-                  </form>
-                )}
-              </div>
-
-              <div>
-                <div className={sectionHeaderClass}>
-                  <h3 className={oaCardStyles.headerTitle}>
-                    Connection Information
-                  </h3>
-                  <p className={oaCardStyles.headerSubtitle}>
-                    Selected broker token details.
-                  </p>
-                </div>
-
-                {loading ? (
-                  <div
-                    className={`flex min-h-[260px] items-center justify-center gap-2 px-3 py-8 oa-table-font ${oaTableStyles.mutedText}`}
-                  >
-                    <Spinner size="sm" color="light" />
-                    Loading connections
-                  </div>
-                ) : !selectedBroker ? (
-                  <div className="flex min-h-[260px] items-center justify-center p-4">
-                    <div className="max-w-sm text-center oa-table-font">
-                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded border border-oa-border bg-oa-panel text-oa-muted">
-                        <Activity size={18} />
-                      </div>
-                      <p className={oaCardStyles.headerTitle}>
-                        No broker selected
-                      </p>
-                      <p className={`mt-1 leading-5 ${oaFormTextStyles.helper}`}>
-                        Select a broker to view its token information.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="px-3 py-2 oa-table-font">
-                    <InfoRow label="Broker Name" value={selectedBroker.name} />
-
-                    <InfoRow label="Connection Status">
-                      <span
-                        className={`inline-flex items-center justify-end gap-1.5 ${
-                          isSelectedConnected
-                            ? "text-emerald-200"
-                            : "text-white"
-                        }`}
-                      >
-                        {isSelectedConnected && <CheckCircle2 size={13} />}
-                        {selectedBroker.apiSupported
-                          ? getStatusLabel(selectedStatus)
-                          : "Not Configured"}
-                      </span>
-                    </InfoRow>
-
-                    <InfoRow
-                      label="Updated At"
-                      value={formatDateTime(getLastUpdated(selectedConnection))}
-                    />
-
-                    <InfoRow
-                      label="Token Expiry"
-                      value={getTokenExpiry(selectedConnection)}
-                    />
-
-                    <InfoRow
-                      label="Updated By"
-                      value={
-                        selectedConnection ? formatUserName(currentUser) : "--"
-                      }
-                    />
-                  </div>
-                )}
-              </div>
+            <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+              <DataTable
+                columns={connectionColumns}
+                rows={filteredRows}
+                loading={loading}
+                loadingMessage="Loading connections"
+                emptyMessage="No provider connections found."
+                gridTemplateColumns={connectionGridTemplateColumns}
+                minWidth="min-w-[1080px]"
+                getRowKey={(row) => row.id}
+                renderCell={renderCell}
+                renderActions={renderActions}
+              />
             </div>
           </div>
         </div>
+
+        <ConnectionFormModal
+          open={formOpen}
+          mode={formMode}
+          formData={formData}
+          selectedConnection={selectedConnection}
+          saving={saving}
+          isAdminControlAllowed={isAdminControlAllowed}
+          onClose={closeForm}
+          onSave={handleSave}
+          onInputChange={handleInputChange}
+        />
       </section>
     </MainLayout>
   );
