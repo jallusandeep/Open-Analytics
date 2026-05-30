@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronRight, Lock, Mail } from "lucide-react";
 
 import { loginUser } from "../../api/authApi";
+import FloatingInput from "../../components/common/FloatingInput";
 import Spinner from "../../components/common/Spinner";
 
 function Login() {
@@ -47,7 +48,7 @@ function Login() {
   return (
     <div className="oa-app-font flex min-h-screen items-center justify-center bg-oa-dark px-3 text-oa-text">
       <div className="w-full max-w-sm rounded-xl border border-oa-border bg-oa-card p-5 shadow-2xl">
-        <div className="mb-5 flex items-center justify-center gap-1">
+        <div className="mb-6 flex items-center justify-center gap-1">
           <ChevronRight
             size={24}
             strokeWidth={2.6}
@@ -59,49 +60,41 @@ function Login() {
           </h1>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-3">
-          <div>
-            <label className="mb-1.5 block text-xs text-oa-muted">
-              Email
-            </label>
-
-            <div className="flex items-center gap-2 rounded-lg border border-oa-border bg-black px-3 py-2.5 focus-within:border-oa-accent">
-              <Mail size={16} className="text-oa-muted" />
-
-              <input
-                type="email"
-                className="w-full bg-transparent text-sm outline-none"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
-              />
-            </div>
-          </div>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <FloatingInput
+            id="login-email"
+            name="email"
+            label="Email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            icon={Mail}
+            autoComplete="email"
+            required
+            variant="auth"
+          />
 
           <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <label className="block text-xs text-oa-muted">
-                Password
-              </label>
+            <FloatingInput
+              id="login-password"
+              name="password"
+              label="Password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              icon={Lock}
+              autoComplete="current-password"
+              required
+              variant="auth"
+            />
 
+            <div className="mt-1.5 flex justify-end">
               <button
                 type="button"
                 className="text-xs text-oa-muted transition hover:text-white"
               >
                 Forgotten password?
               </button>
-            </div>
-
-            <div className="flex items-center gap-2 rounded-lg border border-oa-border bg-black px-3 py-2.5 focus-within:border-oa-accent">
-              <Lock size={16} className="text-oa-muted" />
-
-              <input
-                type="password"
-                className="w-full bg-transparent text-sm outline-none"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Password"
-              />
             </div>
           </div>
 

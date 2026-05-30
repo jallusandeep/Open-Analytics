@@ -69,3 +69,29 @@ textarea {
     "Courier New",
     monospace;
 }
+.oa-app-font {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+}
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #000 inset !important;
+  box-shadow: 0 0 0 1000px #000 inset !important;
+  -webkit-text-fill-color: #e5e7eb !important;
+  caret-color: #e5e7eb !important;
+  transition: background-color 9999s ease-in-out 0s !important;
+}
+
+input:-internal-autofill-selected {
+  background-color: #000 !important;
+  color: #e5e7eb !important;
+}

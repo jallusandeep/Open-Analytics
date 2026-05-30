@@ -20,7 +20,7 @@ import {
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
-import Input from "../../components/common/Input";
+import FloatingInput from "../../components/common/FloatingInput";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
@@ -854,45 +854,48 @@ function UserAccounts() {
         }
       >
         <form id="create-user-form" onSubmit={handleCreateUser}>
-          <div className="grid gap-2 md:grid-cols-3">
-            <Input
+          <div className="grid gap-3 md:grid-cols-3">
+            <FloatingInput
               name="login_id"
+              label="Login ID"
               value={formData.login_id}
               onChange={handleInputChange}
-              placeholder="Login ID"
               required
             />
 
-            <Input
+            <FloatingInput
               name="full_name"
+              label="Full Name"
               value={formData.full_name}
               onChange={handleInputChange}
-              placeholder="Full Name"
               required
             />
 
-            <Input
+            <FloatingInput
               name="email"
+              label="Email ID"
               type="email"
               value={formData.email}
               onChange={handleInputChange}
-              placeholder="Email ID"
+              autoComplete="email"
               required
             />
 
-            <Input
+            <FloatingInput
               name="mobile_number"
+              label="Mobile Number"
               value={formData.mobile_number}
               onChange={handleInputChange}
-              placeholder="Mobile Number"
+              autoComplete="tel"
             />
 
-            <Input
+            <FloatingInput
               name="password"
+              label="Password"
               type="password"
               value={formData.password}
               onChange={handleInputChange}
-              placeholder="Password"
+              autoComplete="new-password"
               required
             />
 
@@ -953,37 +956,39 @@ function UserAccounts() {
         }
       >
         <form id="edit-user-form" onSubmit={handleUpdateUser}>
-          <div className="grid gap-2 md:grid-cols-3">
-            <Input
+          <div className="grid gap-3 md:grid-cols-3">
+            <FloatingInput
               name="login_id"
+              label="Login ID"
               value={editFormData.login_id}
               onChange={handleEditInputChange}
-              placeholder="Login ID"
               required
             />
 
-            <Input
+            <FloatingInput
               name="full_name"
+              label="Full Name"
               value={editFormData.full_name}
               onChange={handleEditInputChange}
-              placeholder="Full Name"
               required
             />
 
-            <Input
+            <FloatingInput
               name="email"
+              label="Email ID"
               type="email"
               value={editFormData.email}
               onChange={handleEditInputChange}
-              placeholder="Email ID"
+              autoComplete="email"
               required
             />
 
-            <Input
+            <FloatingInput
               name="mobile_number"
+              label="Mobile Number"
               value={editFormData.mobile_number}
               onChange={handleEditInputChange}
-              placeholder="Mobile Number"
+              autoComplete="tel"
             />
 
             <Select
