@@ -22,6 +22,7 @@ import IconButton from "../../components/common/IconButton";
 import FloatingInput from "../../components/common/FloatingInput";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
+import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
   oaFormTextStyles,
@@ -150,6 +151,7 @@ function ProfileRow({ icon: Icon, label, children }) {
 
 function Settings() {
   const savedUser = useMemo(() => getStoredCurrentUser(), []);
+  const { showToast } = useToast();
 
   const [profile, setProfile] = useState(savedUser);
   const [loading, setLoading] = useState(false);
@@ -201,10 +203,15 @@ function Settings() {
       setProfile(user);
       saveUserToStorage(user);
     } catch (error) {
-      setActionMessage(
+      const message =
         error.response?.data?.detail ||
-          "Unable to load latest user details. Showing saved details."
-      );
+        "Unable to load latest user details. Showing saved details.";
+
+      setActionMessage(message);
+
+      if (!silent) {
+        showToast(message, "error");
+      }
     } finally {
       if (!silent) {
         setLoading(false);
@@ -278,12 +285,12 @@ function Settings() {
     const mobileNumber = detailsForm.mobile_number.trim();
 
     if (fullName.length < 2) {
-      setActionMessage("Full name must be at least 2 characters.");
+      showToast("Full name must be at least 2 characters.", "error");
       return;
     }
 
     if (!email) {
-      setActionMessage("Email ID is required.");
+      showToast("Email ID is required.", "error");
       return;
     }
 
@@ -312,13 +319,16 @@ function Settings() {
         email: "",
         mobile_number: ""
       });
-      setActionMessage(
-        response.data?.message || "User details updated successfully."
+
+      showToast(
+        response.data?.message || "User details updated successfully.",
+        "success"
       );
     } catch (error) {
-      setActionMessage(
+      showToast(
         error.response?.data?.detail ||
-          "Unable to update user details. Please try again."
+          "Unable to update user details. Please try again.",
+        "error"
       );
     } finally {
       setUpdatingDetails(false);
@@ -376,22 +386,22 @@ function Settings() {
     const confirmPassword = passwordForm.confirm_password.trim();
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setActionMessage("Please fill all password fields.");
+      showToast("Please fill all password fields.", "error");
       return;
     }
 
     if (newPassword.length < 6) {
-      setActionMessage("New password must be at least 6 characters.");
+      showToast("New password must be at least 6 characters.", "error");
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setActionMessage("New password and confirm password do not match.");
+      showToast("New password and confirm password do not match.", "error");
       return;
     }
 
     if (currentPassword === newPassword) {
-      setActionMessage("New password must be different from current password.");
+      showToast("New password must be different from current password.", "error");
       return;
     }
 
@@ -407,13 +417,16 @@ function Settings() {
 
       clearPasswordForm(false);
       setShowPasswordModal(false);
-      setActionMessage(
-        response.data?.message || "Password changed successfully."
+
+      showToast(
+        response.data?.message || "Password changed successfully.",
+        "success"
       );
     } catch (error) {
-      setActionMessage(
+      showToast(
         error.response?.data?.detail ||
-          "Unable to change password. Please try again."
+          "Unable to change password. Please try again.",
+        "error"
       );
     } finally {
       setSavingPassword(false);
