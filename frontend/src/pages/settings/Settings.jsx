@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Check,
+  Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   KeyRound,
@@ -9,6 +11,7 @@ import {
   Mail,
   Pencil,
   Phone,
+  PlugZap,
   RefreshCcw,
   Send,
   Shield,
@@ -34,6 +37,12 @@ import {
   getMyProfile,
   updateMyProfile
 } from "../../api/settingsApi";
+import {
+  getMyTelegramConnection,
+  startMyTelegramConnection,
+  testMyTelegramConnection,
+  verifyMyTelegramConnection
+} from "../../api/connectionApi";
 
 function formatRoleLabel(role) {
   if (!role) {
@@ -91,10 +100,46 @@ function getRolePill(role) {
   return roleClass[role] || roleClass.user;
 }
 
-function getTelegramPill(isConnected) {
-  return isConnected
-    ? "border-sky-500/40 bg-sky-950/50 text-sky-200"
-    : "border-zinc-600 bg-zinc-900 text-zinc-200";
+function getTelegramPill(status) {
+  if (status === "connected") {
+    return "border-sky-500/40 bg-sky-950/50 text-sky-200";
+  }
+
+  if (status === "pending") {
+    return "border-amber-500/40 bg-amber-950/40 text-amber-200";
+  }
+
+  return "border-zinc-600 bg-zinc-900 text-zinc-200";
+}
+
+function getTelegramStatusLabel(status) {
+  if (status === "connected") {
+    return "connected";
+  }
+
+  if (status === "pending") {
+    return "pending";
+  }
+
+  return "not connected";
+}
+
+function getErrorMessage(error, fallback) {
+  const detail = error.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (detail?.message) {
+    return detail.message;
+  }
+
+  if (detail?.raw?.message) {
+    return detail.raw.message;
+  }
+
+  return fallback;
 }
 
 function PasswordFloatingInput({
@@ -154,7 +199,21 @@ function Settings() {
   const { showToast } = useToast();
 
   const [profile, setProfile] = useState(savedUser);
+  const [telegram, setTelegram] = useState({
+    connection_status: "not_connected",
+    telegram_username: null,
+    telegram_first_name: null,
+    telegram_last_name: null,
+    updated_at: null
+  });
+  const [telegramLink, setTelegramLink] = useState("");
+  const [telegramBotUsername, setTelegramBotUsername] = useState("");
+
   const [loading, setLoading] = useState(false);
+  const [loadingTelegram, setLoadingTelegram] = useState(false);
+  const [startingTelegram, setStartingTelegram] = useState(false);
+  const [verifyingTelegram, setVerifyingTelegram] = useState(false);
+  const [testingTelegram, setTestingTelegram] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -179,6 +238,11 @@ function Settings() {
     new: false,
     confirm: false
   });
+
+  const telegramStatus = telegram?.connection_status || "not_connected";
+  const telegramConnected = telegramStatus === "connected";
+  const updatedAtValue =
+    profile?.updated_at || profile?.modified_at || profile?.created_at;
 
   function saveUserToStorage(user) {
     if (!user) {
@@ -219,16 +283,51 @@ function Settings() {
     }
   }
 
+  async function loadTelegram({ silent = false } = {}) {
+    if (!silent) {
+      setLoadingTelegram(true);
+    }
+
+    try {
+      const response = await getMyTelegramConnection();
+
+      setTelegram({
+        connection_status: response.data?.connection_status || "not_connected",
+        telegram_username: response.data?.telegram_username || null,
+        telegram_first_name: response.data?.telegram_first_name || null,
+        telegram_last_name: response.data?.telegram_last_name || null,
+        updated_at: response.data?.updated_at || null
+      });
+    } catch (error) {
+      const message = getErrorMessage(
+        error,
+        "Unable to load Telegram connection."
+      );
+
+      if (!silent) {
+        showToast(message, "error");
+      }
+    } finally {
+      if (!silent) {
+        setLoadingTelegram(false);
+      }
+    }
+  }
+
+  async function loadAll({ silent = false } = {}) {
+    await Promise.all([loadProfile({ silent }), loadTelegram({ silent })]);
+  }
+
   useEffect(() => {
-    loadProfile();
+    loadAll();
 
     function handleWindowFocus() {
-      loadProfile({ silent: true });
+      loadAll({ silent: true });
     }
 
     function handleVisibilityChange() {
       if (!document.hidden) {
-        loadProfile({ silent: true });
+        loadAll({ silent: true });
       }
     }
 
@@ -433,9 +532,114 @@ function Settings() {
     }
   }
 
-  const telegramConnected = Boolean(profile?.telegram_connected);
-  const updatedAtValue =
-    profile?.updated_at || profile?.modified_at || profile?.created_at;
+  async function handleStartTelegram() {
+    setStartingTelegram(true);
+    setActionMessage("");
+
+    try {
+      const response = await startMyTelegramConnection();
+      const url = response.data?.telegram_url || "";
+
+      setTelegramLink(url);
+      setTelegramBotUsername(response.data?.bot_username || "");
+      setTelegram((previous) => ({
+        ...previous,
+        connection_status: response.data?.connection_status || "pending"
+      }));
+
+      showToast(response.data?.message || "Telegram link generated.", "success");
+
+      if (url) {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+
+      await loadTelegram({ silent: true });
+    } catch (error) {
+      showToast(
+        getErrorMessage(
+          error,
+          "Unable to generate Telegram connection link. Ask admin to configure Telegram bot first."
+        ),
+        "error"
+      );
+    } finally {
+      setStartingTelegram(false);
+    }
+  }
+
+  async function handleVerifyTelegram() {
+    setVerifyingTelegram(true);
+    setActionMessage("");
+
+    try {
+      const response = await verifyMyTelegramConnection();
+
+      setTelegram({
+        connection_status: response.data?.connection_status || "connected",
+        telegram_username: response.data?.telegram_username || null,
+        telegram_first_name: response.data?.telegram_first_name || null,
+        telegram_last_name: response.data?.telegram_last_name || null,
+        updated_at: response.data?.updated_at || null
+      });
+
+      setTelegramLink("");
+      setTelegramBotUsername("");
+
+      showToast(
+        response.data?.message || "Telegram connected successfully.",
+        "success"
+      );
+    } catch (error) {
+      showToast(
+        getErrorMessage(
+          error,
+          "Telegram start message was not found. Open the Telegram link, tap Start, then verify again."
+        ),
+        "error"
+      );
+    } finally {
+      setVerifyingTelegram(false);
+    }
+  }
+
+  async function handleTestTelegram() {
+    if (!telegramConnected) {
+      showToast("Telegram is not connected yet.", "warning");
+      return;
+    }
+
+    setTestingTelegram(true);
+
+    try {
+      const response = await testMyTelegramConnection();
+
+      showToast(
+        response.data?.message || "Telegram test message sent successfully.",
+        "success"
+      );
+    } catch (error) {
+      showToast(
+        getErrorMessage(error, "Unable to send Telegram test message."),
+        "error"
+      );
+    } finally {
+      setTestingTelegram(false);
+    }
+  }
+
+  async function handleCopyTelegramLink() {
+    if (!telegramLink) {
+      showToast("Generate Telegram link first.", "warning");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(telegramLink);
+      showToast("Telegram link copied.", "success");
+    } catch {
+      showToast("Unable to copy Telegram link.", "error");
+    }
+  }
 
   return (
     <MainLayout>
@@ -452,8 +656,8 @@ function Settings() {
                   icon={RefreshCcw}
                   label="Refresh"
                   variant="refresh"
-                  disabled={loading}
-                  onClick={() => loadProfile()}
+                  disabled={loading || loadingTelegram}
+                  onClick={() => loadAll()}
                   tooltipSide="right"
                 />
 
@@ -485,8 +689,47 @@ function Settings() {
               </div>
             )}
 
+            {telegramLink && !telegramConnected ? (
+              <div className="border-b border-oa-border bg-black px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-oa-muted">
+                      Telegram Link
+                    </p>
+                    <p className="mt-1 truncate text-[12px] text-oa-text">
+                      {telegramLink}
+                    </p>
+                  </div>
+
+                  <IconButton
+                    icon={Copy}
+                    label="Copy Telegram Link"
+                    variant="default"
+                    onClick={handleCopyTelegramLink}
+                    tooltipSide="top"
+                  />
+
+                  <a
+                    href={telegramLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted"
+                    aria-label="Open Telegram Link"
+                    title="Open Telegram Link"
+                  >
+                    <ExternalLink size={15} />
+                  </a>
+                </div>
+
+                <p className="mt-2 text-[11px] leading-5 text-oa-muted">
+                  Open this link, tap Start in Telegram, then come back and click
+                  Verify.
+                </p>
+              </div>
+            ) : null}
+
             <div className="overflow-x-auto bg-black oa-table-font [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-              <div className="min-w-[720px]">
+              <div className="min-w-[900px]">
                 <div className="grid rounded-t border-b border-oa-border bg-oa-panel px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-oa-muted">
                   <span>User Details</span>
                 </div>
@@ -535,13 +778,78 @@ function Settings() {
                     </ProfileRow>
 
                     <ProfileRow icon={Send} label="Telegram">
-                      <span
-                        className={`${oaPillStyles.base} ${getTelegramPill(
-                          telegramConnected
-                        )}`}
-                      >
-                        {telegramConnected ? "connected" : "not connected"}
-                      </span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span
+                          className={`${oaPillStyles.base} ${getTelegramPill(
+                            telegramStatus
+                          )}`}
+                        >
+                          {getTelegramStatusLabel(telegramStatus)}
+                        </span>
+
+                        {loadingTelegram ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-normal text-oa-muted">
+                            <Spinner size="xs" color="light" />
+                            checking
+                          </span>
+                        ) : null}
+
+                        {telegram?.telegram_username ? (
+                          <span className="truncate text-[12px] font-normal text-oa-muted">
+                            @{telegram.telegram_username}
+                          </span>
+                        ) : null}
+
+                        {!telegram?.telegram_username &&
+                        telegram?.telegram_first_name ? (
+                          <span className="truncate text-[12px] font-normal text-oa-muted">
+                            {telegram.telegram_first_name}
+                          </span>
+                        ) : null}
+
+                        {telegram?.updated_at ? (
+                          <span className="truncate text-[11px] font-normal text-oa-muted">
+                            {formatDateTime(telegram.updated_at)}
+                          </span>
+                        ) : null}
+
+                        {telegramBotUsername && !telegramConnected ? (
+                          <span className="truncate text-[11px] font-normal text-oa-muted">
+                            Bot: @{telegramBotUsername}
+                          </span>
+                        ) : null}
+
+                        <button
+                          type="button"
+                          disabled={startingTelegram}
+                          onClick={handleStartTelegram}
+                          className="ml-1 rounded border border-sky-500/30 bg-sky-950/20 px-2.5 py-1 text-[11px] font-semibold text-sky-300 transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {startingTelegram
+                            ? "Opening..."
+                            : telegramConnected
+                              ? "Reconnect"
+                              : "Connect"}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={verifyingTelegram}
+                          onClick={handleVerifyTelegram}
+                          className="rounded border border-emerald-500/30 bg-emerald-950/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {verifyingTelegram ? "Verifying..." : "Verify"}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!telegramConnected || testingTelegram}
+                          onClick={handleTestTelegram}
+                          className="rounded border border-oa-border bg-black px-2.5 py-1 text-[11px] font-semibold text-oa-muted transition hover:bg-oa-card hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {testingTelegram ? "Testing..." : "Test"}
+                        </button>
+                      </div>
                     </ProfileRow>
 
                     <ProfileRow icon={KeyRound} label="Login ID">
