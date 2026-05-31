@@ -34,7 +34,7 @@ def register(request: RegisterRequest):
 @router.post("/login", response_model=AuthResponse)
 def login(request: LoginRequest):
     return login_user(
-        email=request.email,
+        login_identifier=request.login_identifier,
         password=request.password
     )
 

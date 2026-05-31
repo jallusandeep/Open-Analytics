@@ -8,7 +8,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    login_identifier: str = Field(..., min_length=2, max_length=100)
     password: str
 
 
@@ -38,6 +38,7 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_id: str
+    login_id: str | None = None
     full_name: str
     email: EmailStr
     role: str

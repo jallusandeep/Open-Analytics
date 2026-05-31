@@ -17,6 +17,49 @@ function isAuthEndpoint(config) {
   );
 }
 
+function clearOpenAnalyticsSession() {
+  localStorage.removeItem("open_analytics_token");
+  localStorage.removeItem("open_analytics_user");
+  localStorage.removeItem("open_analytics_current_user");
+}
+
+function redirectToLogin() {
+  const currentPath = window.location.pathname;
+
+  if (currentPath !== "/login") {
+    window.location.replace("/login");
+  }
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const payload = token.split(".")[1];
+
+    if (!payload) {
+      return null;
+    }
+
+    const normalizedPayload = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decodedPayload = window.atob(normalizedPayload);
+
+    return JSON.parse(decodedPayload);
+  } catch {
+    return null;
+  }
+}
+
+function isTokenExpired(token) {
+  const payload = decodeJwtPayload(token);
+
+  if (!payload?.exp) {
+    return false;
+  }
+
+  const expiryTime = payload.exp * 1000;
+
+  return Date.now() >= expiryTime;
+}
+
 function isOpenAnalyticsAuthError(error) {
   const status = error.response?.status;
   const detail = error.response?.data?.detail;
@@ -48,6 +91,13 @@ function isOpenAnalyticsAuthError(error) {
 axiosClient.interceptors.request.use((config) => {
   const token = localStorage.getItem("open_analytics_token");
 
+  if (token && isTokenExpired(token)) {
+    clearOpenAnalyticsSession();
+    redirectToLogin();
+
+    return Promise.reject(new Error("Session expired"));
+  }
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -59,9 +109,8 @@ axiosClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (isOpenAnalyticsAuthError(error)) {
-      localStorage.removeItem("open_analytics_token");
-      localStorage.removeItem("open_analytics_user");
-      localStorage.removeItem("open_analytics_current_user");
+      clearOpenAnalyticsSession();
+      redirectToLogin();
     }
 
     return Promise.reject(error);

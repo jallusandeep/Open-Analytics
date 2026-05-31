@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight, Lock, Mail } from "lucide-react";
+import { ChevronRight, Lock, UserRound } from "lucide-react";
 
 import { loginUser } from "../../api/authApi";
 import FloatingInput from "../../components/common/FloatingInput";
 import Spinner from "../../components/common/Spinner";
 
 function Login() {
-  const [email, setEmail] = useState("sandeep@test.com");
+  const [loginIdentifier, setLoginIdentifier] = useState("sandeep@test.com");
   const [password, setPassword] = useState("123456");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -21,7 +21,7 @@ function Login() {
 
     try {
       const response = await loginUser({
-        email,
+        login_identifier: loginIdentifier,
         password
       });
 
@@ -62,14 +62,14 @@ function Login() {
 
         <form onSubmit={handleLogin} className="space-y-4">
           <FloatingInput
-            id="login-email"
-            name="email"
-            label="Email"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            icon={Mail}
-            autoComplete="email"
+            id="login-identifier"
+            name="loginIdentifier"
+            label="Login ID / Mobile / Email"
+            type="text"
+            value={loginIdentifier}
+            onChange={(event) => setLoginIdentifier(event.target.value)}
+            icon={UserRound}
+            autoComplete="username"
             required
             variant="auth"
           />

@@ -1,6 +1,9 @@
 import json
 import math
+import random
+import string
 import uuid
+
 from fastapi import HTTPException, status
 
 from app.database import get_connection
@@ -8,6 +11,38 @@ from app.security import hash_password
 
 
 VALID_ROLES = ["user", "admin", "super_admin"]
+LOGIN_ID_SUFFIX_LENGTH = 5
+
+
+def generate_candidate_login_id() -> str:
+    first_five_digits = "".join(random.choices(string.digits, k=5))
+    suffix = "".join(
+        random.choices(string.ascii_uppercase + string.digits, k=LOGIN_ID_SUFFIX_LENGTH)
+    )
+
+    return f"{first_five_digits}{suffix}"
+
+
+def generate_unique_login_id(conn) -> str:
+    for _ in range(50):
+        login_id = generate_candidate_login_id()
+
+        existing = conn.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE login_id = ?
+            """,
+            [login_id]
+        ).fetchone()
+
+        if not existing:
+            return login_id
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Unable to generate unique login ID"
+    )
 
 
 def serialize_user_row(row):
@@ -125,25 +160,33 @@ def create_user_service(request, current_user):
             detail="Admin can create only normal users"
         )
 
+    clean_email = request.email.strip().lower()
+    clean_mobile_number = request.mobile_number.strip() if request.mobile_number else None
+
     conn = get_connection()
 
     existing = conn.execute(
         """
         SELECT user_id
         FROM users
-        WHERE email = ? OR login_id = ?
+        WHERE LOWER(email) = ?
+           OR (
+                ? IS NOT NULL
+                AND mobile_number = ?
+           )
         """,
-        [request.email, request.login_id]
+        [clean_email, clean_mobile_number, clean_mobile_number]
     ).fetchone()
 
     if existing:
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email or Login ID already exists"
+            detail="Email or mobile number already exists"
         )
 
     user_id = str(uuid.uuid4())
+    login_id = generate_unique_login_id(conn)
     password_hash = hash_password(request.password)
 
     access_restrictions = None
@@ -170,10 +213,10 @@ def create_user_service(request, current_user):
         """,
         [
             user_id,
-            request.login_id,
-            request.full_name,
-            request.email,
-            request.mobile_number,
+            login_id,
+            request.full_name.strip(),
+            clean_email,
+            clean_mobile_number,
             password_hash,
             request.role,
             access_restrictions,
@@ -217,6 +260,10 @@ def update_user_service(user_id: str, request, current_user: dict):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You cannot edit your own account"
         )
+
+    clean_login_id = request.login_id.strip()
+    clean_email = request.email.strip().lower()
+    clean_mobile_number = request.mobile_number.strip() if request.mobile_number else None
 
     conn = get_connection()
 
@@ -266,14 +313,20 @@ def update_user_service(user_id: str, request, current_user: dict):
         SELECT user_id
         FROM users
         WHERE (
-            email = ?
+            LOWER(email) = ?
             OR login_id = ?
+            OR (
+                ? IS NOT NULL
+                AND mobile_number = ?
+            )
         )
         AND user_id != ?
         """,
         [
-            request.email,
-            request.login_id,
+            clean_email,
+            clean_login_id,
+            clean_mobile_number,
+            clean_mobile_number,
             user_id
         ]
     ).fetchone()
@@ -282,7 +335,7 @@ def update_user_service(user_id: str, request, current_user: dict):
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email or Login ID already exists"
+            detail="Email, Login ID, or mobile number already exists"
         )
 
     access_restrictions = None
@@ -307,10 +360,10 @@ def update_user_service(user_id: str, request, current_user: dict):
         WHERE user_id = ?
         """,
         [
-            request.login_id,
-            request.full_name,
-            request.email,
-            request.mobile_number,
+            clean_login_id,
+            request.full_name.strip(),
+            clean_email,
+            clean_mobile_number,
             request.role,
             access_restrictions,
             request.is_active,
