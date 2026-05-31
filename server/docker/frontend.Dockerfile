@@ -1,5 +1,5 @@
 # ---------------- base ----------------
-FROM node:18-bookworm-slim AS base
+FROM node:20-alpine AS base
 
 # ---------------- deps ----------------
 FROM base AS deps
