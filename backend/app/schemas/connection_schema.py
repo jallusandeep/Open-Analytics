@@ -4,9 +4,10 @@ from pydantic import BaseModel
 
 
 class UpstoxConnectionRequest(BaseModel):
-    api_key: str
+    api_key: Optional[str] = None
     api_secret: Optional[str] = None
     redirect_url: Optional[str] = None
+    authorization_code: Optional[str] = None
     access_token: Optional[str] = None
 
 

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
-  CheckCircle2,
+  Copy,
   Edit3,
+  ExternalLink,
   Plus,
   PlugZap,
   RefreshCcw,
@@ -34,6 +35,10 @@ import {
 
 const emptyFormData = {
   provider: "upstox",
+  api_key: "",
+  api_secret: "",
+  redirect_url: "",
+  authorization_code: "",
   access_token: ""
 };
 
@@ -41,7 +46,7 @@ const brokers = [
   {
     id: "upstox",
     name: "Upstox",
-    description: "Token based broker connection.",
+    description: "OAuth based broker connection.",
     apiSupported: true
   }
 ];
@@ -98,6 +103,10 @@ function getStatusLabel(status) {
     return "Connected";
   }
 
+  if (status === "limited") {
+    return "Limited";
+  }
+
   if (status === "failed") {
     return "Failed";
   }
@@ -112,6 +121,10 @@ function getStatusLabel(status) {
 function getStatusClass(status) {
   if (status === "connected") {
     return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
+  }
+
+  if (status === "limited") {
+    return "border-amber-500/40 bg-amber-950/40 text-amber-200";
   }
 
   if (status === "failed") {
@@ -195,12 +208,59 @@ function getTokenExpiry(connection) {
   return "Valid for 1 year";
 }
 
+function buildUpstoxAuthorizationUrl(apiKey, redirectUrl) {
+  const cleanApiKey = apiKey.trim();
+  const cleanRedirectUrl = redirectUrl.trim();
+
+  if (!cleanApiKey || !cleanRedirectUrl) {
+    return "";
+  }
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: cleanApiKey,
+    redirect_uri: cleanRedirectUrl
+  });
+
+  return `https://api.upstox.com/v2/login/authorization/dialog?${params.toString()}`;
+}
+
+function getErrorMessage(error, fallback) {
+  const detail = error.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (detail?.message) {
+    return detail.message;
+  }
+
+  if (detail?.raw?.message) {
+    return detail.raw.message;
+  }
+
+  return fallback;
+}
+
 function StatusBadge({ status }) {
   return (
     <span className={`${oaPillStyles.base} ${getStatusClass(status)}`}>
-      {status === "connected" && <CheckCircle2 size={12} />}
       {getStatusLabel(status)}
     </span>
+  );
+}
+
+function ClearInputButton({ label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+      aria-label={label}
+    >
+      <X size={13} />
+    </button>
   );
 }
 
@@ -213,13 +273,31 @@ function ConnectionFormModal({
   isAdminControlAllowed,
   onClose,
   onSave,
-  onInputChange
+  onInputChange,
+  onClearField,
+  onCopyAuthUrl
 }) {
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
   const subtitle =
     mode === "edit"
-      ? "Replace the saved provider token. Existing token number will not be shown."
-      : "Select provider and enter token number to save a new connection.";
+      ? "Replace the saved Upstox OAuth token."
+      : "Enter Upstox app details, generate login URL, then paste the authorization code.";
+
+  const authorizationUrl = buildUpstoxAuthorizationUrl(
+    formData.api_key,
+    formData.redirect_url
+  );
+
+  const hasAuthorizationCode = formData.authorization_code.trim();
+  const hasAccessToken = formData.access_token.trim();
+
+  const canSave =
+    isAdminControlAllowed &&
+    (hasAccessToken ||
+      (formData.api_key.trim() &&
+        formData.api_secret.trim() &&
+        formData.redirect_url.trim() &&
+        hasAuthorizationCode));
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -232,7 +310,7 @@ function ConnectionFormModal({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
-      width="max-w-lg"
+      width="max-w-2xl"
       footer={
         <div className="flex items-center justify-end gap-2">
           <IconButton
@@ -248,9 +326,7 @@ function ConnectionFormModal({
             icon={Check}
             label={mode === "edit" ? "Update connection" : "Save connection"}
             variant="default"
-            disabled={
-              saving || !isAdminControlAllowed || !formData.access_token.trim()
-            }
+            disabled={saving || !canSave}
             onClick={onSave}
             tooltipSide="top"
           />
@@ -279,8 +355,148 @@ function ConnectionFormModal({
           </div>
         </div>
 
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <label className={oaFormTextStyles.label}>API Key</label>
+            <div className="relative mt-1">
+              <Input
+                name="api_key"
+                type="text"
+                value={formData.api_key}
+                onChange={onInputChange}
+                placeholder={
+                  selectedConnection?.api_key
+                    ? "Saved - enter to replace"
+                    : "Enter Upstox API key"
+                }
+                className="pr-9"
+              />
+
+              {formData.api_key ? (
+                <ClearInputButton
+                  label="Clear API key"
+                  onClick={() => onClearField("api_key")}
+                />
+              ) : null}
+            </div>
+          </div>
+
+          <div>
+            <label className={oaFormTextStyles.label}>API Secret</label>
+            <div className="relative mt-1">
+              <Input
+                name="api_secret"
+                type="password"
+                value={formData.api_secret}
+                onChange={onInputChange}
+                placeholder={
+                  selectedConnection?.has_api_secret
+                    ? "Saved - enter to replace"
+                    : "Enter Upstox API secret"
+                }
+                className="pr-9"
+              />
+
+              {formData.api_secret ? (
+                <ClearInputButton
+                  label="Clear API secret"
+                  onClick={() => onClearField("api_secret")}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+
         <div>
-          <label className={oaFormTextStyles.label}>Token Number</label>
+          <label className={oaFormTextStyles.label}>Redirect URL</label>
+          <div className="relative mt-1">
+            <Input
+              name="redirect_url"
+              type="text"
+              value={formData.redirect_url}
+              onChange={onInputChange}
+              placeholder={
+                selectedConnection?.redirect_url
+                  ? selectedConnection.redirect_url
+                  : "Enter the same redirect URL added in Upstox app"
+              }
+              className="pr-9"
+            />
+
+            {formData.redirect_url ? (
+              <ClearInputButton
+                label="Clear redirect URL"
+                onClick={() => onClearField("redirect_url")}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded border border-oa-border bg-black p-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-oa-muted">
+              Upstox Login URL
+            </p>
+
+            <div className="flex items-center gap-2">
+              <IconButton
+                icon={Copy}
+                label="Copy login URL"
+                variant="default"
+                disabled={!authorizationUrl}
+                onClick={() => onCopyAuthUrl(authorizationUrl)}
+                tooltipSide="top"
+              />
+
+              <a
+                href={authorizationUrl || undefined}
+                target="_blank"
+                rel="noreferrer"
+                className={`flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white ${
+                  authorizationUrl
+                    ? ""
+                    : "pointer-events-none cursor-not-allowed opacity-50"
+                }`}
+                aria-label="Open Upstox login URL"
+                title="Open Upstox login URL"
+              >
+                <ExternalLink size={14} />
+              </a>
+            </div>
+          </div>
+
+          <p className="mt-2 break-all text-[11px] text-oa-muted">
+            {authorizationUrl ||
+              "Enter API key and redirect URL to generate login URL."}
+          </p>
+        </div>
+
+        <div>
+          <label className={oaFormTextStyles.label}>Authorization Code</label>
+          <div className="relative mt-1">
+            <Input
+              name="authorization_code"
+              type="password"
+              value={formData.authorization_code}
+              onChange={onInputChange}
+              placeholder="Paste code from Upstox redirect URL"
+              className="pr-9"
+              autoFocus
+            />
+
+            {formData.authorization_code ? (
+              <ClearInputButton
+                label="Clear authorization code"
+                onClick={() => onClearField("authorization_code")}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="border-t border-oa-border pt-3">
+          <label className={oaFormTextStyles.label}>
+            Access Token Override
+          </label>
           <div className="relative mt-1">
             <Input
               name="access_token"
@@ -289,29 +505,17 @@ function ConnectionFormModal({
               onChange={onInputChange}
               placeholder={
                 selectedConnection
-                  ? "Token saved - enter new token to replace"
-                  : "Enter token number"
+                  ? "Optional - paste token directly to replace"
+                  : "Optional - paste token directly instead of OAuth code"
               }
               className="pr-9"
-              autoFocus
             />
 
             {formData.access_token ? (
-              <button
-                type="button"
-                onClick={() =>
-                  onInputChange({
-                    target: {
-                      name: "access_token",
-                      value: ""
-                    }
-                  })
-                }
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                aria-label="Clear token number"
-              >
-                <X size={13} />
-              </button>
+              <ClearInputButton
+                label="Clear access token"
+                onClick={() => onClearField("access_token")}
+              />
             ) : null}
           </div>
         </div>
@@ -408,10 +612,7 @@ function Connections() {
         showToast("Connections refreshed successfully.", "success");
       }
     } catch (error) {
-      showToast(
-        error.response?.data?.detail || "Unable to load connections.",
-        "error"
-      );
+      showToast(getErrorMessage(error, "Unable to load connections."), "error");
     } finally {
       setLoading(false);
     }
@@ -428,9 +629,15 @@ function Connections() {
   }
 
   function openEditForm(provider) {
+    const connection = connectionsByProvider[provider] || null;
+
     setFormMode("edit");
     setFormData({
       provider,
+      api_key: connection?.api_key || "",
+      api_secret: "",
+      redirect_url: connection?.redirect_url || "",
+      authorization_code: "",
       access_token: ""
     });
   }
@@ -453,6 +660,13 @@ function Connections() {
     }));
   }
 
+  function handleClearField(fieldName) {
+    setFormData((previous) => ({
+      ...previous,
+      [fieldName]: ""
+    }));
+  }
+
   function handleSearchSubmit(event) {
     event.preventDefault();
     setAppliedSearchValue(searchValue.trim());
@@ -463,9 +677,23 @@ function Connections() {
     setAppliedSearchValue("");
   }
 
+  async function handleCopyAuthUrl(url) {
+    if (!url) {
+      showToast("Enter API key and redirect URL first.", "warning");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast("Upstox login URL copied.", "success");
+    } catch {
+      showToast("Unable to copy login URL.", "error");
+    }
+  }
+
   async function handleSave() {
     if (!formBroker) {
-      showToast("Select a provider before saving token.", "warning");
+      showToast("Select a provider before saving connection.", "warning");
       return;
     }
 
@@ -479,8 +707,27 @@ function Connections() {
       return;
     }
 
-    if (!formData.access_token.trim()) {
-      showToast("Enter token number before saving connection.", "warning");
+    const hasAuthorizationCode = formData.authorization_code.trim();
+    const hasAccessToken = formData.access_token.trim();
+
+    if (!hasAuthorizationCode && !hasAccessToken) {
+      showToast(
+        "Enter authorization code or paste access token before saving.",
+        "warning"
+      );
+      return;
+    }
+
+    if (
+      hasAuthorizationCode &&
+      (!formData.api_key.trim() ||
+        !formData.api_secret.trim() ||
+        !formData.redirect_url.trim())
+    ) {
+      showToast(
+        "API key, API secret, and redirect URL are required with authorization code.",
+        "warning"
+      );
       return;
     }
 
@@ -489,21 +736,21 @@ function Connections() {
     try {
       if (formBroker.id === "upstox") {
         await saveUpstoxConnection({
-          api_key: "",
-          api_secret: "",
-          redirect_url: "",
+          api_key: formData.api_key.trim(),
+          api_secret: formData.api_secret.trim(),
+          redirect_url: formData.redirect_url.trim(),
+          authorization_code: formData.authorization_code.trim(),
           access_token: formData.access_token.trim()
         });
       }
 
-      showToast(`${formBroker.name} token saved successfully.`, "success");
+      showToast(`${formBroker.name} connection saved successfully.`, "success");
       await loadConnections(false);
       setFormMode("closed");
       setFormData(emptyFormData);
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to save ${formBroker.name} token.`,
+        getErrorMessage(error, `Unable to save ${formBroker.name} connection.`),
         "error"
       );
     } finally {
@@ -541,13 +788,12 @@ function Connections() {
       showToast(
         response?.data?.message ||
           `${broker.name} connection tested successfully.`,
-        "success"
+        response?.data?.status === "limited" ? "warning" : "success"
       );
       await loadConnections(false);
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to test ${broker.name} connection.`,
+        getErrorMessage(error, `Unable to test ${broker.name} connection.`),
         "error"
       );
     } finally {
@@ -592,7 +838,7 @@ function Connections() {
       showToast(`${broker.name} connection deleted successfully.`, "success");
     } catch (error) {
       showToast(
-        error.response?.data?.detail || `Unable to delete ${broker.name}.`,
+        getErrorMessage(error, `Unable to delete ${broker.name}.`),
         "error"
       );
     } finally {
@@ -649,7 +895,7 @@ function Connections() {
       <div className="flex justify-end gap-2">
         <IconButton
           icon={Edit3}
-          label="Edit token"
+          label="Edit connection"
           variant="default"
           disabled={
             !hasConnection || !row.broker.apiSupported || !isAdminControlAllowed
@@ -809,6 +1055,8 @@ function Connections() {
           onClose={closeForm}
           onSave={handleSave}
           onInputChange={handleInputChange}
+          onClearField={handleClearField}
+          onCopyAuthUrl={handleCopyAuthUrl}
         />
       </section>
     </MainLayout>

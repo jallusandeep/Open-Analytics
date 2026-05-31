@@ -21,8 +21,6 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = APP_ROOT / "data" / "upstox"
 MASTER_INSTRUMENT_FILE = DATA_DIR / "upstox_instruments.json"
 
-# Public Upstox current instruments file.
-# This is the working no-token downloadable gzip file.
 UPSTOX_CURRENT_MASTER_URL = (
     "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
 )
@@ -47,6 +45,15 @@ CANCEL_SIGNAL_FILE = CANCEL_SIGNAL_DIR / "upstox_data_collection.cancel"
 
 class SyncCancelled(Exception):
     pass
+
+
+def normalize_upstox_token(access_token: str) -> str:
+    token = access_token.strip() if access_token else ""
+
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+
+    return token
 
 
 def write_cancel_signal():
@@ -172,10 +179,13 @@ def get_upstox_access_token(conn) -> str:
     if not row or not row[0]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox connection token is not saved. Please save token in Connections first."
+            detail=(
+                "Upstox connection token is not saved. "
+                "Please save Upstox connection in Connections first."
+            )
         )
 
-    return row[0]
+    return normalize_upstox_token(row[0])
 
 
 def get_upstox_connection_status(conn) -> str:
@@ -449,19 +459,6 @@ def download_upstox_master_file_once(force_download: bool = False) -> Path:
         raise
 
 
-def get_current_instrument_count(conn) -> int:
-    try:
-        row = conn.execute("""
-            SELECT COUNT(*)
-            FROM upstox_instruments
-            WHERE source_type = 'bod_complete';
-        """).fetchone()
-
-        return int(row[0] or 0)
-    except Exception:
-        return 0
-
-
 def import_current_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
     check_sync_cancelled(conn, sync_id)
 
@@ -565,14 +562,12 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
             trading_symbol,
             short_name,
             exchange_token,
-
             CASE
                 WHEN expiry IS NULL THEN NULL
                 WHEN TRY_CAST(expiry AS BIGINT) IS NOT NULL
                     THEN CAST(epoch_ms(TRY_CAST(expiry AS BIGINT)) AS DATE)
                 ELSE TRY_CAST(expiry AS DATE)
             END AS expiry,
-
             strike_price,
             lot_size,
             minimum_lot,
@@ -615,13 +610,18 @@ def parse_upstox_error(error_body: str):
             "error_code": (
                 first_error.get("errorCode")
                 or first_error.get("error_code")
+                or first_error.get("code")
             ),
             "message": first_error.get("message") or str(payload)
         }
 
     return {
         "raw": payload,
-        "error_code": payload.get("errorCode") or payload.get("error_code"),
+        "error_code": (
+            payload.get("errorCode")
+            or payload.get("error_code")
+            or payload.get("code")
+        ),
         "message": payload.get("message") or str(payload)
     }
 
@@ -633,10 +633,10 @@ def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
 
     if upstox_status_code == 401:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail=(
                 "Saved Upstox token is invalid, expired, or not authenticated. "
-                "Please save a fresh Upstox OAuth access token in Connections."
+                "Please save a fresh Upstox OAuth connection in Connections."
             )
         )
 
@@ -645,7 +645,7 @@ def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Saved Upstox token is valid, but Expired Instruments API is not permitted "
-                "with this token. Please use a normal OAuth token from your Upstox Plus enabled app."
+                "with this token. Please use an OAuth token from an Upstox Plus/API enabled app."
             )
         )
 
@@ -659,6 +659,17 @@ def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
 
 
 def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]] = None):
+    token = normalize_upstox_token(access_token)
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Saved Upstox token is empty. "
+                "Please save a fresh Upstox OAuth connection in Connections."
+            )
+        )
+
     query_string = ""
 
     if params:
@@ -668,7 +679,7 @@ def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]
         f"{UPSTOX_BASE_URL}{path}{query_string}",
         headers={
             "Accept": "application/json",
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {token}",
             "User-Agent": "OpenAnalytics/1.0"
         }
     )
@@ -695,71 +706,46 @@ def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]
             detail=f"Unable to reach Upstox API: {error}"
         )
 
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON response received from Upstox API."
+        )
 
-def upstox_api_get_with_param_fallback(
+
+def upstox_expired_api_get(
     access_token: str,
     path: str,
     underlying_key: str,
     expiry_date: Optional[str] = None
 ):
-    primary_params = {
+    params = {
         "underlying_key": underlying_key
     }
 
-    fallback_params = {
-        "instrument_key": underlying_key
-    }
-
     if expiry_date:
-        primary_params["expiry_date"] = expiry_date
-        fallback_params["expiry_date"] = expiry_date
+        params["expiry_date"] = expiry_date
 
-    try:
-        return upstox_api_get(
-            access_token=access_token,
-            path=path,
-            params=primary_params
-        )
-
-    except HTTPException as primary_error:
-        primary_message = str(primary_error.detail or "").lower()
-
-        if primary_error.status_code in (
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN
-        ):
-            if (
-                "token" in primary_message
-                or "not authenticated" in primary_message
-                or "not permitted" in primary_message
-                or "read-only" in primary_message
-                or "read only" in primary_message
-                or "expired instruments api" in primary_message
-            ):
-                raise
-
-        print(
-            "Upstox request failed using underlying_key. "
-            "Retrying with instrument_key..."
-        )
-        print(f"Primary error: {primary_error.detail}")
-
-        return upstox_api_get(
-            access_token=access_token,
-            path=path,
-            params=fallback_params
-        )
+    return upstox_api_get(
+        access_token=access_token,
+        path=path,
+        params=params
+    )
 
 
 def get_expiries(access_token: str, underlying_key: str) -> List[str]:
-    response = upstox_api_get_with_param_fallback(
+    response = upstox_expired_api_get(
         access_token=access_token,
         path="/expired-instruments/expiries",
         underlying_key=underlying_key
     )
 
-    return response.get("data") or []
+    data = response.get("data") if isinstance(response, dict) else []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
 def get_expired_option_contracts(
@@ -767,14 +753,19 @@ def get_expired_option_contracts(
     underlying_key: str,
     expiry_date: str
 ) -> List[Dict[str, Any]]:
-    response = upstox_api_get_with_param_fallback(
+    response = upstox_expired_api_get(
         access_token=access_token,
         path="/expired-instruments/option/contract",
         underlying_key=underlying_key,
         expiry_date=expiry_date
     )
 
-    return response.get("data") or []
+    data = response.get("data") if isinstance(response, dict) else []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
 def get_expired_future_contracts(
@@ -782,14 +773,19 @@ def get_expired_future_contracts(
     underlying_key: str,
     expiry_date: str
 ) -> List[Dict[str, Any]]:
-    response = upstox_api_get_with_param_fallback(
+    response = upstox_expired_api_get(
         access_token=access_token,
         path="/expired-instruments/future/contract",
         underlying_key=underlying_key,
         expiry_date=expiry_date
     )
 
-    return response.get("data") or []
+    data = response.get("data") if isinstance(response, dict) else []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
 def map_expired_instrument(row: Dict[str, Any], source_type: str):
@@ -1019,7 +1015,6 @@ def sync_upstox_current_instruments_service(
             "Current instrument dump started."
         )
 
-        # Always download fresh file and re-import when user clicks Sync Current.
         local_file = download_upstox_master_file_once(force_download=True)
 
         check_sync_cancelled(conn, sync_id)
@@ -1170,16 +1165,16 @@ def sync_upstox_expired_instruments_service(
                 check_sync_cancelled(conn, sync_id)
 
                 option_rows = get_expired_option_contracts(
-                    access_token,
-                    underlying_key,
-                    expiry_date
+                    access_token=access_token,
+                    underlying_key=underlying_key,
+                    expiry_date=expiry_date
                 )
 
                 total_records += insert_expired_instruments(
-                    conn,
-                    option_rows,
-                    "expired_option",
-                    sync_id
+                    conn=conn,
+                    rows=option_rows,
+                    source_type="expired_option",
+                    sync_id=sync_id
                 )
 
                 conn.commit()
@@ -1187,16 +1182,16 @@ def sync_upstox_expired_instruments_service(
                 check_sync_cancelled(conn, sync_id)
 
                 future_rows = get_expired_future_contracts(
-                    access_token,
-                    underlying_key,
-                    expiry_date
+                    access_token=access_token,
+                    underlying_key=underlying_key,
+                    expiry_date=expiry_date
                 )
 
                 total_records += insert_expired_instruments(
-                    conn,
-                    future_rows,
-                    "expired_future",
-                    sync_id
+                    conn=conn,
+                    rows=future_rows,
+                    source_type="expired_future",
+                    sync_id=sync_id
                 )
 
                 conn.commit()
@@ -1320,7 +1315,11 @@ def sync_upstox_all_instruments_service(current_user: dict):
 
     return {
         "status": "success",
-        "message": "Current Upstox master instruments completed successfully. Expired instruments were not run because they require a non-read-only Upstox token.",
+        "message": (
+            "Current Upstox master instruments completed successfully. "
+            "Run expired instruments separately because it requires a valid "
+            "Upstox OAuth token with Expired Instruments API permission."
+        ),
         "total_records": total_records,
         "duration_seconds": duration_seconds(started_at),
         "jobs": {
@@ -1377,11 +1376,13 @@ def build_preview_filters(
                 OR LOWER(COALESCE(exchange, '')) LIKE ?
                 OR LOWER(COALESCE(instrument_type, '')) LIKE ?
                 OR LOWER(COALESCE(underlying_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(underlying_key, '')) LIKE ?
             )
         """)
 
         search_value = f"%{clean_search.lower()}%"
         params.extend([
+            search_value,
             search_value,
             search_value,
             search_value,
