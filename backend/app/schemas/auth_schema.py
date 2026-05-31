@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -12,6 +12,28 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str = Field(..., min_length=2, max_length=100)
+    email: EmailStr
+    mobile_number: str | None = Field(default=None, max_length=20)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6)
+    confirm_password: str = Field(..., min_length=6)
+
+    @model_validator(mode="after")
+    def validate_passwords(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("New password and confirm password do not match")
+
+        if self.current_password == self.new_password:
+            raise ValueError("New password must be different from current password")
+
+        return self
+
+
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -19,3 +41,19 @@ class AuthResponse(BaseModel):
     full_name: str
     email: EmailStr
     role: str
+
+
+class CurrentUserResponse(BaseModel):
+    status: str
+    user: dict
+
+
+class ProfileUpdateResponse(BaseModel):
+    status: str
+    message: str
+    user: dict
+
+
+class MessageResponse(BaseModel):
+    status: str
+    message: str
