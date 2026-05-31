@@ -39,7 +39,7 @@ import {
 } from "../../api/connectionApi";
 
 const emptyFormData = {
-  provider: "upstox",
+  provider: "",
   api_key: "",
   api_secret: "",
   redirect_url: "",
@@ -65,10 +65,16 @@ const brokers = [
   }
 ];
 
-const providerOptions = brokers.map((broker) => ({
-  value: broker.id,
-  label: broker.name
-}));
+const providerOptions = [
+  {
+    value: "",
+    label: "Select provider"
+  },
+  ...brokers.map((broker) => ({
+    value: broker.id,
+    label: broker.name
+  }))
+];
 
 const connectionColumns = [
   { key: "provider", label: "Provider", filterable: false },
@@ -296,18 +302,21 @@ function ConnectionFormModal({
   onCopyAuthUrl
 }) {
   const selectedBroker =
-    brokers.find((broker) => broker.id === formData.provider) || brokers[0];
+    brokers.find((broker) => broker.id === formData.provider) || null;
 
   const isUpstox = formData.provider === "upstox";
   const isTelegram = formData.provider === "telegram";
+  const hasProviderSelected = Boolean(selectedBroker);
 
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
 
-  const subtitle = isTelegram
-    ? "Enter Telegram bot token. Open the bot in Telegram and send /start before saving."
-    : mode === "edit"
-      ? "Replace the saved Upstox OAuth token."
-      : "Enter Upstox app details, generate login URL, then paste the authorization code.";
+  const subtitle = !hasProviderSelected
+    ? "Select a provider to show connection information."
+    : isTelegram
+      ? "Enter Telegram bot token. Open the bot in Telegram and send /start before saving."
+      : mode === "edit"
+        ? "Replace the saved Upstox OAuth token."
+        : "Enter Upstox app details, generate login URL, then paste the authorization code.";
 
   const authorizationUrl = buildUpstoxAuthorizationUrl(
     formData.api_key,
@@ -320,6 +329,7 @@ function ConnectionFormModal({
 
   const canSave =
     isAdminControlAllowed &&
+    hasProviderSelected &&
     ((isUpstox &&
       (hasAccessToken ||
         (formData.api_key.trim() &&
@@ -383,6 +393,14 @@ function ConnectionFormModal({
             />
           </div>
         </div>
+
+        {!hasProviderSelected ? (
+          <div className="rounded border border-oa-border bg-black p-3">
+            <p className="text-[12px] text-oa-muted">
+              Select a provider from the dropdown to show connection fields.
+            </p>
+          </div>
+        ) : null}
 
         {isUpstox ? (
           <>
@@ -605,7 +623,7 @@ function ConnectionFormModal({
         ) : null}
 
         <button type="submit" className="hidden" aria-hidden="true">
-          Submit {selectedBroker.name}
+          Submit {selectedBroker?.name || "connection"}
         </button>
       </form>
     </Modal>
@@ -634,28 +652,37 @@ function Connections() {
 
   const connectionsByProvider = useMemo(() => {
     return connections.reduce((accumulator, item) => {
-      accumulator[item.provider] = item;
+      if (item?.provider) {
+        accumulator[item.provider] = item;
+      }
+
       return accumulator;
     }, {});
   }, [connections]);
 
   const rows = useMemo(() => {
-    return brokers.map((broker) => {
-      const connection = connectionsByProvider[broker.id] || null;
+    return connections
+      .map((connection) => {
+        const broker = brokers.find((item) => item.id === connection.provider);
 
-      return {
-        id: broker.id,
-        broker,
-        connection,
-        provider: broker.name,
-        description: broker.description,
-        status: getConnectionStatus(connection),
-        updated_at: getLastUpdated(connection),
-        token_expiry: getTokenExpiry(connection, broker.id),
-        updated_by: connection ? formatUserName(currentUser) : "--"
-      };
-    });
-  }, [connectionsByProvider, currentUser]);
+        if (!broker) {
+          return null;
+        }
+
+        return {
+          id: connection.provider,
+          broker,
+          connection,
+          provider: broker.name,
+          description: broker.description,
+          status: getConnectionStatus(connection),
+          updated_at: getLastUpdated(connection),
+          token_expiry: getTokenExpiry(connection, broker.id),
+          updated_by: formatUserName(currentUser)
+        };
+      })
+      .filter(Boolean);
+  }, [connections, currentUser]);
 
   const filteredRows = useMemo(() => {
     const query = appliedSearchValue.trim().toLowerCase();
@@ -679,10 +706,13 @@ function Connections() {
   }, [rows, appliedSearchValue]);
 
   const formBroker = useMemo(() => {
-    return brokers.find((item) => item.id === formData.provider) || brokers[0];
+    return brokers.find((item) => item.id === formData.provider) || null;
   }, [formData.provider]);
 
-  const selectedConnection = connectionsByProvider[formData.provider] || null;
+  const selectedConnection = formData.provider
+    ? connectionsByProvider[formData.provider] || null
+    : null;
+
   const formOpen = formMode !== "closed";
 
   async function loadConnections(showRefreshToast = false) {
@@ -744,6 +774,14 @@ function Connections() {
 
   function handleInputChange(event) {
     const { name, value } = event.target;
+
+    if (name === "provider") {
+      setFormData({
+        ...emptyFormData,
+        provider: value
+      });
+      return;
+    }
 
     setFormData((previous) => ({
       ...previous,
@@ -962,23 +1000,10 @@ function Connections() {
 
   function renderCell(row, column) {
     if (column.key === "provider") {
-      const ProviderIcon = row.broker.icon || PlugZap;
-
       return (
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-oa-border bg-black text-sky-300">
-            <ProviderIcon size={14} />
-          </span>
-
-          <div className="min-w-0">
-            <p className="truncate oa-code-font font-semibold text-white">
-              {row.provider}
-            </p>
-            <p className="truncate text-[11px] text-oa-muted">
-              {row.description}
-            </p>
-          </div>
-        </div>
+        <span className="truncate oa-code-font font-semibold text-white">
+          {row.provider}
+        </span>
       );
     }
 
