@@ -65,11 +65,11 @@ function DataTable({
   }
 
   return (
-    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0`}>
-      <div className="min-h-0 overflow-visible rounded">
+    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0 !rounded-none`}>
+      <div className="min-h-0 overflow-visible !rounded-none">
         <div className={`w-full ${minWidth}`}>
           <div
-            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 rounded-t border-b border-oa-border`}
+            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 !rounded-none border-b border-oa-border`}
             style={{ gridTemplateColumns }}
           >
             {columns.map((column) => {
