@@ -34,6 +34,24 @@ class ChangePasswordRequest(BaseModel):
         return self
 
 
+class ForgotPasswordOtpRequest(BaseModel):
+    login_identifier: str = Field(..., min_length=2, max_length=100)
+
+
+class ResetPasswordWithOtpRequest(BaseModel):
+    login_identifier: str = Field(..., min_length=2, max_length=100)
+    otp: str = Field(..., min_length=4, max_length=10)
+    new_password: str = Field(..., min_length=6)
+    confirm_password: str = Field(..., min_length=6)
+
+    @model_validator(mode="after")
+    def validate_passwords(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("New password and confirm password do not match")
+
+        return self
+
+
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

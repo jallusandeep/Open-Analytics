@@ -5,16 +5,20 @@ from app.schemas.auth_schema import (
     AuthResponse,
     ChangePasswordRequest,
     CurrentUserResponse,
+    ForgotPasswordOtpRequest,
     LoginRequest,
     MessageResponse,
     ProfileUpdateResponse,
     RegisterRequest,
+    ResetPasswordWithOtpRequest,
     UpdateProfileRequest
 )
 from app.services.auth_service import (
     change_password_service,
     login_user,
     register_user,
+    request_forgot_password_otp_service,
+    reset_password_with_otp_service,
     update_profile_service
 )
 
@@ -68,6 +72,23 @@ def change_my_password(
     return change_password_service(
         user_id=current_user["user_id"],
         current_password=request.current_password,
+        new_password=request.new_password,
+        confirm_password=request.confirm_password
+    )
+
+
+@router.post("/forgot-password/otp", response_model=MessageResponse)
+def request_forgot_password_otp(request: ForgotPasswordOtpRequest):
+    return request_forgot_password_otp_service(
+        login_identifier=request.login_identifier
+    )
+
+
+@router.post("/forgot-password/reset", response_model=MessageResponse)
+def reset_password_with_otp(request: ResetPasswordWithOtpRequest):
+    return reset_password_with_otp_service(
+        login_identifier=request.login_identifier,
+        otp=request.otp,
         new_password=request.new_password,
         confirm_password=request.confirm_password
     )
