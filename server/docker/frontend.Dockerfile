@@ -31,6 +31,10 @@ COPY frontend/ ./
 
 RUN npm run build
 
+RUN npm run build && \
+    ls -la .next && \
+    find .next -maxdepth 2 -type d
+
 
 # ---------------- runner ----------------
 FROM base AS runner
