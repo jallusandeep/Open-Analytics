@@ -219,9 +219,9 @@ jobs:
         run: |
           docker build \
             -f server/docker/backend.Dockerfile \
-            -t ghcr.io/${{ github.repository_owner }}/openanalytics-backend:latest \
+            -t ghcr.io/${{ github.repository_owner }}/openanalytics-backend2:latest \
             .
-          docker push ghcr.io/${{ github.repository_owner }}/openanalytics-backend:latest
+          docker push ghcr.io/${{ github.repository_owner }}/openanalytics-backend2:latest
 
       # 🐳 Frontend Image
       - name: Build & push frontend image
