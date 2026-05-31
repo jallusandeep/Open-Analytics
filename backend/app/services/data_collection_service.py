@@ -595,6 +595,69 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
     return int(total_rows or 0)
 
 
+def parse_upstox_error(error_body: str):
+    try:
+        payload = json.loads(error_body)
+    except Exception:
+        return {
+            "raw": error_body,
+            "error_code": None,
+            "message": error_body or "Upstox API request failed."
+        }
+
+    errors = payload.get("errors")
+
+    if isinstance(errors, list) and errors:
+        first_error = errors[0] or {}
+
+        return {
+            "raw": payload,
+            "error_code": (
+                first_error.get("errorCode")
+                or first_error.get("error_code")
+            ),
+            "message": first_error.get("message") or str(payload)
+        }
+
+    return {
+        "raw": payload,
+        "error_code": payload.get("errorCode") or payload.get("error_code"),
+        "message": payload.get("message") or str(payload)
+    }
+
+
+def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
+    parsed_error = parse_upstox_error(error_body)
+    error_code = parsed_error.get("error_code")
+    message = parsed_error.get("message") or ""
+
+    if upstox_status_code == 401:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Saved Upstox token is invalid, expired, or not authenticated. "
+                "Please save a fresh Upstox OAuth access token in Connections."
+            )
+        )
+
+    if error_code == "UDAPI100067" or "read only token" in message.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Saved Upstox token is valid, but Expired Instruments API is not permitted "
+                "with this token. Please use a normal OAuth token from your Upstox Plus enabled app."
+            )
+        )
+
+    if not message:
+        message = f"Upstox API request failed with status {upstox_status_code}."
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Upstox API error: {message}"
+    )
+
+
 def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]] = None):
     query_string = ""
 
@@ -613,13 +676,19 @@ def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             content = response.read().decode("utf-8")
+
+            if not content:
+                return {}
+
             return json.loads(content)
+
     except urllib.error.HTTPError as error:
         error_body = error.read().decode("utf-8", errors="ignore")
-        raise HTTPException(
-            status_code=error.code,
-            detail=error_body or f"Upstox API request failed: {error.code}"
+        raise_clean_upstox_error(
+            upstox_status_code=error.code,
+            error_body=error_body
         )
+
     except urllib.error.URLError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -651,7 +720,25 @@ def upstox_api_get_with_param_fallback(
             path=path,
             params=primary_params
         )
+
     except HTTPException as primary_error:
+        primary_message = str(primary_error.detail or "").lower()
+
+        if primary_error.status_code in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN
+        ):
+            if (
+                "token" in primary_message
+                or "not authenticated" in primary_message
+                or "not permitted" in primary_message
+                or "read-only" in primary_message
+                or "read only" in primary_message
+                or "expired instruments api" in primary_message
+            ):
+                raise
+
         print(
             "Upstox request failed using underlying_key. "
             "Retrying with instrument_key..."

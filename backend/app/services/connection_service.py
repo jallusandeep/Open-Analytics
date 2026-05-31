@@ -1,5 +1,7 @@
+import json
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from fastapi import HTTPException, status
@@ -8,7 +10,12 @@ from app.database import get_connection
 
 
 UPSTOX_PROVIDER = "upstox"
-UPSTOX_INSTRUMENT_TEST_URL = "https://api.upstox.com/v2/instruments/NSE_EQ.json.gz"
+UPSTOX_BASE_URL = "https://api.upstox.com/v2"
+
+# Test only the API we actually need for expired instruments.
+# Do not test /user/profile because some valid tokens may fail there with user authorization errors.
+UPSTOX_EXPIRED_PERMISSION_TEST_PATH = "/expired-instruments/expiries"
+UPSTOX_EXPIRED_PERMISSION_TEST_KEY = "NSE_INDEX|Nifty 50"
 
 
 def connection_to_response(row):
@@ -182,6 +189,140 @@ def save_upstox_connection_service(request, current_user):
         conn.close()
 
 
+def parse_upstox_error(error_body: str):
+    try:
+        payload = json.loads(error_body)
+    except Exception:
+        return {
+            "raw": error_body,
+            "error_code": None,
+            "message": error_body
+        }
+
+    errors = payload.get("errors")
+
+    if isinstance(errors, list) and errors:
+        first_error = errors[0] or {}
+
+        return {
+            "raw": payload,
+            "error_code": (
+                first_error.get("errorCode")
+                or first_error.get("error_code")
+            ),
+            "message": first_error.get("message") or str(payload)
+        }
+
+    return {
+        "raw": payload,
+        "error_code": payload.get("errorCode") or payload.get("error_code"),
+        "message": payload.get("message") or str(payload)
+    }
+
+
+def upstox_api_get(access_token: str, path: str, params=None):
+    query_string = ""
+
+    if params:
+        query_string = "?" + urllib.parse.urlencode(params)
+
+    request = urllib.request.Request(
+        f"{UPSTOX_BASE_URL}{path}{query_string}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": "OpenAnalytics/1.0"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            content = response.read().decode("utf-8")
+
+            if not content:
+                return {}
+
+            return json.loads(content)
+
+    except urllib.error.HTTPError as error:
+        error_body = error.read().decode("utf-8", errors="ignore")
+        parsed_error = parse_upstox_error(error_body)
+
+        raise HTTPException(
+            status_code=error.code,
+            detail={
+                "message": parsed_error["message"],
+                "error_code": parsed_error["error_code"],
+                "raw": parsed_error["raw"]
+            }
+        )
+
+    except urllib.error.URLError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to reach Upstox API: {error}"
+        )
+
+
+def validate_upstox_expired_permission(access_token: str):
+    try:
+        return upstox_api_get(
+            access_token=access_token,
+            path=UPSTOX_EXPIRED_PERMISSION_TEST_PATH,
+            params={
+                "underlying_key": UPSTOX_EXPIRED_PERMISSION_TEST_KEY
+            }
+        )
+
+    except HTTPException as primary_error:
+        primary_detail = primary_error.detail
+        primary_error_code = None
+        primary_message = ""
+
+        if isinstance(primary_detail, dict):
+            primary_error_code = primary_detail.get("error_code")
+            primary_message = primary_detail.get("message") or ""
+        else:
+            primary_message = str(primary_detail)
+
+        if primary_error_code == "UDAPI100067" or "read only token" in primary_message.lower():
+            raise
+
+        if primary_error.status_code == status.HTTP_401_UNAUTHORIZED:
+            raise
+
+        return upstox_api_get(
+            access_token=access_token,
+            path=UPSTOX_EXPIRED_PERMISSION_TEST_PATH,
+            params={
+                "instrument_key": UPSTOX_EXPIRED_PERMISSION_TEST_KEY
+            }
+        )
+
+
+def update_connection_test_status(
+    conn,
+    connection_id: str,
+    current_user: dict,
+    connection_status: str
+):
+    conn.execute("""
+        UPDATE external_connections
+        SET
+            connection_status = ?,
+            last_tested_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP,
+            updated_by = ?
+        WHERE connection_id = ?;
+    """, [
+        connection_status,
+        current_user["user_id"],
+        connection_id
+    ])
+
+    conn.commit()
+
+
 def test_upstox_connection_service(current_user):
     conn = get_connection()
 
@@ -203,50 +344,75 @@ def test_upstox_connection_service(current_user):
                 detail="Access token is required before testing Upstox connection."
             )
 
-        request = urllib.request.Request(
-            UPSTOX_INSTRUMENT_TEST_URL,
-            headers={"User-Agent": "OpenAnalytics/1.0"}
-        )
-
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                is_successful_response = 200 <= response.status < 300
-        except urllib.error.URLError:
-            is_successful_response = False
+            validate_upstox_expired_permission(access_token)
 
-        if not is_successful_response:
-            conn.execute("""
-                UPDATE external_connections
-                SET
-                    connection_status = 'failed',
-                    last_tested_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE connection_id = ?;
-            """, [current_user["user_id"], connection_id])
+        except HTTPException as e:
+            detail = e.detail
+            error_code = None
+            message = ""
 
-            conn.commit()
+            if isinstance(detail, dict):
+                error_code = detail.get("error_code")
+                message = detail.get("message") or ""
+            else:
+                message = str(detail)
 
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unable to reach Upstox instrument registry."
+            if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                update_connection_test_status(
+                    conn=conn,
+                    connection_id=connection_id,
+                    current_user=current_user,
+                    connection_status="failed"
+                )
+
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Upstox token is invalid or expired. Please save a fresh OAuth access token."
+                )
+
+            if error_code == "UDAPI100067" or "read only token" in message.lower():
+                update_connection_test_status(
+                    conn=conn,
+                    connection_id=connection_id,
+                    current_user=current_user,
+                    connection_status="limited"
+                )
+
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "Upstox token is valid, but Expired Instruments API is not permitted "
+                        "with this token. Please generate a normal OAuth token from your "
+                        "Upstox Plus enabled app and save it again."
+                    )
+                )
+
+            update_connection_test_status(
+                conn=conn,
+                connection_id=connection_id,
+                current_user=current_user,
+                connection_status="limited"
             )
 
-        conn.execute("""
-            UPDATE external_connections
-            SET
-                connection_status = 'connected',
-                last_tested_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE connection_id = ?;
-        """, [current_user["user_id"], connection_id])
+            raise HTTPException(
+                status_code=e.status_code,
+                detail=(
+                    "Unable to verify Expired Instruments API permission. "
+                    f"Upstox response: {message or detail}"
+                )
+            )
 
-        conn.commit()
+        update_connection_test_status(
+            conn=conn,
+            connection_id=connection_id,
+            current_user=current_user,
+            connection_status="connected"
+        )
 
         return {
             "status": "success",
-            "message": "Upstox connection verified successfully."
+            "message": "Upstox token verified successfully. Expired Instruments API permission is available."
         }
 
     except HTTPException:

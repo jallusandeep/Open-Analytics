@@ -679,11 +679,22 @@ function DbPreviewContent({
         </form>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">
+                Loading {previewLabel.toLowerCase()}
+              </span>
+            </div>
+          </div>
+        )}
+
         <DataTable
           columns={previewColumns}
           rows={previewData.rows}
-          loading={loading}
+          loading={false}
           loadingMessage={`Loading ${previewLabel.toLowerCase()}`}
           emptyMessage="No dumped records found."
           gridTemplateColumns={previewGridTemplateColumns}
