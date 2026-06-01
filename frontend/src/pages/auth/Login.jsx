@@ -25,8 +25,8 @@ const RESET_VIEW = "reset";
 function Login() {
   const [view, setView] = useState(LOGIN_VIEW);
 
-  const [loginIdentifier, setLoginIdentifier] = useState("sandeep@test.com");
-  const [password, setPassword] = useState("123456");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [password, setPassword] = useState("");
 
   const [forgotIdentifier, setForgotIdentifier] = useState("");
   const [otp, setOtp] = useState("");
