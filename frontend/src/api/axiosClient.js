@@ -1,7 +1,14 @@
 import axios from "axios";
 
+function getDefaultApiBaseUrl() {
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  const hostname = window.location.hostname || "127.0.0.1";
+
+  return `${protocol}//${hostname}:8000/api/v1`;
+}
+
 const axiosClient = axios.create({
-  baseURL: "http://127.0.0.1:8000/api/v1",
+  baseURL: import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl(),
   headers: {
     "Content-Type": "application/json"
   }
@@ -65,7 +72,7 @@ function isOpenAnalyticsAuthError(error) {
   const detail = error.response?.data?.detail;
   const config = error.config;
 
-  if (status !== 401 && status !== 403) {
+  if (status !== 401) {
     return false;
   }
 
@@ -80,8 +87,10 @@ function isOpenAnalyticsAuthError(error) {
       cleanDetail.includes("not authenticated") ||
       cleanDetail.includes("could not validate credentials") ||
       cleanDetail.includes("invalid authentication credentials") ||
+      cleanDetail.includes("invalid authentication token") ||
+      cleanDetail.includes("invalid or expired token") ||
       cleanDetail.includes("token has expired") ||
-      cleanDetail.includes("not enough permissions")
+      cleanDetail.includes("user not found")
     );
   }
 

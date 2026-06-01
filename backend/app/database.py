@@ -1,4 +1,5 @@
 import uuid
+import time
 import duckdb
 from pathlib import Path
 from passlib.context import CryptContext
@@ -15,10 +16,35 @@ if not DB_PATH.is_absolute():
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+DB_CONNECT_RETRY_ATTEMPTS = 10
+DB_CONNECT_RETRY_DELAY_SECONDS = 0.2
+
+
+def is_transient_duckdb_lock_error(error: Exception) -> bool:
+    message = str(error).lower()
+
+    return (
+        "cannot open file" in message
+        and (
+            "being used by another process" in message
+            or "file is already open" in message
+        )
+    )
+
 
 def get_connection():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(DB_PATH))
+
+    for attempt in range(DB_CONNECT_RETRY_ATTEMPTS):
+        try:
+            return duckdb.connect(str(DB_PATH))
+        except duckdb.IOException as error:
+            is_last_attempt = attempt == DB_CONNECT_RETRY_ATTEMPTS - 1
+
+            if is_last_attempt or not is_transient_duckdb_lock_error(error):
+                raise
+
+            time.sleep(DB_CONNECT_RETRY_DELAY_SECONDS)
 
 
 def safe_execute(conn, query: str):

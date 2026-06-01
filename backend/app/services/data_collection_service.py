@@ -459,6 +459,24 @@ def download_upstox_master_file_once(force_download: bool = False) -> Path:
         raise
 
 
+def delete_downloaded_master_file(file_path: Optional[Path]):
+    if not file_path:
+        return
+
+    try:
+        resolved_file = file_path.resolve()
+        resolved_data_dir = DATA_DIR.resolve()
+
+        if resolved_data_dir not in resolved_file.parents:
+            return
+
+        if resolved_file.exists():
+            resolved_file.unlink()
+            print(f"Deleted temporary Upstox master file: {resolved_file}")
+    except Exception as error:
+        print(f"Unable to delete temporary Upstox master file: {error}")
+
+
 def import_current_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
     check_sync_cancelled(conn, sync_id)
 
@@ -633,7 +651,7 @@ def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
 
     if upstox_status_code == 401:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "Saved Upstox token is invalid, expired, or not authenticated. "
                 "Please save a fresh Upstox OAuth connection in Connections."
@@ -719,18 +737,43 @@ def upstox_expired_api_get(
     underlying_key: str,
     expiry_date: Optional[str] = None
 ):
-    params = {
+    primary_params = {
         "underlying_key": underlying_key
+    }
+    fallback_params = {
+        "instrument_key": underlying_key
     }
 
     if expiry_date:
-        params["expiry_date"] = expiry_date
+        primary_params["expiry_date"] = expiry_date
+        fallback_params["expiry_date"] = expiry_date
 
-    return upstox_api_get(
-        access_token=access_token,
-        path=path,
-        params=params
-    )
+    try:
+        return upstox_api_get(
+            access_token=access_token,
+            path=path,
+            params=primary_params
+        )
+    except HTTPException as error:
+        detail = str(error.detail).lower()
+        should_retry_with_instrument_key = (
+            error.status_code == status.HTTP_400_BAD_REQUEST
+            and "instrument_key" in detail
+        )
+
+        if not should_retry_with_instrument_key:
+            raise
+
+        print(
+            "Upstox expired instruments request requires instrument_key. "
+            "Retrying with instrument_key."
+        )
+
+        return upstox_api_get(
+            access_token=access_token,
+            path=path,
+            params=fallback_params
+        )
 
 
 def get_expiries(access_token: str, underlying_key: str) -> List[str]:
@@ -875,6 +918,37 @@ def insert_expired_instruments(
     return len(mapped_rows)
 
 
+def expired_instruments_exist(
+    conn,
+    underlying_key: str,
+    expiry_date: str,
+    source_type: str
+) -> bool:
+    row = conn.execute("""
+        SELECT COUNT(*)
+        FROM upstox_expired_instruments
+        WHERE underlying_key = ?
+          AND expiry = ?
+          AND source_type = ?;
+    """, [underlying_key, expiry_date, source_type]).fetchone()
+
+    return bool(row and row[0] > 0)
+
+
+def clear_expired_instruments_for_source(
+    conn,
+    underlying_key: str,
+    expiry_date: str,
+    source_type: str
+):
+    conn.execute("""
+        DELETE FROM upstox_expired_instruments
+        WHERE underlying_key = ?
+          AND expiry = ?
+          AND source_type = ?;
+    """, [underlying_key, expiry_date, source_type])
+
+
 def get_data_collection_summary_service():
     conn = get_connection()
 
@@ -1000,6 +1074,7 @@ def sync_upstox_current_instruments_service(
     conn = get_connection()
     started_at = datetime.now()
     sync_id = None
+    local_file = None
     total_records = 0
 
     try:
@@ -1120,6 +1195,7 @@ def sync_upstox_current_instruments_service(
         )
 
     finally:
+        delete_downloaded_master_file(local_file)
         conn.close()
 
 
@@ -1156,46 +1232,66 @@ def sync_upstox_expired_instruments_service(
             for expiry_date in expiries:
                 check_sync_cancelled(conn, sync_id)
 
-                conn.execute("""
-                    DELETE FROM upstox_expired_instruments
-                    WHERE underlying_key = ?
-                      AND expiry = ?;
-                """, [underlying_key, expiry_date])
+                if not expired_instruments_exist(
+                    conn=conn,
+                    underlying_key=underlying_key,
+                    expiry_date=expiry_date,
+                    source_type="expired_option"
+                ):
+                    option_rows = get_expired_option_contracts(
+                        access_token=access_token,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date
+                    )
+
+                    clear_expired_instruments_for_source(
+                        conn=conn,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date,
+                        source_type="expired_option"
+                    )
+
+                    total_records += insert_expired_instruments(
+                        conn=conn,
+                        rows=option_rows,
+                        source_type="expired_option",
+                        sync_id=sync_id
+                    )
+
+                    conn.commit()
+                    time.sleep(API_SLEEP_SECONDS)
 
                 check_sync_cancelled(conn, sync_id)
 
-                option_rows = get_expired_option_contracts(
-                    access_token=access_token,
-                    underlying_key=underlying_key,
-                    expiry_date=expiry_date
-                )
-
-                total_records += insert_expired_instruments(
+                if not expired_instruments_exist(
                     conn=conn,
-                    rows=option_rows,
-                    source_type="expired_option",
-                    sync_id=sync_id
-                )
-
-                conn.commit()
-                time.sleep(API_SLEEP_SECONDS)
-                check_sync_cancelled(conn, sync_id)
-
-                future_rows = get_expired_future_contracts(
-                    access_token=access_token,
                     underlying_key=underlying_key,
-                    expiry_date=expiry_date
-                )
+                    expiry_date=expiry_date,
+                    source_type="expired_future"
+                ):
+                    future_rows = get_expired_future_contracts(
+                        access_token=access_token,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date
+                    )
 
-                total_records += insert_expired_instruments(
-                    conn=conn,
-                    rows=future_rows,
-                    source_type="expired_future",
-                    sync_id=sync_id
-                )
+                    clear_expired_instruments_for_source(
+                        conn=conn,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date,
+                        source_type="expired_future"
+                    )
 
-                conn.commit()
-                time.sleep(API_SLEEP_SECONDS)
+                    total_records += insert_expired_instruments(
+                        conn=conn,
+                        rows=future_rows,
+                        source_type="expired_future",
+                        sync_id=sync_id
+                    )
+
+                    conn.commit()
+                    time.sleep(API_SLEEP_SECONDS)
+
                 check_sync_cancelled(conn, sync_id)
 
         finish_sync_run(
