@@ -2,9 +2,9 @@ name: CI - Tests, Reports & Docker Deploy
 
 on:
   push:
-    branches: [ main ]
+    branches: [ prod ]
   pull_request:
-    branches: [ main ]
+    branches: [ prod ]
   workflow_dispatch:
 
 permissions:
