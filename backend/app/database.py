@@ -539,7 +539,11 @@ def init_database():
                 finished_at TIMESTAMP,
                 duration_seconds BIGINT,
                 message VARCHAR,
-                total_records BIGINT DEFAULT 0
+                total_records BIGINT DEFAULT 0,
+                trigger_source VARCHAR DEFAULT 'manual',
+                triggered_by_id VARCHAR,
+                triggered_by_name VARCHAR,
+                triggered_by_role VARCHAR
             );
         """)
 
@@ -550,6 +554,16 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN duration_seconds BIGINT;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN message VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN total_records BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN trigger_source VARCHAR DEFAULT 'manual';")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_role VARCHAR;")
+
+        conn.execute("""
+            UPDATE upstox_sync_runs
+            SET trigger_source = 'manual'
+            WHERE trigger_source IS NULL OR TRIM(trigger_source) = '';
+        """)
 
         conn.execute("""
             UPDATE upstox_sync_runs

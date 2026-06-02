@@ -143,12 +143,13 @@ const dumpJobColumns = [
   { key: "source", label: "Source", filterable: false },
   { key: "saved", label: "Saved", filterable: false },
   { key: "updated", label: "Updated", filterable: false },
+  { key: "triggered_by", label: "Scheduled By", filterable: false },
   { key: "time", label: "Time", filterable: false },
   { key: "last_update_status", label: "Last Update Status", filterable: false }
 ];
 
 const dumpJobGridTemplateColumns =
-  "1.4fr 0.6fr 0.75fr 0.55fr 0.75fr 152px";
+  "1.25fr 0.55fr 0.75fr 0.8fr 0.5fr 0.7fr 152px";
 
 const scheduleColumns = [
   { key: "schedule_time", label: "Time", filterable: false },
@@ -735,17 +736,6 @@ function ScheduleManagerModal({
             <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
               {formMode === "edit" ? "Edit Schedule" : "Add Schedule"}
             </p>
-
-            {formMode === "edit" ? (
-              <button
-                type="button"
-                disabled={saving}
-                onClick={onCancelEdit}
-                className="rounded border border-oa-border bg-black px-2.5 py-1.5 text-[11px] text-oa-muted transition hover:bg-oa-card hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel Edit
-              </button>
-            ) : null}
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
@@ -843,6 +833,17 @@ function ScheduleManagerModal({
           </label>
 
           <div className="flex justify-end gap-2 pt-1">
+            {formMode === "edit" ? (
+              <IconButton
+                icon={X}
+                label="Cancel edit"
+                variant="danger"
+                disabled={saving}
+                onClick={onCancelEdit}
+                tooltipSide="top"
+              />
+            ) : null}
+
             <IconButton
               icon={Check}
               label={formMode === "edit" ? "Update schedule" : "Save schedule"}
@@ -1325,6 +1326,8 @@ function DataCollection() {
           "Downloads Upstox BOD complete and suspended instrument files.",
         records: summary.total_current_instruments,
         lastSyncedAt: summary.current_last_sync_at || summary.last_sync_at,
+        triggeredBy: currentLastRun?.triggered_by_name,
+        triggerSource: currentLastRun?.trigger_source,
         duration: summary.current_duration_seconds,
         lastStatus: currentCancelRequested
           ? "cancel_requested"
@@ -1344,6 +1347,8 @@ function DataCollection() {
           "Pulls expired options and futures using saved Upstox token.",
         records: summary.total_expired_instruments,
         lastSyncedAt: summary.expired_last_sync_at || summary.last_sync_at,
+        triggeredBy: expiredLastRun?.triggered_by_name,
+        triggerSource: expiredLastRun?.trigger_source,
         duration: summary.expired_duration_seconds,
         lastStatus: expiredCancelRequested
           ? "cancel_requested"
@@ -1381,6 +1386,7 @@ function DataCollection() {
         row.description,
         formatNumber(row.records),
         formatDateTime(row.lastSyncedAt),
+        row.triggerSource === "system" ? "System" : row.triggeredBy || "Manual",
         formatDuration(row.duration),
         getStatusLabel(row.lastStatus)
       ];
@@ -1895,6 +1901,17 @@ function DataCollection() {
       );
     }
 
+    if (column.key === "triggered_by") {
+      const triggeredBy =
+        row.triggerSource === "system" ? "System" : row.triggeredBy || "Manual";
+
+      return (
+        <span className="truncate text-white">
+          {triggeredBy || "--"}
+        </span>
+      );
+    }
+
     if (column.key === "time") {
       return (
         <span className="truncate oa-code-font text-white">
@@ -1978,6 +1995,19 @@ function DataCollection() {
     return () => window.clearInterval(pollId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveJob]);
+
+  useEffect(() => {
+    if (hasActiveJob || activeView !== "monitor") {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadData(false, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, hasActiveJob]);
 
   return (
     <MainLayout>

@@ -236,8 +236,39 @@ def ensure_no_active_sync_run(conn):
         )
 
 
-def create_sync_run(conn, sync_type: str, status_text: str, message: str = "") -> str:
+def get_sync_trigger_metadata(current_user: Optional[dict]) -> Dict[str, str]:
+    user = current_user or {}
+    user_id = (
+        user.get("user_id")
+        or user.get("login_id")
+        or user.get("email")
+        or "system"
+    )
+    role = user.get("role") or ""
+    is_system = user_id == "system" or role == "system"
+
+    return {
+        "trigger_source": "system" if is_system else "manual",
+        "triggered_by_id": user_id,
+        "triggered_by_name": "System" if is_system else (
+            user.get("full_name")
+            or user.get("login_id")
+            or user.get("email")
+            or "Manual"
+        ),
+        "triggered_by_role": "system" if is_system else role
+    }
+
+
+def create_sync_run(
+    conn,
+    sync_type: str,
+    status_text: str,
+    message: str = "",
+    current_user: Optional[dict] = None
+) -> str:
     sync_id = str(uuid.uuid4())
+    trigger_metadata = get_sync_trigger_metadata(current_user)
 
     conn.execute("""
         INSERT INTO upstox_sync_runs (
@@ -248,14 +279,22 @@ def create_sync_run(conn, sync_type: str, status_text: str, message: str = "") -
             finished_at,
             duration_seconds,
             message,
-            total_records
+            total_records,
+            trigger_source,
+            triggered_by_id,
+            triggered_by_name,
+            triggered_by_role
         )
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP, NULL, NULL, ?, 0);
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, NULL, NULL, ?, 0, ?, ?, ?, ?);
     """, [
         sync_id,
         sync_type,
         status_text,
-        message
+        message,
+        trigger_metadata["trigger_source"],
+        trigger_metadata["triggered_by_id"],
+        trigger_metadata["triggered_by_name"],
+        trigger_metadata["triggered_by_role"]
     ])
 
     conn.commit()
@@ -1043,7 +1082,11 @@ def get_data_collection_runs_service():
                 finished_at,
                 duration_seconds,
                 message,
-                total_records
+                total_records,
+                trigger_source,
+                triggered_by_id,
+                triggered_by_name,
+                triggered_by_role
             FROM upstox_sync_runs
             ORDER BY started_at DESC
             LIMIT 25;
@@ -1058,7 +1101,11 @@ def get_data_collection_runs_service():
                 "finished_at": str(row[4]) if row[4] else None,
                 "duration_seconds": row[5],
                 "message": row[6],
-                "total_records": row[7]
+                "total_records": row[7],
+                "trigger_source": row[8] or "manual",
+                "triggered_by_id": row[9],
+                "triggered_by_name": row[10],
+                "triggered_by_role": row[11]
             }
             for row in rows
         ]
@@ -1087,7 +1134,8 @@ def sync_upstox_current_instruments_service(
             conn,
             "upstox_current_instruments",
             "running",
-            "Current instrument dump started."
+            "Current instrument dump started.",
+            current_user=current_user
         )
 
         local_file = download_upstox_master_file_once(force_download=True)
@@ -1219,7 +1267,8 @@ def sync_upstox_expired_instruments_service(
             conn,
             "upstox_expired_instruments",
             "running",
-            "Expired instrument dump started."
+            "Expired instrument dump started.",
+            current_user=current_user
         )
 
         for underlying_key in DEFAULT_UNDERLYING_KEYS:
