@@ -780,6 +780,156 @@ def init_database():
             );
         """)
 
+        # -----------------------------
+        # OHLCV Daily
+        # Core daily price candle data for NSE equity instruments.
+        # Linked by instrument_key to upstox_equity_instruments.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ohlcv_daily (
+                instrument_key VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                date DATE NOT NULL,
+                open DOUBLE NOT NULL,
+                high DOUBLE NOT NULL,
+                low DOUBLE NOT NULL,
+                close DOUBLE NOT NULL,
+                volume BIGINT NOT NULL,
+                oi BIGINT DEFAULT 0,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instrument_key, date)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN date DATE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN open DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN high DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN low DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN close DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN volume BIGINT;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN oi BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Equity news
+        # Stock-level news articles.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS equity_news (
+                news_id VARCHAR PRIMARY KEY,
+                instrument_key VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                title VARCHAR,
+                summary TEXT,
+                source VARCHAR,
+                url VARCHAR,
+                published_at TIMESTAMP,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN title VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN summary TEXT;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN source VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN url VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN published_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Fundamentals
+        # Company financial data.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fundamentals (
+                instrument_key VARCHAR NOT NULL,
+                isin VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                report_date DATE NOT NULL,
+                period_type VARCHAR NOT NULL,
+                revenue DOUBLE,
+                net_profit DOUBLE,
+                eps DOUBLE,
+                pe_ratio DOUBLE,
+                debt_to_equity DOUBLE,
+                roe DOUBLE,
+                cash_from_operations DOUBLE,
+                promoter_holding_pct DOUBLE,
+                fii_holding_pct DOUBLE,
+                dii_holding_pct DOUBLE,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instrument_key, report_date, period_type)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN report_date DATE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN period_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN revenue DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN net_profit DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN eps DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN pe_ratio DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN debt_to_equity DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN roe DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN cash_from_operations DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN promoter_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN fii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN dii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Corporate actions
+        # Dividends, splits, bonuses, and similar company actions.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS corporate_actions (
+                instrument_key VARCHAR NOT NULL,
+                isin VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                action_type VARCHAR NOT NULL,
+                ex_date DATE NOT NULL,
+                record_date DATE,
+                amount DOUBLE,
+                remarks VARCHAR,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instrument_key, action_type, ex_date)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN action_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ex_date DATE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN record_date DATE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN amount DOUBLE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN remarks VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # FII / DII activity
+        # Market-level institutional flow data.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fii_dii_activity (
+                date DATE NOT NULL,
+                category VARCHAR NOT NULL,
+                buy_value DOUBLE,
+                sell_value DOUBLE,
+                net_value DOUBLE,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (date, category)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN category VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN buy_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN sell_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN net_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
         conn.commit()
         print("Database initialized successfully.")
 

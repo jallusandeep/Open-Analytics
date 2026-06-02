@@ -9,9 +9,14 @@ from fastapi import HTTPException, status
 
 from app.database import get_connection
 from app.services.data_collection_service import (
+    sync_upstox_corporate_actions_service,
     sync_upstox_current_instruments_service,
     sync_upstox_equity_instruments_service,
-    sync_upstox_expired_instruments_service
+    sync_upstox_equity_news_service,
+    sync_upstox_expired_instruments_service,
+    sync_upstox_fii_dii_activity_service,
+    sync_upstox_fundamentals_service,
+    sync_upstox_ohlcv_daily_service
 )
 
 
@@ -31,6 +36,26 @@ VALID_JOB_TYPES = {
     "equity_instruments": {
         "label": "Equity",
         "sync_type": "upstox_equity_instruments"
+    },
+    "ohlcv_daily": {
+        "label": "Equity OHLCV",
+        "sync_type": "upstox_ohlcv_daily"
+    },
+    "equity_news": {
+        "label": "Equity News",
+        "sync_type": "upstox_equity_news"
+    },
+    "fundamentals": {
+        "label": "Fundamentals",
+        "sync_type": "upstox_fundamentals"
+    },
+    "corporate_actions": {
+        "label": "Corporate Actions",
+        "sync_type": "upstox_corporate_actions"
+    },
+    "fii_dii_activity": {
+        "label": "FII/DII Activity",
+        "sync_type": "upstox_fii_dii_activity"
     }
 }
 
@@ -123,8 +148,9 @@ def validate_job_type(job_type: str) -> str:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Invalid job type. Use current_instruments, "
-                "expired_instruments, or equity_instruments."
+                "Invalid job type. Use current_instruments, expired_instruments, "
+                "equity_instruments, ohlcv_daily, equity_news, fundamentals, "
+                "corporate_actions, or fii_dii_activity."
             )
         )
 
@@ -551,6 +577,37 @@ def run_schedule_job(schedule_id: str, job_type: str):
 
     if job_type == "equity_instruments":
         return sync_upstox_equity_instruments_service(
+            current_user=system_user,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "ohlcv_daily":
+        return sync_upstox_ohlcv_daily_service(
+            current_user=system_user,
+            target_date=None,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "equity_news":
+        return sync_upstox_equity_news_service(
+            current_user=system_user,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "fundamentals":
+        return sync_upstox_fundamentals_service(
+            current_user=system_user,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "corporate_actions":
+        return sync_upstox_corporate_actions_service(
+            current_user=system_user,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "fii_dii_activity":
+        return sync_upstox_fii_dii_activity_service(
             current_user=system_user,
             clear_cancel_at_start=True
         )

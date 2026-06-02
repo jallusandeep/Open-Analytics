@@ -2,16 +2,26 @@ from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import require_admin_or_super_admin
 from app.services.data_collection_service import (
+    get_corporate_actions_preview_service,
     get_data_collection_runs_service,
     get_data_collection_summary_service,
+    get_equity_news_preview_service,
+    get_fii_dii_activity_preview_service,
+    get_fundamentals_preview_service,
+    get_ohlcv_daily_preview_service,
     get_upstox_equity_instruments_preview_service,
     get_upstox_expired_instruments_preview_service,
     get_upstox_instruments_preview_service,
     request_cancel_active_sync_runs_service,
+    sync_upstox_corporate_actions_service,
     sync_upstox_all_instruments_service,
     sync_upstox_current_instruments_service,
     sync_upstox_equity_instruments_service,
-    sync_upstox_expired_instruments_service
+    sync_upstox_equity_news_service,
+    sync_upstox_expired_instruments_service,
+    sync_upstox_fii_dii_activity_service,
+    sync_upstox_fundamentals_service,
+    sync_upstox_ohlcv_daily_service
 )
 from app.services.data_collection_scheduler_service import (
     create_data_collection_schedule_service,
@@ -119,6 +129,129 @@ def get_upstox_equity_instruments_preview(
     }
 
 
+@router.get("/upstox/ohlcv-daily")
+def get_upstox_ohlcv_daily_preview(
+    search: str = Query(
+        "",
+        description="Search OHLCV by instrument key or trading symbol."
+    ),
+    from_date: str = Query("", description="Filter OHLCV from date YYYY-MM-DD."),
+    to_date: str = Query("", description="Filter OHLCV to date YYYY-MM-DD."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_ohlcv_daily_preview_service(
+            search=search,
+            from_date=from_date,
+            to_date=to_date,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/equity-news")
+def get_upstox_equity_news_preview(
+    search: str = Query(
+        "",
+        description="Search news by instrument key, symbol, title, summary, source, or URL."
+    ),
+    source: str = Query("all", description="Filter by news source."),
+    from_date: str = Query("", description="Filter news from date YYYY-MM-DD."),
+    to_date: str = Query("", description="Filter news to date YYYY-MM-DD."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_equity_news_preview_service(
+            search=search,
+            source=source,
+            from_date=from_date,
+            to_date=to_date,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/fundamentals")
+def get_upstox_fundamentals_preview(
+    search: str = Query(
+        "",
+        description="Search fundamentals by instrument key, ISIN, symbol, or period."
+    ),
+    period_type: str = Query("all", description="Filter by period type."),
+    from_date: str = Query("", description="Filter fundamentals from report date YYYY-MM-DD."),
+    to_date: str = Query("", description="Filter fundamentals to report date YYYY-MM-DD."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_fundamentals_preview_service(
+            search=search,
+            period_type=period_type,
+            from_date=from_date,
+            to_date=to_date,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/corporate-actions")
+def get_upstox_corporate_actions_preview(
+    search: str = Query(
+        "",
+        description="Search corporate actions by instrument key, ISIN, symbol, action, or remarks."
+    ),
+    action_type: str = Query("all", description="Filter by action type."),
+    from_date: str = Query("", description="Filter corporate actions from ex-date YYYY-MM-DD."),
+    to_date: str = Query("", description="Filter corporate actions to ex-date YYYY-MM-DD."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_corporate_actions_preview_service(
+            search=search,
+            action_type=action_type,
+            from_date=from_date,
+            to_date=to_date,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/fii-dii-activity")
+def get_upstox_fii_dii_activity_preview(
+    category: str = Query("all", description="Filter by FII or DII."),
+    from_date: str = Query("", description="Filter activity from date YYYY-MM-DD."),
+    to_date: str = Query("", description="Filter activity to date YYYY-MM-DD."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_fii_dii_activity_preview_service(
+            category=category,
+            from_date=from_date,
+            to_date=to_date,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
 @router.post("/upstox/sync-current")
 def sync_upstox_current_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
@@ -152,6 +285,48 @@ def sync_upstox_equity_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return sync_upstox_equity_instruments_service(current_user)
+
+
+@router.post("/upstox/sync-ohlcv-daily")
+def sync_upstox_ohlcv_daily(
+    target_date: str = Query(
+        "",
+        description="Optional target date in YYYY-MM-DD format. Defaults to today."
+    ),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_ohlcv_daily_service(
+        current_user=current_user,
+        target_date=target_date or None
+    )
+
+
+@router.post("/upstox/sync-equity-news")
+def sync_upstox_equity_news(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_equity_news_service(current_user)
+
+
+@router.post("/upstox/sync-fundamentals")
+def sync_upstox_fundamentals(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_fundamentals_service(current_user)
+
+
+@router.post("/upstox/sync-corporate-actions")
+def sync_upstox_corporate_actions(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_corporate_actions_service(current_user)
+
+
+@router.post("/upstox/sync-fii-dii-activity")
+def sync_upstox_fii_dii_activity(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_fii_dii_activity_service(current_user)
 
 
 @router.get("/upstox/schedules")

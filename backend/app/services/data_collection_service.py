@@ -16,6 +16,7 @@ from app.database import get_connection
 
 UPSTOX_PROVIDER = "upstox"
 UPSTOX_BASE_URL = "https://api.upstox.com/v2"
+UPSTOX_V3_BASE_URL = "https://api.upstox.com/v3"
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = APP_ROOT / "data" / "upstox"
@@ -36,6 +37,7 @@ DEFAULT_UNDERLYING_KEYS = [
 
 REQUEST_TIMEOUT_SECONDS = 180
 API_SLEEP_SECONDS = 0.45
+OHLCV_API_SLEEP_SECONDS = 0.18
 STALE_RUNNING_RUN_HOURS = 2
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4
 
@@ -758,6 +760,69 @@ def get_equity_instruments_count(conn) -> int:
     return int(row[0] or 0) if row else 0
 
 
+def get_ohlcv_daily_count(conn) -> int:
+    row = conn.execute("""
+        SELECT COUNT(*)
+        FROM ohlcv_daily;
+    """).fetchone()
+
+    return int(row[0] or 0) if row else 0
+
+
+def ohlcv_daily_collected_for_date(conn, target_date: str) -> bool:
+    equity_count = get_equity_instruments_count(conn)
+
+    if equity_count <= 0:
+        return False
+
+    row = conn.execute("""
+        SELECT COUNT(DISTINCT instrument_key)
+        FROM ohlcv_daily
+        WHERE date = ?;
+    """, [target_date]).fetchone()
+
+    collected_count = int(row[0] or 0) if row else 0
+
+    return collected_count >= equity_count
+
+
+def get_equity_ohlcv_instruments(conn) -> List[Dict[str, str]]:
+    rows = conn.execute("""
+        SELECT
+            instrument_key,
+            trading_symbol
+        FROM upstox_equity_instruments
+        WHERE instrument_key IS NOT NULL
+          AND TRIM(instrument_key) <> ''
+          AND trading_symbol IS NOT NULL
+          AND TRIM(trading_symbol) <> ''
+        ORDER BY trading_symbol;
+    """).fetchall()
+
+    return [
+        {
+            "instrument_key": row[0],
+            "trading_symbol": row[1]
+        }
+        for row in rows
+    ]
+
+
+def get_sync_type_label(value: str) -> str:
+    labels = {
+        "current": "Current Instruments",
+        "expired": "Expired Instruments",
+        "equity": "Equity",
+        "ohlcv_daily": "Equity OHLCV",
+        "equity_news": "Equity News",
+        "fundamentals": "Fundamentals",
+        "corporate_actions": "Corporate Actions",
+        "fii_dii_activity": "FII/DII Activity"
+    }
+
+    return labels.get(value, value or "Data collection")
+
+
 def parse_upstox_error(error_body: str):
     try:
         payload = json.loads(error_body)
@@ -846,6 +911,66 @@ def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]
     request = urllib.request.Request(
         f"{UPSTOX_BASE_URL}{path}{query_string}",
         headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "OpenAnalytics/1.0"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            content = response.read().decode("utf-8")
+
+            if not content:
+                return {}
+
+            return json.loads(content)
+
+    except urllib.error.HTTPError as error:
+        error_body = error.read().decode("utf-8", errors="ignore")
+        raise_clean_upstox_error(
+            upstox_status_code=error.code,
+            error_body=error_body
+        )
+
+    except urllib.error.URLError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to reach Upstox API: {error}"
+        )
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON response received from Upstox API."
+        )
+
+
+def upstox_v3_api_get(
+    access_token: str,
+    path: str,
+    params: Optional[Dict[str, str]] = None
+):
+    token = normalize_upstox_token(access_token)
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Saved Upstox token is empty. "
+                "Please save a fresh Upstox OAuth connection in Connections."
+            )
+        )
+
+    query_string = ""
+
+    if params:
+        query_string = "?" + urllib.parse.urlencode(params)
+
+    request = urllib.request.Request(
+        f"{UPSTOX_V3_BASE_URL}{path}{query_string}",
+        headers={
+            "Content-Type": "application/json",
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
             "User-Agent": "OpenAnalytics/1.0"
@@ -979,6 +1104,116 @@ def get_expired_future_contracts(
         return []
 
     return data
+
+
+def get_upstox_daily_candles(
+    access_token: str,
+    instrument_key: str,
+    from_date: str,
+    to_date: str
+) -> List[List[Any]]:
+    encoded_key = urllib.parse.quote(instrument_key, safe="")
+    path = f"/historical-candle/{encoded_key}/days/1/{to_date}/{from_date}"
+
+    response = upstox_v3_api_get(
+        access_token=access_token,
+        path=path
+    )
+
+    data = response.get("data") if isinstance(response, dict) else {}
+    candles = data.get("candles") if isinstance(data, dict) else []
+
+    if not isinstance(candles, list):
+        return []
+
+    return candles
+
+
+def candle_timestamp_to_date(value: Any) -> Optional[str]:
+    if not value:
+        return None
+
+    text = str(value).strip()
+
+    if not text:
+        return None
+
+    if len(text) >= 10:
+        return text[:10]
+
+    return None
+
+
+def map_ohlcv_candle(
+    instrument_key: str,
+    trading_symbol: str,
+    candle: List[Any]
+) -> Optional[List[Any]]:
+    if not isinstance(candle, list) or len(candle) < 6:
+        return None
+
+    candle_date = candle_timestamp_to_date(candle[0])
+
+    if not candle_date:
+        return None
+
+    open_price = safe_float(candle[1])
+    high_price = safe_float(candle[2])
+    low_price = safe_float(candle[3])
+    close_price = safe_float(candle[4])
+    volume = safe_int(candle[5])
+    oi = safe_int(candle[6]) if len(candle) > 6 else 0
+
+    if (
+        open_price is None
+        or high_price is None
+        or low_price is None
+        or close_price is None
+        or volume is None
+    ):
+        return None
+
+    return [
+        instrument_key,
+        trading_symbol,
+        candle_date,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        volume,
+        oi or 0
+    ]
+
+
+def insert_ohlcv_daily_rows(conn, rows: List[List[Any]]) -> int:
+    if not rows:
+        return 0
+
+    for row in rows:
+        conn.execute("""
+            DELETE FROM ohlcv_daily
+            WHERE instrument_key = ?
+              AND date = ?;
+        """, [row[0], row[2]])
+
+    conn.executemany("""
+        INSERT INTO ohlcv_daily (
+            instrument_key,
+            trading_symbol,
+            date,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            oi,
+            ingested_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+    """, rows)
+
+    return len(rows)
 
 
 def map_expired_instrument(row: Dict[str, Any], source_type: str):
@@ -1121,6 +1356,31 @@ def get_data_collection_summary_service():
             FROM upstox_equity_instruments;
         """).fetchone()[0]
 
+        ohlcv_daily_count = conn.execute("""
+            SELECT COUNT(*)
+            FROM ohlcv_daily;
+        """).fetchone()[0]
+
+        equity_news_count = conn.execute("""
+            SELECT COUNT(*)
+            FROM equity_news;
+        """).fetchone()[0]
+
+        fundamentals_count = conn.execute("""
+            SELECT COUNT(*)
+            FROM fundamentals;
+        """).fetchone()[0]
+
+        corporate_actions_count = conn.execute("""
+            SELECT COUNT(*)
+            FROM corporate_actions;
+        """).fetchone()[0]
+
+        fii_dii_activity_count = conn.execute("""
+            SELECT COUNT(*)
+            FROM fii_dii_activity;
+        """).fetchone()[0]
+
         total_runs = conn.execute("""
             SELECT COUNT(*)
             FROM upstox_sync_runs;
@@ -1166,6 +1426,15 @@ def get_data_collection_summary_service():
             LIMIT 1;
         """).fetchone()
 
+        ohlcv_daily_run = conn.execute("""
+            SELECT finished_at, duration_seconds
+            FROM upstox_sync_runs
+            WHERE sync_type = 'upstox_ohlcv_daily'
+              AND status = 'success'
+            ORDER BY finished_at DESC
+            LIMIT 1;
+        """).fetchone()
+
         active_run = conn.execute("""
             SELECT sync_type, status, started_at
             FROM upstox_sync_runs
@@ -1179,6 +1448,11 @@ def get_data_collection_summary_service():
             "total_current_instruments": current_count,
             "total_expired_instruments": expired_count,
             "total_equity_instruments": equity_count,
+            "total_ohlcv_daily": ohlcv_daily_count,
+            "total_equity_news": equity_news_count,
+            "total_fundamentals": fundamentals_count,
+            "total_corporate_actions": corporate_actions_count,
+            "total_fii_dii_activity": fii_dii_activity_count,
             "total_sync_runs": total_runs,
             "last_sync_at": str(last_run[3]) if last_run and last_run[3] else None,
             "last_duration_seconds": last_run[4] if last_run else None,
@@ -1188,6 +1462,8 @@ def get_data_collection_summary_service():
             "expired_duration_seconds": expired_run[1] if expired_run else None,
             "equity_last_sync_at": str(equity_run[0]) if equity_run and equity_run[0] else None,
             "equity_duration_seconds": equity_run[1] if equity_run else None,
+            "ohlcv_daily_last_sync_at": str(ohlcv_daily_run[0]) if ohlcv_daily_run and ohlcv_daily_run[0] else None,
+            "ohlcv_daily_duration_seconds": ohlcv_daily_run[1] if ohlcv_daily_run else None,
             "active_job": active_run[0] if active_run else None,
             "active_job_status": active_run[1] if active_run else None,
             "active_job_started_at": str(active_run[2]) if active_run and active_run[2] else None
@@ -1532,6 +1808,369 @@ def sync_upstox_equity_instruments_service(
         conn.close()
 
 
+def sync_upstox_ohlcv_daily_service(
+    current_user: dict,
+    target_date: Optional[str] = None,
+    clear_cancel_at_start: bool = True
+):
+    conn = get_connection()
+    started_at = datetime.now()
+    sync_id = None
+    total_records = 0
+
+    clean_target_date = target_date or datetime.now().date().isoformat()
+
+    try:
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        ensure_no_active_sync_run(conn)
+        access_token = get_upstox_access_token(conn)
+
+        sync_id = create_sync_run(
+            conn,
+            "upstox_ohlcv_daily",
+            "running",
+            "Equity OHLCV daily collection started.",
+            current_user=current_user
+        )
+
+        if ohlcv_daily_collected_for_date(conn, clean_target_date):
+            total_records = get_ohlcv_daily_count(conn)
+
+            finish_sync_run(
+                conn,
+                sync_id,
+                "success",
+                f"OHLCV daily data already collected for {clean_target_date}. Daily refresh skipped.",
+                total_records,
+                started_at
+            )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            return {
+                "status": "success",
+                "message": f"OHLCV daily data already collected for {clean_target_date}. Daily refresh skipped.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at),
+                "skipped": True,
+                "target_date": clean_target_date
+            }
+
+        instruments = get_equity_ohlcv_instruments(conn)
+
+        if not instruments:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No equity instruments found. Please run Equity collection first."
+            )
+
+        from_date = clean_target_date
+        to_date = clean_target_date
+
+        for instrument in instruments:
+            check_sync_cancelled(conn, sync_id)
+
+            instrument_key = instrument["instrument_key"]
+            trading_symbol = instrument["trading_symbol"]
+
+            try:
+                candles = get_upstox_daily_candles(
+                    access_token=access_token,
+                    instrument_key=instrument_key,
+                    from_date=from_date,
+                    to_date=to_date
+                )
+            except HTTPException as error:
+                print(
+                    "OHLCV candle fetch skipped: "
+                    f"{trading_symbol} ({instrument_key}) - {error.detail}"
+                )
+                continue
+
+            mapped_rows = [
+                mapped_row
+                for mapped_row in [
+                    map_ohlcv_candle(
+                        instrument_key=instrument_key,
+                        trading_symbol=trading_symbol,
+                        candle=candle
+                    )
+                    for candle in candles
+                ]
+                if mapped_row
+            ]
+
+            if mapped_rows:
+                total_records += insert_ohlcv_daily_rows(conn, mapped_rows)
+                conn.commit()
+
+            time.sleep(OHLCV_API_SLEEP_SECONDS)
+
+        finish_sync_run(
+            conn,
+            sync_id,
+            "success",
+            f"Equity OHLCV daily data collected for {clean_target_date}.",
+            total_records,
+            started_at
+        )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "success",
+            "message": f"Equity OHLCV daily data collected for {clean_target_date}.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at),
+            "skipped": False,
+            "target_date": clean_target_date
+        }
+
+    except SyncCancelled:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                "Equity OHLCV daily collection cancelled.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "cancelled",
+            "message": "Equity OHLCV daily collection cancelled.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at),
+            "target_date": clean_target_date
+        }
+
+    except HTTPException as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                str(e.detail),
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"Equity OHLCV daily collection failed: {e}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to collect Equity OHLCV daily data: {e}"
+        )
+
+    finally:
+        conn.close()
+
+
+def sync_upstox_table_placeholder_service(
+    current_user: dict,
+    sync_type: str,
+    label: str,
+    table_name: str,
+    clear_cancel_at_start: bool = True
+):
+    conn = get_connection()
+    started_at = datetime.now()
+    sync_id = None
+    total_records = 0
+
+    try:
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        ensure_no_active_sync_run(conn)
+
+        sync_id = create_sync_run(
+            conn,
+            sync_type,
+            "running",
+            f"{label} collection started.",
+            current_user=current_user
+        )
+
+        check_sync_cancelled(conn, sync_id)
+
+        row = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM {table_name};
+        """).fetchone()
+        total_records = int(row[0] or 0) if row else 0
+
+        message = (
+            f"{label} runner completed. External download source is not "
+            "configured yet, so existing preview records were left unchanged."
+        )
+
+        finish_sync_run(
+            conn,
+            sync_id,
+            "success",
+            message,
+            total_records,
+            started_at
+        )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "success",
+            "message": message,
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at),
+            "skipped": True
+        }
+
+    except SyncCancelled:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                f"{label} collection cancelled.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "cancelled",
+            "message": f"{label} collection cancelled.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"{label} collection failed: {e}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to run {label} collection: {e}"
+        )
+
+    finally:
+        conn.close()
+
+
+def sync_upstox_equity_news_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    return sync_upstox_table_placeholder_service(
+        current_user=current_user,
+        sync_type="upstox_equity_news",
+        label="Equity News",
+        table_name="equity_news",
+        clear_cancel_at_start=clear_cancel_at_start
+    )
+
+
+def sync_upstox_fundamentals_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    return sync_upstox_table_placeholder_service(
+        current_user=current_user,
+        sync_type="upstox_fundamentals",
+        label="Fundamentals",
+        table_name="fundamentals",
+        clear_cancel_at_start=clear_cancel_at_start
+    )
+
+
+def sync_upstox_corporate_actions_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    return sync_upstox_table_placeholder_service(
+        current_user=current_user,
+        sync_type="upstox_corporate_actions",
+        label="Corporate Actions",
+        table_name="corporate_actions",
+        clear_cancel_at_start=clear_cancel_at_start
+    )
+
+
+def sync_upstox_fii_dii_activity_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    return sync_upstox_table_placeholder_service(
+        current_user=current_user,
+        sync_type="upstox_fii_dii_activity",
+        label="FII/DII Activity",
+        table_name="fii_dii_activity",
+        clear_cancel_at_start=clear_cancel_at_start
+    )
+
+
 def sync_upstox_expired_instruments_service(
     current_user: dict,
     clear_cancel_at_start: bool = True
@@ -1724,45 +2363,102 @@ def sync_upstox_expired_instruments_service(
 
 def sync_upstox_all_instruments_service(current_user: dict):
     started_at = datetime.now()
+    total_records = 0
+    jobs = {}
 
-    current_result = sync_upstox_current_instruments_service(
-        current_user,
-        clear_cancel_at_start=True
-    )
+    job_steps = [
+        (
+            "current",
+            sync_upstox_current_instruments_service,
+            {"clear_cancel_at_start": True}
+        ),
+        (
+            "expired",
+            sync_upstox_expired_instruments_service,
+            {"clear_cancel_at_start": False}
+        ),
+        (
+            "equity",
+            sync_upstox_equity_instruments_service,
+            {"clear_cancel_at_start": False}
+        ),
+        (
+            "ohlcv_daily",
+            sync_upstox_ohlcv_daily_service,
+            {"target_date": None, "clear_cancel_at_start": False}
+        ),
+        (
+            "equity_news",
+            sync_upstox_equity_news_service,
+            {"clear_cancel_at_start": False}
+        ),
+        (
+            "fundamentals",
+            sync_upstox_fundamentals_service,
+            {"clear_cancel_at_start": False}
+        ),
+        (
+            "corporate_actions",
+            sync_upstox_corporate_actions_service,
+            {"clear_cancel_at_start": False}
+        ),
+        (
+            "fii_dii_activity",
+            sync_upstox_fii_dii_activity_service,
+            {"clear_cancel_at_start": False}
+        )
+    ]
 
-    total_records = int(current_result.get("total_records") or 0)
+    try:
+        for job_key, job_function, kwargs in job_steps:
+            try:
+                result = job_function(current_user, **kwargs)
+            except HTTPException as error:
+                result = {
+                    "status": "failed",
+                    "message": str(error.detail),
+                    "total_records": 0,
+                    "duration_seconds": 0
+                }
+            except Exception as error:
+                result = {
+                    "status": "failed",
+                    "message": str(error),
+                    "total_records": 0,
+                    "duration_seconds": 0
+                }
 
-    if current_result.get("status") == "cancelled":
-        return {
-            "status": "cancelled",
-            "message": "Current Upstox instrument dump cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at),
-            "jobs": {
-                "current": current_result
-            }
-        }
+            jobs[job_key] = result
+            total_records += int(result.get("total_records") or 0)
 
-    equity_result = sync_upstox_equity_instruments_service(
-        current_user,
-        clear_cancel_at_start=False
-    )
+            if result.get("status") == "cancelled":
+                return {
+                    "status": "cancelled",
+                    "message": f"{get_sync_type_label(job_key)} collection cancelled.",
+                    "total_records": total_records,
+                    "duration_seconds": duration_seconds(started_at),
+                    "jobs": jobs
+                }
 
-    total_records += int(equity_result.get("total_records") or 0)
+    finally:
+        clear_cancel_signal()
+
+    failed_jobs = [
+        job_key
+        for job_key, result in jobs.items()
+        if result.get("status") == "failed"
+    ]
 
     return {
-        "status": "success",
+        "status": "partial_success" if failed_jobs else "success",
         "message": (
-            "Current Upstox master instruments and daily equity instruments "
-            "completed successfully. Run expired instruments separately because "
-            "it requires a valid Upstox OAuth token with Expired Instruments API permission."
+            "All configured data collection runners completed with some failures."
+            if failed_jobs
+            else "All configured data collection runners completed."
         ),
         "total_records": total_records,
         "duration_seconds": duration_seconds(started_at),
-        "jobs": {
-            "current": current_result,
-            "equity": equity_result
-        }
+        "jobs": jobs
     }
 
 
@@ -1895,6 +2591,41 @@ def build_equity_preview_filters(search: str, security_type: str):
     return where_sql, params
 
 
+def build_ohlcv_daily_preview_filters(search: str, from_date: str, to_date: str):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_from_date = from_date.strip() if from_date else ""
+    clean_to_date = to_date.strip() if to_date else ""
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(instrument_key, '')) LIKE ?
+                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([search_value, search_value])
+
+    if clean_from_date:
+        where_clauses.append("date >= ?")
+        params.append(clean_from_date)
+
+    if clean_to_date:
+        where_clauses.append("date <= ?")
+        params.append(clean_to_date)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
 def row_to_instrument_preview(row):
     return {
         "instrument_key": row[0],
@@ -1928,6 +2659,21 @@ def row_to_equity_preview(row):
         "short_name": row[10],
         "security_type": row[11],
         "downloaded_at": str(row[12]) if row[12] else None
+    }
+
+
+def row_to_ohlcv_daily_preview(row):
+    return {
+        "instrument_key": row[0],
+        "trading_symbol": row[1],
+        "date": str(row[2]) if row[2] else None,
+        "open": row[3],
+        "high": row[4],
+        "low": row[5],
+        "close": row[6],
+        "volume": row[7],
+        "oi": row[8],
+        "ingested_at": str(row[9]) if row[9] else None
     }
 
 
@@ -2126,3 +2872,574 @@ def get_upstox_equity_instruments_preview_service(
 
     finally:
         conn.close()
+
+
+def get_ohlcv_daily_preview_service(
+    search: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_ohlcv_daily_preview_filters(
+            search=search,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM ohlcv_daily
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                date,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                oi,
+                ingested_at
+            FROM ohlcv_daily
+            {where_sql}
+            ORDER BY date DESC, trading_symbol
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_ohlcv_daily_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
+
+def build_equity_news_preview_filters(
+    search: str,
+    from_date: str,
+    to_date: str,
+    source: str
+):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_from_date = from_date.strip() if from_date else ""
+    clean_to_date = to_date.strip() if to_date else ""
+    clean_source = source.strip() if source else "all"
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(instrument_key, '')) LIKE ?
+                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(title, '')) LIKE ?
+                OR LOWER(COALESCE(summary, '')) LIKE ?
+                OR LOWER(COALESCE(source, '')) LIKE ?
+                OR LOWER(COALESCE(url, '')) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value
+        ])
+
+    if clean_source != "all":
+        where_clauses.append("source = ?")
+        params.append(clean_source)
+
+    if clean_from_date:
+        where_clauses.append("CAST(published_at AS DATE) >= ?")
+        params.append(clean_from_date)
+
+    if clean_to_date:
+        where_clauses.append("CAST(published_at AS DATE) <= ?")
+        params.append(clean_to_date)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
+def build_fundamentals_preview_filters(
+    search: str,
+    period_type: str,
+    from_date: str,
+    to_date: str
+):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_period_type = period_type.strip() if period_type else "all"
+    clean_from_date = from_date.strip() if from_date else ""
+    clean_to_date = to_date.strip() if to_date else ""
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(instrument_key, '')) LIKE ?
+                OR LOWER(COALESCE(isin, '')) LIKE ?
+                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(period_type, '')) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([
+            search_value,
+            search_value,
+            search_value,
+            search_value
+        ])
+
+    if clean_period_type != "all":
+        where_clauses.append("period_type = ?")
+        params.append(clean_period_type)
+
+    if clean_from_date:
+        where_clauses.append("report_date >= ?")
+        params.append(clean_from_date)
+
+    if clean_to_date:
+        where_clauses.append("report_date <= ?")
+        params.append(clean_to_date)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
+def build_corporate_actions_preview_filters(
+    search: str,
+    action_type: str,
+    from_date: str,
+    to_date: str
+):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_action_type = action_type.strip() if action_type else "all"
+    clean_from_date = from_date.strip() if from_date else ""
+    clean_to_date = to_date.strip() if to_date else ""
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(instrument_key, '')) LIKE ?
+                OR LOWER(COALESCE(isin, '')) LIKE ?
+                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(action_type, '')) LIKE ?
+                OR LOWER(COALESCE(remarks, '')) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value
+        ])
+
+    if clean_action_type != "all":
+        where_clauses.append("action_type = ?")
+        params.append(clean_action_type)
+
+    if clean_from_date:
+        where_clauses.append("ex_date >= ?")
+        params.append(clean_from_date)
+
+    if clean_to_date:
+        where_clauses.append("ex_date <= ?")
+        params.append(clean_to_date)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
+def build_fii_dii_activity_preview_filters(
+    category: str,
+    from_date: str,
+    to_date: str
+):
+    where_clauses = []
+    params = []
+
+    clean_category = category.strip() if category else "all"
+    clean_from_date = from_date.strip() if from_date else ""
+    clean_to_date = to_date.strip() if to_date else ""
+
+    if clean_category != "all":
+        where_clauses.append("category = ?")
+        params.append(clean_category)
+
+    if clean_from_date:
+        where_clauses.append("date >= ?")
+        params.append(clean_from_date)
+
+    if clean_to_date:
+        where_clauses.append("date <= ?")
+        params.append(clean_to_date)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
+def row_to_equity_news_preview(row):
+    return {
+        "news_id": row[0],
+        "instrument_key": row[1],
+        "trading_symbol": row[2],
+        "title": row[3],
+        "summary": row[4],
+        "source": row[5],
+        "url": row[6],
+        "published_at": str(row[7]) if row[7] else None,
+        "ingested_at": str(row[8]) if row[8] else None
+    }
+
+
+def row_to_fundamentals_preview(row):
+    return {
+        "instrument_key": row[0],
+        "isin": row[1],
+        "trading_symbol": row[2],
+        "report_date": str(row[3]) if row[3] else None,
+        "period_type": row[4],
+        "revenue": row[5],
+        "net_profit": row[6],
+        "eps": row[7],
+        "pe_ratio": row[8],
+        "debt_to_equity": row[9],
+        "roe": row[10],
+        "cash_from_operations": row[11],
+        "promoter_holding_pct": row[12],
+        "fii_holding_pct": row[13],
+        "dii_holding_pct": row[14],
+        "ingested_at": str(row[15]) if row[15] else None
+    }
+
+
+def row_to_corporate_actions_preview(row):
+    return {
+        "instrument_key": row[0],
+        "isin": row[1],
+        "trading_symbol": row[2],
+        "action_type": row[3],
+        "ex_date": str(row[4]) if row[4] else None,
+        "record_date": str(row[5]) if row[5] else None,
+        "amount": row[6],
+        "remarks": row[7],
+        "ingested_at": str(row[8]) if row[8] else None
+    }
+
+
+def row_to_fii_dii_activity_preview(row):
+    return {
+        "date": str(row[0]) if row[0] else None,
+        "category": row[1],
+        "buy_value": row[2],
+        "sell_value": row[3],
+        "net_value": row[4],
+        "ingested_at": str(row[5]) if row[5] else None
+    }
+
+
+def get_equity_news_preview_service(
+    search: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    source: str = "all",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_equity_news_preview_filters(
+            search=search,
+            from_date=from_date,
+            to_date=to_date,
+            source=source
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM equity_news
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                news_id,
+                instrument_key,
+                trading_symbol,
+                title,
+                summary,
+                source,
+                url,
+                published_at,
+                ingested_at
+            FROM equity_news
+            {where_sql}
+            ORDER BY published_at DESC, ingested_at DESC, trading_symbol
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_equity_news_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
+
+def get_fundamentals_preview_service(
+    search: str = "",
+    period_type: str = "all",
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_fundamentals_preview_filters(
+            search=search,
+            period_type=period_type,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM fundamentals
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                isin,
+                trading_symbol,
+                report_date,
+                period_type,
+                revenue,
+                net_profit,
+                eps,
+                pe_ratio,
+                debt_to_equity,
+                roe,
+                cash_from_operations,
+                promoter_holding_pct,
+                fii_holding_pct,
+                dii_holding_pct,
+                ingested_at
+            FROM fundamentals
+            {where_sql}
+            ORDER BY report_date DESC, trading_symbol, period_type
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_fundamentals_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
+
+def get_corporate_actions_preview_service(
+    search: str = "",
+    action_type: str = "all",
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_corporate_actions_preview_filters(
+            search=search,
+            action_type=action_type,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM corporate_actions
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                isin,
+                trading_symbol,
+                action_type,
+                ex_date,
+                record_date,
+                amount,
+                remarks,
+                ingested_at
+            FROM corporate_actions
+            {where_sql}
+            ORDER BY ex_date DESC, trading_symbol, action_type
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_corporate_actions_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
+
+def get_fii_dii_activity_preview_service(
+    category: str = "all",
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_fii_dii_activity_preview_filters(
+            category=category,
+            from_date=from_date,
+            to_date=to_date
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM fii_dii_activity
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                date,
+                category,
+                buy_value,
+                sell_value,
+                net_value,
+                ingested_at
+            FROM fii_dii_activity
+            {where_sql}
+            ORDER BY date DESC, category
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_fii_dii_activity_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
