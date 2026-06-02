@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   DownloadCloud,
+  Edit3,
   Play,
+  Power,
   RefreshCcw,
   Search,
+  Trash2,
   X,
   XCircle
 } from "lucide-react";
@@ -17,24 +22,29 @@ import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
 import Tooltip from "../../components/common/Tooltip";
+import Modal from "../../components/common/Modal";
 import DataTable from "../../components/tables/DataTable";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
   oaFormTextStyles,
   oaPillStyles,
-  oaTabStyles,
-  oaTableStyles
+  oaTabStyles
 } from "../../components/common/uiStyles";
 import {
   cancelUpstoxDataCollection,
+  createUpstoxDataCollectionSchedule,
+  deleteUpstoxDataCollectionSchedule,
   getUpstoxDataCollectionRuns,
+  getUpstoxDataCollectionSchedules,
   getUpstoxDataCollectionSummary,
   getUpstoxExpiredInstrumentsPreview,
   getUpstoxInstrumentsPreview,
   syncUpstoxAllInstruments,
   syncUpstoxCurrentInstruments,
-  syncUpstoxExpiredInstruments
+  syncUpstoxExpiredInstruments,
+  toggleUpstoxDataCollectionSchedule,
+  updateUpstoxDataCollectionSchedule
 } from "../../api/dataCollectionApi";
 
 const emptySummary = {
@@ -61,6 +71,14 @@ const emptyPreviewData = {
   total_records: 0
 };
 
+const emptyScheduleForm = {
+  schedule_id: "",
+  job_type: "current_instruments",
+  schedule_time: "",
+  time_format: "24",
+  is_active: true
+};
+
 const viewOptions = [
   {
     key: "monitor",
@@ -68,12 +86,28 @@ const viewOptions = [
   },
   {
     key: "current_preview",
-    label: "Current Instruments Preview"
+    label: "Current Instruments"
   },
   {
     key: "expired_preview",
-    label: "Expired Instruments Preview"
+    label: "Expired Instruments"
   }
+];
+
+const timeFormatOptions = [
+  {
+    value: "24",
+    label: "24 Hours"
+  },
+  {
+    value: "12",
+    label: "12 Hours"
+  }
+];
+
+const timePeriodOptions = [
+  { value: "AM", label: "AM" },
+  { value: "PM", label: "PM" }
 ];
 
 const sourceTypeOptions = [
@@ -114,7 +148,15 @@ const dumpJobColumns = [
 ];
 
 const dumpJobGridTemplateColumns =
-  "1.4fr 0.6fr 0.75fr 0.55fr 0.75fr 112px";
+  "1.4fr 0.6fr 0.75fr 0.55fr 0.75fr 152px";
+
+const scheduleColumns = [
+  { key: "schedule_time", label: "Time", filterable: false },
+  { key: "next_run_at", label: "Next Run", filterable: false },
+  { key: "is_active", label: "Status", filterable: false }
+];
+
+const scheduleGridTemplateColumns = "1fr 1.35fr 0.75fr 112px";
 
 const previewColumns = [
   { key: "instrument_key", label: "Instrument Key", filterable: false },
@@ -242,6 +284,8 @@ function getSyncTypeLabel(value) {
     upstox_expired_instruments: "Expired Instruments",
     upstox_all_instruments: "All Instruments",
     upstox_instruments: "All Instruments",
+    current_instruments: "Current Instruments",
+    expired_instruments: "Expired Instruments",
     bod_complete: "BOD Complete",
     suspended: "Suspended",
     expired_option: "Expired Options",
@@ -252,7 +296,7 @@ function getSyncTypeLabel(value) {
 }
 
 function getStatusClass(status) {
-  if (status === "success" || status === "connected") {
+  if (status === "success" || status === "connected" || status === "active") {
     return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
   }
 
@@ -260,7 +304,7 @@ function getStatusClass(status) {
     return "border-cyan-500/40 bg-cyan-950/50 text-cyan-200";
   }
 
-  if (status === "failed" || status === "cancelled") {
+  if (status === "failed" || status === "cancelled" || status === "inactive") {
     return "border-red-500/40 bg-red-950/50 text-red-200";
   }
 
@@ -272,25 +316,13 @@ function getStatusClass(status) {
 }
 
 function getStatusLabel(status) {
-  if (status === "success") {
-    return "Success";
-  }
-
-  if (status === "running") {
-    return "Running";
-  }
-
-  if (status === "cancel_requested") {
-    return "Cancelling";
-  }
-
-  if (status === "cancelled") {
-    return "Cancelled";
-  }
-
-  if (status === "failed") {
-    return "Failed";
-  }
+  if (status === "success") return "Success";
+  if (status === "running") return "Running";
+  if (status === "cancel_requested") return "Cancelling";
+  if (status === "cancelled") return "Cancelled";
+  if (status === "failed") return "Failed";
+  if (status === "active") return "Active";
+  if (status === "inactive") return "Inactive";
 
   return status || "Idle";
 }
@@ -349,6 +381,61 @@ function getPaginationItems(currentPage, totalPages) {
   return pages;
 }
 
+function formatScheduleTime(schedule) {
+  if (!schedule) {
+    return "--";
+  }
+
+  if (schedule.time_format === "12") {
+    return schedule.schedule_label || schedule.schedule_time || "--";
+  }
+
+  return schedule.schedule_time || "--";
+}
+
+function getScheduleTimeParts(scheduleTime) {
+  const match = String(scheduleTime || "").match(/^(\d{1,2}):(\d{2})$/);
+
+  if (!match) {
+    return {
+      hour12: "",
+      minute: "",
+      period: "AM"
+    };
+  }
+
+  const hour24 = Math.min(23, Math.max(0, Number(match[1])));
+  const minute = Math.min(59, Math.max(0, Number(match[2])));
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+
+  return {
+    hour12: String(hour12),
+    minute: String(minute).padStart(2, "0"),
+    period
+  };
+}
+
+function buildScheduleTimeFrom12Hour(hourValue, minuteValue, periodValue) {
+  if (hourValue === "" || hourValue === null || hourValue === undefined) {
+    return "";
+  }
+
+  const hour12 = Math.min(12, Math.max(1, Number(hourValue) || 1));
+  const minute = Math.min(59, Math.max(0, Number(minuteValue) || 0));
+  const period = periodValue === "PM" ? "PM" : "AM";
+  let hour24 = hour12 % 12;
+
+  if (period === "PM") {
+    hour24 += 12;
+  }
+
+  return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(
+    2,
+    "0"
+  )}`;
+}
+
 function ViewToggle({ activeView, onChange }) {
   return (
     <div className={oaTabStyles.wrapper}>
@@ -380,6 +467,19 @@ function StatusBadge({ status, label }) {
   );
 }
 
+function ClearInputButton({ label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+      aria-label={label}
+    >
+      <X size={13} />
+    </button>
+  );
+}
+
 function DumpJobActions({
   title,
   loading,
@@ -387,10 +487,22 @@ function DumpJobActions({
   canCancel,
   cancelling,
   onRun,
-  onCancel
+  onCancel,
+  onSchedule
 }) {
   return (
     <div className="flex justify-end gap-2">
+      <Tooltip text={`Schedule ${title}`} side="left">
+        <button
+          type="button"
+          onClick={onSchedule}
+          className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
+          aria-label={`Schedule ${title}`}
+        >
+          <Clock3 size={15} />
+        </button>
+      </Tooltip>
+
       <Tooltip text={loading ? `${title} running` : `Run ${title}`} side="left">
         <button
           type="button"
@@ -443,6 +555,310 @@ function DataCollectionShell({ activeView, onViewChange, children }) {
         {children}
       </div>
     </div>
+  );
+}
+
+function ScheduleManagerModal({
+  open,
+  title,
+  schedules,
+  formMode,
+  formData,
+  saving,
+  savingScheduleId,
+  deletingScheduleId,
+  isAdminControlAllowed,
+  onClose,
+  onSave,
+  onInputChange,
+  onTimePartChange,
+  onClearField,
+  onEdit,
+  onCancelEdit,
+  onToggle,
+  onDelete
+}) {
+  const is12HourFormat = formData.time_format === "12";
+  const scheduleTimeParts = getScheduleTimeParts(formData.schedule_time);
+  const canSave =
+    isAdminControlAllowed &&
+    formData.job_type &&
+    formData.schedule_time &&
+    formData.time_format;
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    onSave();
+  }
+
+  function renderScheduleCell(schedule, column) {
+    if (column.key === "schedule_time") {
+      const isEditing =
+        formMode === "edit" && formData.schedule_id === schedule.schedule_id;
+
+      return (
+        <span
+          className={`truncate oa-code-font font-semibold ${
+            isEditing ? "text-sky-200" : "text-cyan-200"
+          }`}
+        >
+          {formatScheduleTime(schedule)}
+        </span>
+      );
+    }
+
+    if (column.key === "next_run_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(schedule.next_run_at)}
+        </span>
+      );
+    }
+
+    if (column.key === "is_active") {
+      return (
+        <StatusBadge status={schedule.is_active ? "active" : "inactive"} />
+      );
+    }
+
+    return <span className="truncate text-oa-muted">--</span>;
+  }
+
+  function renderScheduleActions(schedule) {
+    const isSaving = savingScheduleId === schedule.schedule_id;
+    const isDeleting = deletingScheduleId === schedule.schedule_id;
+
+    return (
+      <div className="flex justify-end gap-1.5">
+        <button
+          type="button"
+          disabled={isSaving || isDeleting || !isAdminControlAllowed}
+          onClick={() => onToggle(schedule)}
+          className={`flex h-8 w-8 items-center justify-center rounded border outline-none transition disabled:cursor-not-allowed disabled:opacity-60 ${
+            schedule.is_active
+              ? "border-amber-500/30 bg-amber-950/20 text-amber-300 hover:border-amber-500/60 hover:bg-amber-950/40 hover:text-amber-200 focus:border-amber-500"
+              : "border-emerald-500/30 bg-emerald-950/20 text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
+          }`}
+          aria-label={schedule.is_active ? "Disable schedule" : "Enable schedule"}
+          title={schedule.is_active ? "Disable schedule" : "Enable schedule"}
+        >
+          {isSaving ? <Spinner size="xs" color="light" /> : <Power size={15} />}
+        </button>
+
+        <IconButton
+          icon={Edit3}
+          label="Edit schedule"
+          variant="default"
+          disabled={isSaving || isDeleting || !isAdminControlAllowed}
+          onClick={() => onEdit(schedule)}
+          tooltipSide="top"
+        />
+
+        <button
+          type="button"
+          disabled={isSaving || isDeleting || !isAdminControlAllowed}
+          onClick={() => onDelete(schedule)}
+          className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Delete schedule"
+          title="Delete schedule"
+        >
+          {isDeleting ? (
+            <Spinner size="xs" color="light" />
+          ) : (
+            <Trash2 size={15} />
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      open={open}
+      title={`${title} Scheduler`}
+      onClose={onClose}
+      width="max-w-3xl"
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          <IconButton
+            icon={X}
+            label="Close"
+            variant="default"
+            disabled={saving}
+            onClick={onClose}
+            tooltipSide="top"
+          />
+        </div>
+      }
+    >
+      <div className="space-y-4 oa-table-font">
+        <div className="w-full bg-black">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
+              Scheduled
+            </p>
+
+            <StatusBadge status="active" label={`${schedules.length} Total`} />
+          </div>
+
+          {schedules.length === 0 ? (
+            <div className="-mx-4 flex items-center justify-center gap-2 border-y border-oa-border bg-black px-4 py-3 text-center text-[12px] text-oa-muted">
+              {saving ? <Spinner size="xs" color="light" /> : null}
+              <span>{saving ? "Loading schedules" : "No schedules added yet."}</span>
+            </div>
+          ) : (
+            <div
+              className={`-mx-4 w-[calc(100%+2rem)] border-y border-oa-border bg-black [&>div]:w-full [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent ${
+                schedules.length > 4
+                  ? "max-h-56 overflow-auto"
+                  : "overflow-visible"
+              }`}
+            >
+              <DataTable
+                columns={scheduleColumns}
+                rows={schedules}
+                loading={saving && schedules.length === 0}
+                loadingMessage="Loading schedules"
+                emptyMessage="No schedules added yet."
+                gridTemplateColumns={scheduleGridTemplateColumns}
+                minWidth="min-w-full"
+                getRowKey={(schedule) => schedule.schedule_id}
+                renderCell={renderScheduleCell}
+                renderActions={renderScheduleActions}
+              />
+            </div>
+          )}
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="flex items-center justify-between border-b border-oa-border pb-2">
+            <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
+              {formMode === "edit" ? "Edit Schedule" : "Add Schedule"}
+            </p>
+
+            {formMode === "edit" ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={onCancelEdit}
+                className="rounded border border-oa-border bg-black px-2.5 py-1.5 text-[11px] text-oa-muted transition hover:bg-oa-card hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel Edit
+              </button>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label className={oaFormTextStyles.label}>Schedule Time</label>
+
+              {is12HourFormat ? (
+                <div className="mt-1 grid grid-cols-[1fr_1fr_84px_28px] gap-2">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="12"
+                    value={scheduleTimeParts.hour12}
+                    onChange={(event) =>
+                      onTimePartChange("hour12", event.target.value)
+                    }
+                    placeholder="HH"
+                  />
+
+                  <Input
+                    type="number"
+                    min="0"
+                    max="59"
+                    value={scheduleTimeParts.minute}
+                    onChange={(event) =>
+                      onTimePartChange("minute", event.target.value)
+                    }
+                    placeholder="MM"
+                  />
+
+                  <Select
+                    value={scheduleTimeParts.period}
+                    onChange={(event) =>
+                      onTimePartChange("period", event.target.value)
+                    }
+                    options={timePeriodOptions}
+                    ariaLabel="AM or PM"
+                    minWidth="w-full"
+                  />
+
+                  <div className="relative">
+                    {formData.schedule_time ? (
+                      <ClearInputButton
+                        label="Clear schedule time"
+                        onClick={() => onClearField("schedule_time")}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="relative mt-1">
+                  <Input
+                    name="schedule_time"
+                    type="time"
+                    value={formData.schedule_time}
+                    onChange={onInputChange}
+                    className="pr-9"
+                  />
+
+                  {formData.schedule_time ? (
+                    <ClearInputButton
+                      label="Clear schedule time"
+                      onClick={() => onClearField("schedule_time")}
+                    />
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>Display Format</label>
+
+              <div className="mt-1">
+                <Select
+                  name="time_format"
+                  value={formData.time_format}
+                  onChange={onInputChange}
+                  options={timeFormatOptions}
+                  ariaLabel="Time format"
+                  minWidth="w-full"
+                />
+              </div>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 rounded border border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted">
+            <input
+              type="checkbox"
+              name="is_active"
+              checked={formData.is_active}
+              onChange={onInputChange}
+              className="h-4 w-4 accent-emerald-500"
+            />
+            Active schedule
+          </label>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <IconButton
+              icon={Check}
+              label={formMode === "edit" ? "Update schedule" : "Save schedule"}
+              variant="default"
+              disabled={saving || !canSave}
+              onClick={onSave}
+              tooltipSide="top"
+            />
+          </div>
+
+          <button type="submit" className="hidden" aria-hidden="true">
+            Submit schedule
+          </button>
+        </form>
+      </div>
+    </Modal>
   );
 }
 
@@ -665,11 +1081,11 @@ function DbPreviewContent({
             minWidth="w-36"
           />
 
-          <Tooltip text="Search preview" side="top">
+          <Tooltip text="Search instruments" side="top">
             <button
               type="submit"
               className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
-              aria-label="Search preview"
+              aria-label="Search instruments"
             >
               <Search size={14} />
             </button>
@@ -725,9 +1141,7 @@ function DbPreviewContent({
         />
       </div>
 
-      <div
-        className={`flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 md:flex-row md:items-center md:justify-between ${oaTableStyles.mutedText}`}
-      >
+      <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
         <span>
           Records: {formatNumber(previewData.total_records)} | Page{" "}
           {previewData.page} of {previewData.total_pages}
@@ -797,7 +1211,9 @@ function DataCollection() {
   const [activeView, setActiveView] = useState("monitor");
   const [summary, setSummary] = useState(emptySummary);
   const [runs, setRuns] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [schedulerLoading, setSchedulerLoading] = useState(false);
   const [runningJob, setRunningJob] = useState(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(false);
@@ -806,6 +1222,13 @@ function DataCollection() {
 
   const [monitorSearch, setMonitorSearch] = useState("");
   const [appliedMonitorSearch, setAppliedMonitorSearch] = useState("");
+
+  const [selectedScheduleJob, setSelectedScheduleJob] = useState(null);
+  const [scheduleFormMode, setScheduleFormMode] = useState("add");
+  const [scheduleFormData, setScheduleFormData] = useState(emptyScheduleForm);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [savingScheduleId, setSavingScheduleId] = useState("");
+  const [deletingScheduleId, setDeletingScheduleId] = useState("");
 
   const [previewSearch, setPreviewSearch] = useState("");
   const [appliedPreviewSearch, setAppliedPreviewSearch] = useState("");
@@ -826,9 +1249,7 @@ function DataCollection() {
 
   const previewType = getPreviewTypeFromView(activeView);
   const previewLabel =
-    previewType === "expired"
-      ? "Expired Instruments Preview"
-      : "Current Instruments Preview";
+    previewType === "expired" ? "Expired Instruments" : "Current Instruments";
 
   const hasActiveJob = Boolean(runningJob || summary.active_job);
   const isCancelRequested =
@@ -882,11 +1303,24 @@ function DataCollection() {
     ]);
   }, [runs]);
 
+  const selectedSchedules = useMemo(() => {
+    if (!selectedScheduleJob) {
+      return [];
+    }
+
+    return schedules.filter(
+      (schedule) => schedule.job_type === selectedScheduleJob
+    );
+  }, [schedules, selectedScheduleJob]);
+
+  const selectedScheduleTitle = getSyncTypeLabel(selectedScheduleJob);
+
   const dumpJobRows = useMemo(() => {
     return [
       {
         id: "current",
         title: "Current Instruments",
+        scheduleJobType: "current_instruments",
         description:
           "Downloads Upstox BOD complete and suspended instrument files.",
         records: summary.total_current_instruments,
@@ -905,6 +1339,7 @@ function DataCollection() {
       {
         id: "expired",
         title: "Expired Instruments",
+        scheduleJobType: "expired_instruments",
         description:
           "Pulls expired options and futures using saved Upstox token.",
         records: summary.total_expired_instruments,
@@ -979,11 +1414,29 @@ function DataCollection() {
     } catch (error) {
       setPreviewData(emptyPreviewData);
       showToast(
-        error.response?.data?.detail || "Unable to load DB preview.",
+        error.response?.data?.detail || "Unable to load instruments.",
         "error"
       );
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  async function loadSchedules(showRefreshToast = false) {
+    setSchedulerLoading(true);
+
+    try {
+      const response = await getUpstoxDataCollectionSchedules();
+      setSchedules(response.data.data || response.data || []);
+
+      if (showRefreshToast) {
+        showToast("Schedules refreshed successfully.", "success");
+      }
+    } catch (error) {
+      setSchedules([]);
+      showToast(getApiErrorMessage(error, "Unable to load schedules."), "error");
+    } finally {
+      setSchedulerLoading(false);
     }
   }
 
@@ -1206,6 +1659,182 @@ function DataCollection() {
     }
   }
 
+  async function openSchedulePopup(jobType) {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to manage schedules.", "error");
+      return;
+    }
+
+    setSelectedScheduleJob(jobType);
+    setScheduleFormMode("add");
+    setScheduleFormData({
+      ...emptyScheduleForm,
+      job_type: jobType
+    });
+
+    await loadSchedules(false);
+  }
+
+  function closeSchedulePopup() {
+    if (savingSchedule) {
+      return;
+    }
+
+    setSelectedScheduleJob(null);
+    setScheduleFormMode("add");
+    setScheduleFormData(emptyScheduleForm);
+  }
+
+  function handleScheduleFormChange(event) {
+    const { name, value, type, checked } = event.target;
+
+    setScheduleFormData((previous) => ({
+      ...previous,
+      [name]: type === "checkbox" ? checked : value
+    }));
+  }
+
+  function handleScheduleTimePartChange(partName, partValue) {
+    setScheduleFormData((previous) => {
+      const currentParts = getScheduleTimeParts(previous.schedule_time);
+      const nextParts = {
+        ...currentParts,
+        [partName]: partValue
+      };
+
+      return {
+        ...previous,
+        schedule_time: buildScheduleTimeFrom12Hour(
+          nextParts.hour12,
+          nextParts.minute,
+          nextParts.period
+        )
+      };
+    });
+  }
+
+  function handleClearScheduleField(fieldName) {
+    setScheduleFormData((previous) => ({
+      ...previous,
+      [fieldName]: ""
+    }));
+  }
+
+  function handleEditSchedule(schedule) {
+    setScheduleFormMode("edit");
+    setScheduleFormData({
+      schedule_id: schedule.schedule_id,
+      job_type: schedule.job_type || selectedScheduleJob,
+      schedule_time: schedule.schedule_time || "",
+      time_format: schedule.time_format || "24",
+      is_active: Boolean(schedule.is_active)
+    });
+  }
+
+  function handleCancelScheduleEdit() {
+    setScheduleFormMode("add");
+    setScheduleFormData({
+      ...emptyScheduleForm,
+      job_type: selectedScheduleJob
+    });
+  }
+
+  async function handleSaveSchedule() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to save schedules.", "error");
+      return;
+    }
+
+    if (!scheduleFormData.schedule_time) {
+      showToast("Schedule time is required.", "warning");
+      return;
+    }
+
+    setSavingSchedule(true);
+
+    const payload = {
+      job_type: scheduleFormData.job_type,
+      schedule_time: scheduleFormData.schedule_time,
+      time_format: scheduleFormData.time_format,
+      is_active: Boolean(scheduleFormData.is_active)
+    };
+
+    try {
+      if (scheduleFormMode === "edit") {
+        await updateUpstoxDataCollectionSchedule(
+          scheduleFormData.schedule_id,
+          payload
+        );
+        showToast("Schedule updated successfully.", "success");
+      } else {
+        await createUpstoxDataCollectionSchedule(payload);
+        showToast("Schedule created successfully.", "success");
+      }
+
+      await loadSchedules(false);
+      setScheduleFormMode("add");
+      setScheduleFormData({
+        ...emptyScheduleForm,
+        job_type: selectedScheduleJob
+      });
+    } catch (error) {
+      showToast(getApiErrorMessage(error, "Unable to save schedule."), "error");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function handleToggleSchedule(schedule) {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to update schedules.", "error");
+      return;
+    }
+
+    setSavingScheduleId(schedule.schedule_id);
+
+    try {
+      const response = await toggleUpstoxDataCollectionSchedule(
+        schedule.schedule_id
+      );
+
+      showToast(
+        response.data?.message || "Schedule status updated successfully.",
+        "success"
+      );
+      await loadSchedules(false);
+    } catch (error) {
+      showToast(
+        getApiErrorMessage(error, "Unable to update schedule status."),
+        "error"
+      );
+    } finally {
+      setSavingScheduleId("");
+    }
+  }
+
+  async function handleDeleteSchedule(schedule) {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to delete schedules.", "error");
+      return;
+    }
+
+    setDeletingScheduleId(schedule.schedule_id);
+
+    try {
+      await deleteUpstoxDataCollectionSchedule(schedule.schedule_id);
+      showToast("Schedule deleted successfully.", "success");
+      await loadSchedules(false);
+
+      if (scheduleFormData.schedule_id === schedule.schedule_id) {
+        handleCancelScheduleEdit();
+      }
+    } catch (error) {
+      showToast(getApiErrorMessage(error, "Unable to delete schedule."), "error");
+    } finally {
+      setDeletingScheduleId("");
+    }
+  }
+
   function handleMonitorSearchSubmit(event) {
     event.preventDefault();
     setAppliedMonitorSearch(monitorSearch.trim());
@@ -1269,7 +1898,7 @@ function DataCollection() {
     if (column.key === "time") {
       return (
         <span className="truncate oa-code-font text-white">
-          {formatDuration(row.duration)}
+          {formatDuration(row.duration || elapsedSeconds)}
         </span>
       );
     }
@@ -1291,12 +1920,14 @@ function DataCollection() {
         cancelling={cancelling}
         onRun={row.onRun}
         onCancel={handleCancelSync}
+        onSchedule={() => openSchedulePopup(row.scheduleJobType)}
       />
     );
   }
 
   useEffect(() => {
     loadData(false);
+    loadSchedules(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1363,8 +1994,8 @@ function DataCollection() {
                   Admin access required
                 </p>
                 <p className={`mt-1 ${oaFormTextStyles.helper}`}>
-                  Only admin and super admin users can run Upstox data dump
-                  jobs.
+                  Only admin and super admin users can run Upstox data dump jobs
+                  and manage schedules.
                 </p>
               </div>
             </div>
@@ -1390,7 +2021,9 @@ function DataCollection() {
                   renderCell={renderDumpJobCell}
                   renderActions={renderDumpJobActions}
                 />
-              ) : (
+              ) : null}
+
+              {isPreviewView(activeView) ? (
                 <DbPreviewContent
                   previewLabel={previewLabel}
                   searchValue={previewSearch}
@@ -1430,10 +2063,31 @@ function DataCollection() {
                   }
                   onPageChange={(page) => setPreviewPage(page)}
                 />
-              )}
+              ) : null}
             </DataCollectionShell>
           </div>
         </div>
+
+        <ScheduleManagerModal
+          open={Boolean(selectedScheduleJob)}
+          title={selectedScheduleTitle}
+          schedules={selectedSchedules}
+          formMode={scheduleFormMode}
+          formData={scheduleFormData}
+          saving={savingSchedule || schedulerLoading}
+          savingScheduleId={savingScheduleId}
+          deletingScheduleId={deletingScheduleId}
+          isAdminControlAllowed={isAdminControlAllowed}
+          onClose={closeSchedulePopup}
+          onSave={handleSaveSchedule}
+          onInputChange={handleScheduleFormChange}
+          onTimePartChange={handleScheduleTimePartChange}
+          onClearField={handleClearScheduleField}
+          onEdit={handleEditSchedule}
+          onCancelEdit={handleCancelScheduleEdit}
+          onToggle={handleToggleSchedule}
+          onDelete={handleDeleteSchedule}
+        />
       </section>
     </MainLayout>
   );

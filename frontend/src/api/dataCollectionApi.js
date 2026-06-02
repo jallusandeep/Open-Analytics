@@ -39,3 +39,28 @@ export function syncUpstoxExpiredInstruments(config = {}) {
     config
   );
 }
+
+export function getUpstoxDataCollectionSchedules() {
+  return axiosClient.get("/data-collection/upstox/schedules");
+}
+
+export function createUpstoxDataCollectionSchedule(payload) {
+  return axiosClient.post("/data-collection/upstox/schedules", payload);
+}
+
+export function updateUpstoxDataCollectionSchedule(scheduleId, payload) {
+  return axiosClient.put(
+    `/data-collection/upstox/schedules/${scheduleId}`,
+    payload
+  );
+}
+
+export function toggleUpstoxDataCollectionSchedule(scheduleId) {
+  return axiosClient.post(
+    `/data-collection/upstox/schedules/${scheduleId}/toggle`
+  );
+}
+
+export function deleteUpstoxDataCollectionSchedule(scheduleId) {
+  return axiosClient.delete(`/data-collection/upstox/schedules/${scheduleId}`);
+}

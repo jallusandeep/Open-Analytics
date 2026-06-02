@@ -562,6 +562,71 @@ def init_database():
         """)
 
         # -----------------------------
+        # Upstox data collection schedules
+        # Multiple IST schedules for current and expired instruments.
+        # schedule_time is stored in 24-hour HH:MM format.
+        # schedule_label is used for 12-hour display like 09:30 AM.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_data_collection_schedules (
+                schedule_id VARCHAR PRIMARY KEY,
+                job_type VARCHAR NOT NULL,
+                schedule_time VARCHAR NOT NULL,
+                schedule_label VARCHAR,
+                time_format VARCHAR DEFAULT '24',
+                timezone VARCHAR DEFAULT 'Asia/Kolkata',
+                is_active BOOLEAN DEFAULT TRUE,
+                last_run_date VARCHAR,
+                last_run_at TIMESTAMP,
+                next_run_at TIMESTAMP,
+                record_status VARCHAR DEFAULT 'S',
+                version_no INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN job_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_time VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_label VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN time_format VARCHAR DEFAULT '24';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN timezone VARCHAR DEFAULT 'Asia/Kolkata';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN is_active BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN last_run_date VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN last_run_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN next_run_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN version_no INTEGER DEFAULT 1;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN created_by VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN updated_by VARCHAR;")
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET timezone = 'Asia/Kolkata'
+            WHERE timezone IS NULL OR TRIM(timezone) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET time_format = '24'
+            WHERE time_format IS NULL OR TRIM(time_format) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET record_status = 'S'
+            WHERE record_status IS NULL;
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET version_no = 1
+            WHERE version_no IS NULL;
+        """)
+
+        # -----------------------------
         # Stocks
         # -----------------------------
         conn.execute("""

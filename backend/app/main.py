@@ -4,6 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_database, get_connection
 from app.version import APP_VERSION, SCHEMA_VERSION
+from app.services.data_collection_scheduler_service import (
+    start_data_collection_scheduler,
+    stop_data_collection_scheduler
+)
 
 from app.api.v1.auth_routes import router as auth_router
 from app.api.v1.user_routes import router as user_router
@@ -41,6 +45,12 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
     init_database()
+    start_data_collection_scheduler()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    stop_data_collection_scheduler()
 
 
 app.include_router(auth_router, prefix="/api/v1")

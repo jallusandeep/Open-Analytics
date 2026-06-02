@@ -11,6 +11,13 @@ from app.services.data_collection_service import (
     sync_upstox_current_instruments_service,
     sync_upstox_expired_instruments_service
 )
+from app.services.data_collection_scheduler_service import (
+    create_data_collection_schedule_service,
+    delete_data_collection_schedule_service,
+    get_data_collection_schedules_service,
+    toggle_data_collection_schedule_service,
+    update_data_collection_schedule_service
+)
 
 
 router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
@@ -38,7 +45,10 @@ def get_upstox_data_collection_runs(
 
 @router.get("/upstox/instruments")
 def get_upstox_instruments_preview(
-    search: str = Query("", description="Search instrument key, symbol, name, segment, exchange, type, or underlying."),
+    search: str = Query(
+        "",
+        description="Search instrument key, symbol, name, segment, exchange, type, or underlying."
+    ),
     source_type: str = Query("all", description="Filter by source type."),
     segment: str = Query("all", description="Filter by segment."),
     instrument_type: str = Query("all", description="Filter by instrument type."),
@@ -61,7 +71,10 @@ def get_upstox_instruments_preview(
 
 @router.get("/upstox/expired-instruments")
 def get_upstox_expired_instruments_preview(
-    search: str = Query("", description="Search instrument key, symbol, name, segment, exchange, type, or underlying."),
+    search: str = Query(
+        "",
+        description="Search instrument key, symbol, name, segment, exchange, type, or underlying."
+    ),
     source_type: str = Query("all", description="Filter by source type."),
     segment: str = Query("all", description="Filter by segment."),
     instrument_type: str = Query("all", description="Filter by instrument type."),
@@ -108,3 +121,50 @@ def sync_upstox_expired_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return sync_upstox_expired_instruments_service(current_user)
+
+
+@router.get("/upstox/schedules")
+def get_upstox_data_collection_schedules(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_data_collection_schedules_service()
+    }
+
+
+@router.post("/upstox/schedules")
+def create_upstox_data_collection_schedule(
+    payload: dict,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return create_data_collection_schedule_service(payload, current_user)
+
+
+@router.put("/upstox/schedules/{schedule_id}")
+def update_upstox_data_collection_schedule(
+    schedule_id: str,
+    payload: dict,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return update_data_collection_schedule_service(
+        schedule_id=schedule_id,
+        payload=payload,
+        current_user=current_user
+    )
+
+
+@router.post("/upstox/schedules/{schedule_id}/toggle")
+def toggle_upstox_data_collection_schedule(
+    schedule_id: str,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return toggle_data_collection_schedule_service(schedule_id, current_user)
+
+
+@router.delete("/upstox/schedules/{schedule_id}")
+def delete_upstox_data_collection_schedule(
+    schedule_id: str,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return delete_data_collection_schedule_service(schedule_id, current_user)
