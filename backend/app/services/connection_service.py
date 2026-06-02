@@ -625,15 +625,9 @@ def save_upstox_connection_service(request, current_user):
 
         conn.commit()
 
-        if profile_label:
-            return {
-                "status": "success",
-                "message": f"Upstox token verified and saved successfully for {profile_label}."
-            }
-
         return {
             "status": "success",
-            "message": "Upstox token verified and saved successfully."
+            "message": "Upstox connected successfully."
         }
 
     except HTTPException:
@@ -891,18 +885,9 @@ def test_upstox_connection_service(current_user):
             connection_status="connected"
         )
 
-        if profile_label:
-            return {
-                "status": "success",
-                "message": (
-                    f"Upstox token verified successfully for {profile_label}. "
-                    "Expired Instruments API permission is available."
-                )
-            }
-
         return {
             "status": "success",
-            "message": "Upstox token verified successfully. Expired Instruments API permission is available."
+            "message": "Upstox connected successfully."
         }
 
     except HTTPException:
