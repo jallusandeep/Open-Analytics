@@ -2,7 +2,7 @@
 
 ## Project
 
-Open Analytics
+Open Analyticss
 
 Project path:
 
