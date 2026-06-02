@@ -987,54 +987,9 @@ function DataCollection() {
     }
   }
 
-  async function handleBulkSync() {
-    if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
-      return;
-    }
-
-    setRunningJob("bulk");
-    setCancelRequested(false);
-    setElapsedSeconds(0);
-    activeSyncControllerRef.current = new AbortController();
-
+  async function refreshAfterSync() {
     try {
-      const response = await syncUpstoxAllInstruments({
-        signal: activeSyncControllerRef.current.signal
-      });
-
-      if (response.data?.status === "cancelled") {
-        showToast(
-          response.data.message || "All instrument dumps cancelled.",
-          "warning"
-        );
-      } else {
-        showToast("All instrument dumps completed.", "success");
-      }
-
-      await refreshAfterSync({ refreshPreview: isPreviewView(activeView) });
-    } catch (error) {
-      if (isRequestCancelled(error)) {
-        return;
-      }
-
-      showToast(
-        error.response?.data?.detail || "Unable to run all instrument dumps.",
-        "error"
-      );
-    } finally {
-      setRunningJob(null);
-      activeSyncControllerRef.current = null;
-    }
-  }
-
-  async function refreshAfterSync({ refreshPreview = false } = {}) {
-    try {
-      await loadData(false);
-
-      if (refreshPreview) {
-        await loadPreview(1);
-      }
+      await loadData(false, { showLoading: false });
     } catch (error) {
       showToast(
         error.response?.data?.detail ||
@@ -1044,8 +999,12 @@ function DataCollection() {
     }
   }
 
-  async function loadData(showRefreshToast = false) {
-    setLoading(true);
+  async function loadData(showRefreshToast = false, options = {}) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setLoading(true);
+    }
 
     try {
       const [summaryResponse, runsResponse] = await Promise.all([
@@ -1076,19 +1035,62 @@ function DataCollection() {
         showToast("Data collection status refreshed.", "success");
       }
     } catch (error) {
-      setSummary(emptySummary);
-      setRuns([]);
-      setRunningJob(null);
-      setElapsedSeconds(0);
+      if (showLoading) {
+        setSummary(emptySummary);
+        setRuns([]);
+        setRunningJob(null);
+        setElapsedSeconds(0);
+      }
+
       showToast(
-        getApiErrorMessage(
-          error,
-          "Unable to load data collection status."
-        ),
+        getApiErrorMessage(error, "Unable to load data collection status."),
         "warning"
       );
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function handleBulkSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    setRunningJob("bulk");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+
+    try {
+      const response = await syncUpstoxAllInstruments({
+        signal: activeSyncControllerRef.current.signal
+      });
+
+      if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "All instrument dumps cancelled.",
+          "warning"
+        );
+      } else {
+        showToast("All instrument dumps completed.", "success");
+      }
+
+      await refreshAfterSync();
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        error.response?.data?.detail || "Unable to run all instrument dumps.",
+        "error"
+      );
+    } finally {
+      setRunningJob(null);
+      activeSyncControllerRef.current = null;
     }
   }
 
@@ -1109,7 +1111,7 @@ function DataCollection() {
         response.data?.message || "Cancel requested for data collection.";
 
       showToast(message, "warning");
-      await loadData(false);
+      await loadData(false, { showLoading: false });
     } catch (error) {
       showToast(
         error.response?.data?.detail || "Unable to cancel data collection.",
@@ -1145,9 +1147,7 @@ function DataCollection() {
         showToast("Current instruments dump completed.", "success");
       }
 
-      await refreshAfterSync({
-        refreshPreview: activeView === "current_preview"
-      });
+      await refreshAfterSync();
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -1189,9 +1189,7 @@ function DataCollection() {
         showToast("Expired instruments dump completed.", "success");
       }
 
-      await refreshAfterSync({
-        refreshPreview: activeView === "expired_preview"
-      });
+      await refreshAfterSync();
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -1343,7 +1341,7 @@ function DataCollection() {
     }
 
     const pollId = window.setInterval(() => {
-      loadData(false);
+      loadData(false, { showLoading: false });
     }, 5000);
 
     return () => window.clearInterval(pollId);
