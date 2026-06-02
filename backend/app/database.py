@@ -528,6 +528,43 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
         # -----------------------------
+        # Upstox equity instruments
+        # Daily NSE_EQ equity collection table.
+        # instrument_key is the Upstox API key used for all future API calls.
+        # downloaded_at is refreshed only when the daily equity dump runs.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_equity_instruments (
+                instrument_key VARCHAR PRIMARY KEY,
+                trading_symbol VARCHAR,
+                name VARCHAR,
+                isin VARCHAR,
+                exchange VARCHAR DEFAULT 'NSE',
+                segment VARCHAR DEFAULT 'NSE_EQ',
+                exchange_token VARCHAR,
+                tick_size DOUBLE,
+                lot_size BIGINT,
+                freeze_quantity DOUBLE,
+                short_name VARCHAR,
+                security_type VARCHAR,
+                downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN exchange VARCHAR DEFAULT 'NSE';")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN segment VARCHAR DEFAULT 'NSE_EQ';")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN exchange_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN tick_size DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN lot_size BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN freeze_quantity DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN short_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN security_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
         # Upstox sync runs
         # -----------------------------
         conn.execute("""
@@ -577,7 +614,7 @@ def init_database():
 
         # -----------------------------
         # Upstox data collection schedules
-        # Multiple IST schedules for current and expired instruments.
+        # Multiple IST schedules for current, expired, and equity instruments.
         # schedule_time is stored in 24-hour HH:MM format.
         # schedule_label is used for 12-hour display like 09:30 AM.
         # -----------------------------

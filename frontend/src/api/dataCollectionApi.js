@@ -20,6 +20,12 @@ export function getUpstoxExpiredInstrumentsPreview(params = {}) {
   });
 }
 
+export function getUpstoxEquityInstrumentsPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/equity-instruments", {
+    params
+  });
+}
+
 export function syncUpstoxCurrentInstruments(config = {}) {
   return axiosClient.post("/data-collection/upstox/sync-current", null, config);
 }
@@ -38,6 +44,10 @@ export function syncUpstoxExpiredInstruments(config = {}) {
     null,
     config
   );
+}
+
+export function syncUpstoxEquityInstruments(config = {}) {
+  return axiosClient.post("/data-collection/upstox/sync-equity", null, config);
 }
 
 export function getUpstoxDataCollectionSchedules() {

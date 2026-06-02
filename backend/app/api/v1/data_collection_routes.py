@@ -4,11 +4,13 @@ from app.dependencies import require_admin_or_super_admin
 from app.services.data_collection_service import (
     get_data_collection_runs_service,
     get_data_collection_summary_service,
+    get_upstox_equity_instruments_preview_service,
     get_upstox_expired_instruments_preview_service,
     get_upstox_instruments_preview_service,
     request_cancel_active_sync_runs_service,
     sync_upstox_all_instruments_service,
     sync_upstox_current_instruments_service,
+    sync_upstox_equity_instruments_service,
     sync_upstox_expired_instruments_service
 )
 from app.services.data_collection_scheduler_service import (
@@ -95,6 +97,28 @@ def get_upstox_expired_instruments_preview(
     }
 
 
+@router.get("/upstox/equity-instruments")
+def get_upstox_equity_instruments_preview(
+    search: str = Query(
+        "",
+        description="Search equity instrument key, symbol, name, ISIN, segment, exchange, or security type."
+    ),
+    security_type: str = Query("all", description="Filter by security type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=200),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_equity_instruments_preview_service(
+            search=search,
+            security_type=security_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
 @router.post("/upstox/sync-current")
 def sync_upstox_current_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
@@ -121,6 +145,13 @@ def sync_upstox_expired_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return sync_upstox_expired_instruments_service(current_user)
+
+
+@router.post("/upstox/sync-equity")
+def sync_upstox_equity_instruments(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return sync_upstox_equity_instruments_service(current_user)
 
 
 @router.get("/upstox/schedules")

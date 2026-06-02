@@ -38,10 +38,12 @@ import {
   getUpstoxDataCollectionRuns,
   getUpstoxDataCollectionSchedules,
   getUpstoxDataCollectionSummary,
+  getUpstoxEquityInstrumentsPreview,
   getUpstoxExpiredInstrumentsPreview,
   getUpstoxInstrumentsPreview,
   syncUpstoxAllInstruments,
   syncUpstoxCurrentInstruments,
+  syncUpstoxEquityInstruments,
   syncUpstoxExpiredInstruments,
   toggleUpstoxDataCollectionSchedule,
   updateUpstoxDataCollectionSchedule
@@ -51,6 +53,7 @@ const emptySummary = {
   connection_status: "not_connected",
   total_current_instruments: 0,
   total_expired_instruments: 0,
+  total_equity_instruments: 0,
   total_sync_runs: 0,
   last_sync_at: "",
   last_duration_seconds: null,
@@ -58,6 +61,8 @@ const emptySummary = {
   current_duration_seconds: null,
   expired_last_sync_at: "",
   expired_duration_seconds: null,
+  equity_last_sync_at: "",
+  equity_duration_seconds: null,
   active_job: null,
   active_job_status: null,
   active_job_started_at: null
@@ -91,6 +96,10 @@ const viewOptions = [
   {
     key: "expired_preview",
     label: "Expired Instruments"
+  },
+  {
+    key: "equity_preview",
+    label: "Equity"
   }
 ];
 
@@ -139,6 +148,12 @@ const instrumentTypeOptions = [
   { value: "INDEX", label: "INDEX" }
 ];
 
+const securityTypeOptions = [
+  { value: "all", label: "All Security Types" },
+  { value: "NORMAL", label: "NORMAL" },
+  { value: "BE", label: "BE" }
+];
+
 const dumpJobColumns = [
   { key: "source", label: "Source", filterable: false },
   { key: "saved", label: "Saved", filterable: false },
@@ -174,6 +189,25 @@ const previewColumns = [
 
 const previewGridTemplateColumns =
   "280px 300px 300px 150px 150px 130px 150px 140px 190px 230px";
+
+const equityPreviewColumns = [
+  { key: "instrument_key", label: "Instrument Key", filterable: false },
+  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
+  { key: "name", label: "Name", filterable: false },
+  { key: "isin", label: "ISIN", filterable: false },
+  { key: "exchange", label: "Exchange", filterable: false },
+  { key: "segment", label: "Segment", filterable: false },
+  { key: "exchange_token", label: "Exchange Token", filterable: false },
+  { key: "tick_size", label: "Tick Size", filterable: false },
+  { key: "lot_size", label: "Lot Size", filterable: false },
+  { key: "freeze_quantity", label: "Freeze Qty", filterable: false },
+  { key: "short_name", label: "Short Name", filterable: false },
+  { key: "security_type", label: "Security Type", filterable: false },
+  { key: "downloaded_at", label: "Downloaded At", filterable: false }
+];
+
+const equityPreviewGridTemplateColumns =
+  "280px 220px 320px 170px 130px 130px 160px 120px 120px 150px 180px 150px 230px";
 
 function getStoredCurrentUser() {
   try {
@@ -283,10 +317,12 @@ function getSyncTypeLabel(value) {
   const labels = {
     upstox_current_instruments: "Current Instruments",
     upstox_expired_instruments: "Expired Instruments",
+    upstox_equity_instruments: "Equity",
     upstox_all_instruments: "All Instruments",
     upstox_instruments: "All Instruments",
     current_instruments: "Current Instruments",
     expired_instruments: "Expired Instruments",
+    equity_instruments: "Equity",
     bod_complete: "BOD Complete",
     suspended: "Suspended",
     expired_option: "Expired Options",
@@ -337,11 +373,19 @@ function getPreviewTypeFromView(activeView) {
     return "expired";
   }
 
+  if (activeView === "equity_preview") {
+    return "equity";
+  }
+
   return "current";
 }
 
 function isPreviewView(activeView) {
-  return activeView === "current_preview" || activeView === "expired_preview";
+  return (
+    activeView === "current_preview" ||
+    activeView === "expired_preview" ||
+    activeView === "equity_preview"
+  );
 }
 
 function getPaginationItems(currentPage, totalPages) {
@@ -958,6 +1002,7 @@ function MonitorContent({
 }
 
 function DbPreviewContent({
+  previewType,
   previewLabel,
   searchValue,
   onSearchChange,
@@ -969,6 +1014,8 @@ function DbPreviewContent({
   onSegmentChange,
   instrumentType,
   onInstrumentTypeChange,
+  securityType,
+  onSecurityTypeChange,
   previewData,
   loading,
   canRunAll,
@@ -979,7 +1026,62 @@ function DbPreviewContent({
   onNextPage,
   onPageChange
 }) {
+  const isEquityPreview = previewType === "equity";
+  const activeColumns = isEquityPreview ? equityPreviewColumns : previewColumns;
+  const activeGridTemplateColumns = isEquityPreview
+    ? equityPreviewGridTemplateColumns
+    : previewGridTemplateColumns;
+  const activeMinWidth = isEquityPreview ? "min-w-[2440px]" : "min-w-[2020px]";
+
   function renderPreviewCell(row, column) {
+    if (isEquityPreview) {
+      if (column.key === "downloaded_at") {
+        return (
+          <span className="truncate oa-code-font text-oa-muted">
+            {formatDateTime(row.downloaded_at)}
+          </span>
+        );
+      }
+
+      if (column.key === "security_type") {
+        return (
+          <span
+            className={`${oaPillStyles.base} ${
+              row.security_type === "BE"
+                ? "border-amber-500/40 bg-amber-950/40 text-amber-200"
+                : "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
+            }`}
+          >
+            {row.security_type || "--"}
+          </span>
+        );
+      }
+
+      if (column.key === "trading_symbol") {
+        return (
+          <span className="truncate oa-code-font text-cyan-200">
+            {row.trading_symbol || "--"}
+          </span>
+        );
+      }
+
+      if (column.key === "name") {
+        return <span className="truncate text-white">{row.name || "--"}</span>;
+      }
+
+      const mutedKeys = ["exchange", "segment", "isin", "short_name"];
+
+      return (
+        <span
+          className={`truncate oa-code-font ${
+            mutedKeys.includes(column.key) ? "text-oa-muted" : "text-white"
+          }`}
+        >
+          {row[column.key] ?? "--"}
+        </span>
+      );
+    }
+
     if (column.key === "source_type") {
       return (
         <span
@@ -1058,29 +1160,41 @@ function DbPreviewContent({
             ) : null}
           </div>
 
-          <Select
-            value={sourceType}
-            onChange={(event) => onSourceTypeChange(event.target.value)}
-            options={sourceTypeOptions}
-            ariaLabel="Source type"
-            minWidth="w-40"
-          />
+          {isEquityPreview ? (
+            <Select
+              value={securityType}
+              onChange={(event) => onSecurityTypeChange(event.target.value)}
+              options={securityTypeOptions}
+              ariaLabel="Security type"
+              minWidth="w-44"
+            />
+          ) : (
+            <>
+              <Select
+                value={sourceType}
+                onChange={(event) => onSourceTypeChange(event.target.value)}
+                options={sourceTypeOptions}
+                ariaLabel="Source type"
+                minWidth="w-40"
+              />
 
-          <Select
-            value={segment}
-            onChange={(event) => onSegmentChange(event.target.value)}
-            options={segmentOptions}
-            ariaLabel="Segment"
-            minWidth="w-36"
-          />
+              <Select
+                value={segment}
+                onChange={(event) => onSegmentChange(event.target.value)}
+                options={segmentOptions}
+                ariaLabel="Segment"
+                minWidth="w-36"
+              />
 
-          <Select
-            value={instrumentType}
-            onChange={(event) => onInstrumentTypeChange(event.target.value)}
-            options={instrumentTypeOptions}
-            ariaLabel="Instrument type"
-            minWidth="w-36"
-          />
+              <Select
+                value={instrumentType}
+                onChange={(event) => onInstrumentTypeChange(event.target.value)}
+                options={instrumentTypeOptions}
+                ariaLabel="Instrument type"
+                minWidth="w-36"
+              />
+            </>
+          )}
 
           <Tooltip text="Search instruments" side="top">
             <button
@@ -1130,13 +1244,13 @@ function DbPreviewContent({
         )}
 
         <DataTable
-          columns={previewColumns}
+          columns={activeColumns}
           rows={previewData.rows}
           loading={false}
           loadingMessage={`Loading ${previewLabel.toLowerCase()}`}
           emptyMessage="No dumped records found."
-          gridTemplateColumns={previewGridTemplateColumns}
-          minWidth="min-w-[2020px]"
+          gridTemplateColumns={activeGridTemplateColumns}
+          minWidth={activeMinWidth}
           getRowKey={(row, index) => `${row.instrument_key || index}-${index}`}
           renderCell={renderPreviewCell}
         />
@@ -1236,6 +1350,7 @@ function DataCollection() {
   const [previewSourceType, setPreviewSourceType] = useState("all");
   const [previewSegment, setPreviewSegment] = useState("all");
   const [previewInstrumentType, setPreviewInstrumentType] = useState("all");
+  const [previewSecurityType, setPreviewSecurityType] = useState("all");
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPageSize] = useState(50);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -1250,7 +1365,11 @@ function DataCollection() {
 
   const previewType = getPreviewTypeFromView(activeView);
   const previewLabel =
-    previewType === "expired" ? "Expired Instruments" : "Current Instruments";
+    previewType === "expired"
+      ? "Expired Instruments"
+      : previewType === "equity"
+        ? "Equity"
+        : "Current Instruments";
 
   const hasActiveJob = Boolean(runningJob || summary.active_job);
   const isCancelRequested =
@@ -1271,6 +1390,12 @@ function DataCollection() {
       isBulkJobRunning ||
       summary.active_job === "upstox_expired_instruments");
 
+  const isEquityJobRunning =
+    !isCancelRequested &&
+    (runningJob === "equity" ||
+      isBulkJobRunning ||
+      summary.active_job === "upstox_equity_instruments");
+
   const currentCancelRequested =
     isCancelRequested &&
     (runningJob === "current" ||
@@ -1283,6 +1408,13 @@ function DataCollection() {
     (runningJob === "expired" ||
       isBulkJobRunning ||
       summary.active_job === "upstox_expired_instruments" ||
+      summary.active_job === "upstox_all_instruments");
+
+  const equityCancelRequested =
+    isCancelRequested &&
+    (runningJob === "equity" ||
+      isBulkJobRunning ||
+      summary.active_job === "upstox_equity_instruments" ||
       summary.active_job === "upstox_all_instruments");
 
   const shouldShowRunAllButton = !hasActiveJob;
@@ -1302,6 +1434,10 @@ function DataCollection() {
       "expired_option",
       "expired_future"
     ]);
+  }, [runs]);
+
+  const equityLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_equity_instruments"]);
   }, [runs]);
 
   const selectedSchedules = useMemo(() => {
@@ -1359,16 +1495,40 @@ function DataCollection() {
         disabled: hasActiveJob && !isExpiredJobRunning,
         canCancel: isExpiredJobRunning && shouldShowCancelButton,
         onRun: handleExpiredSync
+      },
+      {
+        id: "equity",
+        title: "Equity",
+        scheduleJobType: "equity_instruments",
+        description:
+          "Collects NSE_EQ equity instruments once per day from current instruments.",
+        records: summary.total_equity_instruments,
+        lastSyncedAt: summary.equity_last_sync_at || summary.last_sync_at,
+        triggeredBy: equityLastRun?.triggered_by_name,
+        triggerSource: equityLastRun?.trigger_source,
+        duration: summary.equity_duration_seconds,
+        lastStatus: equityCancelRequested
+          ? "cancel_requested"
+          : isEquityJobRunning
+            ? "running"
+            : equityLastRun?.status,
+        loading: isEquityJobRunning,
+        disabled: hasActiveJob && !isEquityJobRunning,
+        canCancel: isEquityJobRunning && shouldShowCancelButton,
+        onRun: handleEquitySync
       }
     ];
   }, [
     summary,
     currentCancelRequested,
     expiredCancelRequested,
+    equityCancelRequested,
     isCurrentJobRunning,
     isExpiredJobRunning,
+    isEquityJobRunning,
     currentLastRun,
     expiredLastRun,
+    equityLastRun,
     hasActiveJob,
     shouldShowCancelButton
   ]);
@@ -1401,17 +1561,32 @@ function DataCollection() {
     try {
       const params = {
         search: appliedPreviewSearch,
-        source_type: previewSourceType,
-        segment: previewSegment,
-        instrument_type: previewInstrumentType,
         page: customPage,
         page_size: previewPageSize
       };
 
-      const response =
-        previewType === "expired"
-          ? await getUpstoxExpiredInstrumentsPreview(params)
-          : await getUpstoxInstrumentsPreview(params);
+      let response;
+
+      if (previewType === "expired") {
+        response = await getUpstoxExpiredInstrumentsPreview({
+          ...params,
+          source_type: previewSourceType,
+          segment: previewSegment,
+          instrument_type: previewInstrumentType
+        });
+      } else if (previewType === "equity") {
+        response = await getUpstoxEquityInstrumentsPreview({
+          ...params,
+          security_type: previewSecurityType
+        });
+      } else {
+        response = await getUpstoxInstrumentsPreview({
+          ...params,
+          source_type: previewSourceType,
+          segment: previewSegment,
+          instrument_type: previewInstrumentType
+        });
+      }
 
       const nextData = response.data.data || response.data || emptyPreviewData;
 
@@ -1665,6 +1840,52 @@ function DataCollection() {
     }
   }
 
+  async function handleEquitySync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    setRunningJob("equity");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+
+    try {
+      const response = await syncUpstoxEquityInstruments({
+        signal: activeSyncControllerRef.current.signal
+      });
+
+      if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "Equity instruments dump cancelled.",
+          "warning"
+        );
+      } else if (response.data?.skipped) {
+        showToast(
+          response.data.message || "Equity instruments already collected today.",
+          "success"
+        );
+      } else {
+        showToast("Equity instruments dump completed.", "success");
+      }
+
+      await refreshAfterSync();
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        error.response?.data?.detail || "Unable to run equity instruments dump.",
+        "error"
+      );
+    } finally {
+      setRunningJob(null);
+      activeSyncControllerRef.current = null;
+    }
+  }
+
   async function openSchedulePopup(jobType) {
     if (!isAdminControlAllowed) {
       showToast("Admin access required to manage schedules.", "error");
@@ -1872,6 +2093,7 @@ function DataCollection() {
       setPreviewSourceType("all");
       setPreviewSegment("all");
       setPreviewInstrumentType("all");
+      setPreviewSecurityType("all");
       setPreviewPage(1);
     }
   }
@@ -1905,11 +2127,7 @@ function DataCollection() {
       const triggeredBy =
         row.triggerSource === "system" ? "System" : row.triggeredBy || "Manual";
 
-      return (
-        <span className="truncate text-white">
-          {triggeredBy || "--"}
-        </span>
-      );
+      return <span className="truncate text-white">{triggeredBy || "--"}</span>;
     }
 
     if (column.key === "time") {
@@ -1961,6 +2179,7 @@ function DataCollection() {
     previewSourceType,
     previewSegment,
     previewInstrumentType,
+    previewSecurityType,
     previewPage
   ]);
 
@@ -2055,6 +2274,7 @@ function DataCollection() {
 
               {isPreviewView(activeView) ? (
                 <DbPreviewContent
+                  previewType={previewType}
                   previewLabel={previewLabel}
                   searchValue={previewSearch}
                   onSearchChange={setPreviewSearch}
@@ -2073,6 +2293,11 @@ function DataCollection() {
                   instrumentType={previewInstrumentType}
                   onInstrumentTypeChange={(value) => {
                     setPreviewInstrumentType(value);
+                    setPreviewPage(1);
+                  }}
+                  securityType={previewSecurityType}
+                  onSecurityTypeChange={(value) => {
+                    setPreviewSecurityType(value);
                     setPreviewPage(1);
                   }}
                   previewData={previewData}

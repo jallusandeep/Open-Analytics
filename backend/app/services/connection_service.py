@@ -1101,8 +1101,6 @@ def clear_telegram_webhook(bot_token: str):
 
 
 def get_telegram_updates(bot_token: str):
-    clear_telegram_webhook(bot_token)
-
     return telegram_api_request(
         bot_token=bot_token,
         method_name="getUpdates",
@@ -1371,16 +1369,17 @@ def start_my_telegram_connection_service(current_user):
 
         if existing:
             telegram_connection_id = existing[0]
-            link_token = existing[6] or str(uuid.uuid4())
+            link_token = str(uuid.uuid4())
 
             conn.execute("""
                 UPDATE user_telegram_connections
                 SET
+                    telegram_chat_id = NULL,
+                    telegram_username = NULL,
+                    telegram_first_name = NULL,
+                    telegram_last_name = NULL,
                     link_token = ?,
-                    connection_status = CASE
-                        WHEN telegram_chat_id IS NOT NULL AND telegram_chat_id <> '' THEN 'connected'
-                        ELSE 'pending'
-                    END,
+                    connection_status = 'pending',
                     record_status = 'S',
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = ?

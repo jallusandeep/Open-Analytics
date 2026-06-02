@@ -647,6 +647,117 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
     return int(total_rows or 0)
 
 
+def import_equity_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
+    check_sync_cancelled(conn, sync_id)
+
+    duckdb_path = normalize_duckdb_file_path(local_file)
+
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_equity")
+
+    print("Reading NSE_EQ equity instruments directly with DuckDB...")
+
+    conn.execute(
+        """
+        CREATE TEMP TABLE temp_upstox_equity AS
+        SELECT *
+        FROM read_json(
+            ?,
+            format = 'array',
+            maximum_object_size = 16777216,
+            columns = {
+                instrument_key: 'VARCHAR',
+                segment: 'VARCHAR',
+                name: 'VARCHAR',
+                exchange: 'VARCHAR',
+                isin: 'VARCHAR',
+                instrument_type: 'VARCHAR',
+                trading_symbol: 'VARCHAR',
+                short_name: 'VARCHAR',
+                exchange_token: 'VARCHAR',
+                lot_size: 'BIGINT',
+                freeze_quantity: 'DOUBLE',
+                tick_size: 'DOUBLE',
+                security_type: 'VARCHAR'
+            }
+        )
+        WHERE segment = 'NSE_EQ'
+          AND exchange = 'NSE'
+          AND instrument_key IS NOT NULL
+          AND TRIM(instrument_key) <> '';
+        """,
+        [duckdb_path]
+    )
+
+    check_sync_cancelled(conn, sync_id)
+
+    total_rows = conn.execute("""
+        SELECT COUNT(*)
+        FROM temp_upstox_equity;
+    """).fetchone()[0]
+
+    conn.execute("""
+        DELETE FROM upstox_equity_instruments;
+    """)
+
+    check_sync_cancelled(conn, sync_id)
+
+    conn.execute("""
+        INSERT INTO upstox_equity_instruments (
+            instrument_key,
+            trading_symbol,
+            name,
+            isin,
+            exchange,
+            segment,
+            exchange_token,
+            tick_size,
+            lot_size,
+            freeze_quantity,
+            short_name,
+            security_type,
+            downloaded_at
+        )
+        SELECT
+            instrument_key,
+            trading_symbol,
+            name,
+            isin,
+            COALESCE(exchange, 'NSE') AS exchange,
+            COALESCE(segment, 'NSE_EQ') AS segment,
+            exchange_token,
+            tick_size,
+            lot_size,
+            freeze_quantity,
+            short_name,
+            security_type,
+            CURRENT_TIMESTAMP AS downloaded_at
+        FROM temp_upstox_equity;
+    """)
+
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_equity")
+
+    return int(total_rows or 0)
+
+
+def equity_instruments_collected_today(conn) -> bool:
+    row = conn.execute("""
+        SELECT COUNT(*)
+        FROM upstox_equity_instruments
+        WHERE CAST(downloaded_at AS DATE) = CURRENT_DATE;
+    """).fetchone()
+
+    return bool(row and row[0] > 0)
+
+
+def get_equity_instruments_count(conn) -> int:
+    row = conn.execute("""
+        SELECT COUNT(*)
+        FROM upstox_equity_instruments;
+    """).fetchone()
+
+    return int(row[0] or 0) if row else 0
+
+
 def parse_upstox_error(error_body: str):
     try:
         payload = json.loads(error_body)
@@ -1005,6 +1116,11 @@ def get_data_collection_summary_service():
             FROM upstox_expired_instruments;
         """).fetchone()[0]
 
+        equity_count = conn.execute("""
+            SELECT COUNT(*)
+            FROM upstox_equity_instruments;
+        """).fetchone()[0]
+
         total_runs = conn.execute("""
             SELECT COUNT(*)
             FROM upstox_sync_runs;
@@ -1041,6 +1157,15 @@ def get_data_collection_summary_service():
             LIMIT 1;
         """).fetchone()
 
+        equity_run = conn.execute("""
+            SELECT finished_at, duration_seconds
+            FROM upstox_sync_runs
+            WHERE sync_type = 'upstox_equity_instruments'
+              AND status = 'success'
+            ORDER BY finished_at DESC
+            LIMIT 1;
+        """).fetchone()
+
         active_run = conn.execute("""
             SELECT sync_type, status, started_at
             FROM upstox_sync_runs
@@ -1053,6 +1178,7 @@ def get_data_collection_summary_service():
             "connection_status": connection_status,
             "total_current_instruments": current_count,
             "total_expired_instruments": expired_count,
+            "total_equity_instruments": equity_count,
             "total_sync_runs": total_runs,
             "last_sync_at": str(last_run[3]) if last_run and last_run[3] else None,
             "last_duration_seconds": last_run[4] if last_run else None,
@@ -1060,6 +1186,8 @@ def get_data_collection_summary_service():
             "current_duration_seconds": current_run[1] if current_run else None,
             "expired_last_sync_at": str(expired_run[0]) if expired_run and expired_run[0] else None,
             "expired_duration_seconds": expired_run[1] if expired_run else None,
+            "equity_last_sync_at": str(equity_run[0]) if equity_run and equity_run[0] else None,
+            "equity_duration_seconds": equity_run[1] if equity_run else None,
             "active_job": active_run[0] if active_run else None,
             "active_job_status": active_run[1] if active_run else None,
             "active_job_started_at": str(active_run[2]) if active_run and active_run[2] else None
@@ -1240,6 +1368,163 @@ def sync_upstox_current_instruments_service(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unable to dump current instruments: {e}"
+        )
+
+    finally:
+        delete_downloaded_master_file(local_file)
+        conn.close()
+
+
+def sync_upstox_equity_instruments_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    conn = get_connection()
+    started_at = datetime.now()
+    sync_id = None
+    local_file = None
+    total_records = 0
+
+    try:
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        ensure_no_active_sync_run(conn)
+
+        sync_id = create_sync_run(
+            conn,
+            "upstox_equity_instruments",
+            "running",
+            "Equity instrument daily dump started.",
+            current_user=current_user
+        )
+
+        if equity_instruments_collected_today(conn):
+            total_records = get_equity_instruments_count(conn)
+
+            finish_sync_run(
+                conn,
+                sync_id,
+                "success",
+                "Equity instruments already collected today. Daily refresh skipped.",
+                total_records,
+                started_at
+            )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            return {
+                "status": "success",
+                "message": "Equity instruments already collected today. Daily refresh skipped.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at),
+                "skipped": True
+            }
+
+        local_file = download_upstox_master_file_once(force_download=True)
+
+        check_sync_cancelled(conn, sync_id)
+
+        conn.execute("BEGIN TRANSACTION")
+
+        total_records = import_equity_instruments_from_local_file(
+            conn=conn,
+            sync_id=sync_id,
+            local_file=local_file
+        )
+
+        conn.execute("COMMIT")
+
+        finish_sync_run(
+            conn,
+            sync_id,
+            "success",
+            "NSE equity instruments collected successfully.",
+            total_records,
+            started_at
+        )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "success",
+            "message": "NSE equity instruments collected successfully.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at),
+            "skipped": False
+        }
+
+    except SyncCancelled:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                "Equity instrument dump cancelled.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "cancelled",
+            "message": "Equity instrument dump cancelled.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
+
+    except HTTPException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                "Equity instrument dump failed.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"Equity instrument dump failed: {e}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to dump equity instruments: {e}"
         )
 
     finally:
@@ -1458,17 +1743,25 @@ def sync_upstox_all_instruments_service(current_user: dict):
             }
         }
 
+    equity_result = sync_upstox_equity_instruments_service(
+        current_user,
+        clear_cancel_at_start=False
+    )
+
+    total_records += int(equity_result.get("total_records") or 0)
+
     return {
         "status": "success",
         "message": (
-            "Current Upstox master instruments completed successfully. "
-            "Run expired instruments separately because it requires a valid "
-            "Upstox OAuth token with Expired Instruments API permission."
+            "Current Upstox master instruments and daily equity instruments "
+            "completed successfully. Run expired instruments separately because "
+            "it requires a valid Upstox OAuth token with Expired Instruments API permission."
         ),
         "total_records": total_records,
         "duration_seconds": duration_seconds(started_at),
         "jobs": {
-            "current": current_result
+            "current": current_result,
+            "equity": equity_result
         }
     }
 
@@ -1557,6 +1850,51 @@ def build_preview_filters(
     return where_sql, params
 
 
+def build_equity_preview_filters(search: str, security_type: str):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_security_type = security_type.strip() if security_type else "all"
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(instrument_key, '')) LIKE ?
+                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(name, '')) LIKE ?
+                OR LOWER(COALESCE(isin, '')) LIKE ?
+                OR LOWER(COALESCE(exchange, '')) LIKE ?
+                OR LOWER(COALESCE(segment, '')) LIKE ?
+                OR LOWER(COALESCE(short_name, '')) LIKE ?
+                OR LOWER(COALESCE(security_type, '')) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value
+        ])
+
+    if clean_security_type != "all":
+        where_clauses.append("security_type = ?")
+        params.append(clean_security_type)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
 def row_to_instrument_preview(row):
     return {
         "instrument_key": row[0],
@@ -1572,6 +1910,24 @@ def row_to_instrument_preview(row):
         "underlying_key": row[10],
         "underlying_symbol": row[11],
         "synced_at": str(row[12]) if row[12] else None
+    }
+
+
+def row_to_equity_preview(row):
+    return {
+        "instrument_key": row[0],
+        "trading_symbol": row[1],
+        "name": row[2],
+        "isin": row[3],
+        "exchange": row[4],
+        "segment": row[5],
+        "exchange_token": row[6],
+        "tick_size": row[7],
+        "lot_size": row[8],
+        "freeze_quantity": row[9],
+        "short_name": row[10],
+        "security_type": row[11],
+        "downloaded_at": str(row[12]) if row[12] else None
     }
 
 
@@ -1699,6 +2055,69 @@ def get_upstox_expired_instruments_preview_service(
 
         return {
             "rows": [row_to_instrument_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
+
+def get_upstox_equity_instruments_preview_service(
+    search: str = "",
+    security_type: str = "all",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_equity_preview_filters(
+            search=search,
+            security_type=security_type
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM upstox_equity_instruments
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                name,
+                isin,
+                exchange,
+                segment,
+                exchange_token,
+                tick_size,
+                lot_size,
+                freeze_quantity,
+                short_name,
+                security_type,
+                downloaded_at
+            FROM upstox_equity_instruments
+            {where_sql}
+            ORDER BY downloaded_at DESC, trading_symbol, name
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_equity_preview(row) for row in rows],
             "page": current_page,
             "page_size": current_page_size,
             "total_pages": total_pages,

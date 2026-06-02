@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from app.database import get_connection
 from app.services.data_collection_service import (
     sync_upstox_current_instruments_service,
+    sync_upstox_equity_instruments_service,
     sync_upstox_expired_instruments_service
 )
 
@@ -26,6 +27,10 @@ VALID_JOB_TYPES = {
     "expired_instruments": {
         "label": "Expired Instruments",
         "sync_type": "upstox_expired_instruments"
+    },
+    "equity_instruments": {
+        "label": "Equity",
+        "sync_type": "upstox_equity_instruments"
     }
 }
 
@@ -117,7 +122,10 @@ def validate_job_type(job_type: str) -> str:
     if clean_job_type not in VALID_JOB_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid job type. Use current_instruments or expired_instruments."
+            detail=(
+                "Invalid job type. Use current_instruments, "
+                "expired_instruments, or equity_instruments."
+            )
         )
 
     return clean_job_type
@@ -537,6 +545,12 @@ def run_schedule_job(schedule_id: str, job_type: str):
 
     if job_type == "expired_instruments":
         return sync_upstox_expired_instruments_service(
+            current_user=system_user,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "equity_instruments":
+        return sync_upstox_equity_instruments_service(
             current_user=system_user,
             clear_cancel_at_start=True
         )
