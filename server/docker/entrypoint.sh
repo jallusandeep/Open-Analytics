@@ -3,11 +3,6 @@ set -e
 
 cd /app/backend
 
-# Get admin credentials from environment variables (if provided)
-ADMIN_USERNAME=${ADMIN_USERNAME:-}
-ADMIN_EMAIL=${ADMIN_EMAIL:-}
-ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-
 echo "==========================================="
 echo "  STARTING OPEN ANALYTICS BACKEND"
 echo "==========================================="
