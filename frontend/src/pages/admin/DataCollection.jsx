@@ -1801,7 +1801,7 @@ function DataCollection() {
         id: "current",
         title: "Current Instruments",
         scheduleJobType: "current_instruments",
-        records: summary.total_current_instruments,
+        records: currentLastRun?.total_records ?? 0,
         lastSyncedAt: summary.current_last_sync_at || summary.last_sync_at,
         triggeredBy: currentLastRun?.triggered_by_name,
         triggerSource: currentLastRun?.trigger_source,
@@ -1820,7 +1820,7 @@ function DataCollection() {
         id: "expired",
         title: "Expired Instruments",
         scheduleJobType: "expired_instruments",
-        records: summary.total_expired_instruments,
+        records: expiredLastRun?.total_records ?? 0,
         lastSyncedAt: summary.expired_last_sync_at || summary.last_sync_at,
         triggeredBy: expiredLastRun?.triggered_by_name,
         triggerSource: expiredLastRun?.trigger_source,
@@ -1839,7 +1839,7 @@ function DataCollection() {
         id: "equity",
         title: "Equity",
         scheduleJobType: "equity_instruments",
-        records: summary.total_equity_instruments,
+        records: equityLastRun?.total_records ?? 0,
         lastSyncedAt: summary.equity_last_sync_at || summary.last_sync_at,
         triggeredBy: equityLastRun?.triggered_by_name,
         triggerSource: equityLastRun?.trigger_source,
@@ -1858,7 +1858,7 @@ function DataCollection() {
         id: "ohlcv_daily",
         title: "Equity OHLCV",
         scheduleJobType: "ohlcv_daily",
-        records: summary.total_ohlcv_daily,
+        records: ohlcvDailyLastRun?.total_records ?? 0,
         lastSyncedAt: summary.ohlcv_daily_last_sync_at || summary.last_sync_at,
         triggeredBy: ohlcvDailyLastRun?.triggered_by_name,
         triggerSource: ohlcvDailyLastRun?.trigger_source,
@@ -1877,7 +1877,7 @@ function DataCollection() {
         id: "equity_news",
         title: "Equity News",
         scheduleJobType: "equity_news",
-        records: summary.total_equity_news,
+        records: equityNewsLastRun?.total_records ?? 0,
         lastSyncedAt: equityNewsLastRun?.finished_at,
         triggeredBy: equityNewsLastRun?.triggered_by_name,
         triggerSource: equityNewsLastRun?.trigger_source,
@@ -1896,7 +1896,7 @@ function DataCollection() {
         id: "fundamentals",
         title: "Fundamentals",
         scheduleJobType: "fundamentals",
-        records: summary.total_fundamentals,
+        records: fundamentalsLastRun?.total_records ?? 0,
         lastSyncedAt: fundamentalsLastRun?.finished_at,
         triggeredBy: fundamentalsLastRun?.triggered_by_name,
         triggerSource: fundamentalsLastRun?.trigger_source,
@@ -1915,7 +1915,7 @@ function DataCollection() {
         id: "corporate_actions",
         title: "Corporate Actions",
         scheduleJobType: "corporate_actions",
-        records: summary.total_corporate_actions,
+        records: corporateActionsLastRun?.total_records ?? 0,
         lastSyncedAt: corporateActionsLastRun?.finished_at,
         triggeredBy: corporateActionsLastRun?.triggered_by_name,
         triggerSource: corporateActionsLastRun?.trigger_source,
@@ -1934,7 +1934,7 @@ function DataCollection() {
         id: "fii_dii_activity",
         title: "FII/DII Activity",
         scheduleJobType: "fii_dii_activity",
-        records: summary.total_fii_dii_activity,
+        records: fiiDiiActivityLastRun?.total_records ?? 0,
         lastSyncedAt: fiiDiiActivityLastRun?.finished_at,
         triggeredBy: fiiDiiActivityLastRun?.triggered_by_name,
         triggerSource: fiiDiiActivityLastRun?.trigger_source,
@@ -2112,6 +2112,12 @@ function DataCollection() {
         "warning"
       );
     }
+  }
+
+  function scheduleStartedJobRefresh() {
+    window.setTimeout(() => {
+      loadData(false, { showLoading: false });
+    }, 1000);
   }
 
   async function loadData(showRefreshToast = false, options = {}) {
@@ -2383,6 +2389,7 @@ function DataCollection() {
     setCancelRequested(false);
     setElapsedSeconds(0);
     activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
 
     try {
       const response = await syncUpstoxOhlcvDaily(
@@ -2392,10 +2399,22 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "cancelled") {
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Equity OHLCV collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
         showToast(
           response.data.message || "Equity OHLCV collection cancelled.",
           "warning"
+        );
+      } else if (response.data?.status === "failed") {
+        showToast(
+          response.data.message || "Equity OHLCV collection failed.",
+          "error"
         );
       } else if (response.data?.skipped) {
         showToast(
@@ -2406,7 +2425,9 @@ function DataCollection() {
         showToast("Equity OHLCV collection completed.", "success");
       }
 
-      await refreshAfterSync();
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -2417,7 +2438,9 @@ function DataCollection() {
         "error"
       );
     } finally {
-      setRunningJob(null);
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
       activeSyncControllerRef.current = null;
     }
   }
@@ -2438,19 +2461,26 @@ function DataCollection() {
     setCancelRequested(false);
     setElapsedSeconds(0);
     activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
 
     try {
       const response = await runRequest({
         signal: activeSyncControllerRef.current.signal
       });
 
-      if (response.data?.status === "cancelled") {
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(response.data.message || successMessage, "success");
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
         showToast(response.data.message || cancelledMessage, "warning");
       } else {
         showToast(response.data?.message || successMessage, "success");
       }
 
-      await refreshAfterSync();
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -2458,7 +2488,9 @@ function DataCollection() {
 
       showToast(error.response?.data?.detail || errorMessage, "error");
     } finally {
-      setRunningJob(null);
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
       activeSyncControllerRef.current = null;
     }
   }

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.dependencies import require_admin_or_super_admin
 from app.services.data_collection_service import (
@@ -289,44 +289,77 @@ def sync_upstox_equity_instruments(
 
 @router.post("/upstox/sync-ohlcv-daily")
 def sync_upstox_ohlcv_daily(
+    background_tasks: BackgroundTasks,
     target_date: str = Query(
         "",
         description="Optional target date in YYYY-MM-DD format. Defaults to today."
     ),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_ohlcv_daily_service(
+    background_tasks.add_task(
+        sync_upstox_ohlcv_daily_service,
         current_user=current_user,
         target_date=target_date or None
+    )
+
+    return (
+        {
+            "status": "started",
+            "message": "Equity OHLCV collection started. Monitor will update while it runs."
+        }
     )
 
 
 @router.post("/upstox/sync-equity-news")
 def sync_upstox_equity_news(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_equity_news_service(current_user)
+    background_tasks.add_task(sync_upstox_equity_news_service, current_user)
+
+    return {
+        "status": "started",
+        "message": "Equity News collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-fundamentals")
 def sync_upstox_fundamentals(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_fundamentals_service(current_user)
+    background_tasks.add_task(sync_upstox_fundamentals_service, current_user)
+
+    return {
+        "status": "started",
+        "message": "Fundamentals collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-corporate-actions")
 def sync_upstox_corporate_actions(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_corporate_actions_service(current_user)
+    background_tasks.add_task(sync_upstox_corporate_actions_service, current_user)
+
+    return {
+        "status": "started",
+        "message": "Corporate Actions collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-fii-dii-activity")
 def sync_upstox_fii_dii_activity(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_fii_dii_activity_service(current_user)
+    background_tasks.add_task(sync_upstox_fii_dii_activity_service, current_user)
+
+    return {
+        "status": "started",
+        "message": "FII/DII Activity collection started. Monitor will update while it runs."
+    }
 
 
 @router.get("/upstox/schedules")

@@ -835,6 +835,8 @@ def init_database():
         safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN summary TEXT;")
         safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN source VARCHAR;")
         safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN url VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN thumbnail VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN raw_json JSON;")
         safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN published_at TIMESTAMP;")
         safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
@@ -878,6 +880,7 @@ def init_database():
         safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN promoter_holding_pct DOUBLE;")
         safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN fii_holding_pct DOUBLE;")
         safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN dii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN raw_json JSON;")
         safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
         # -----------------------------
@@ -905,7 +908,9 @@ def init_database():
         safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ex_date DATE;")
         safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN record_date DATE;")
         safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN amount DOUBLE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ratio VARCHAR;")
         safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN remarks VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN raw_json JSON;")
         safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
         # -----------------------------
@@ -928,6 +933,11 @@ def init_database():
         safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN buy_value DOUBLE;")
         safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN sell_value DOUBLE;")
         safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN net_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN buy_contracts BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN sell_contracts BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN oi_contracts BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN oi_amount DOUBLE DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN raw_json JSON;")
         safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
         conn.commit()
