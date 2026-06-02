@@ -20,6 +20,7 @@ import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
+import DatePicker from "../../components/common/DatePicker";
 import Select from "../../components/common/Select";
 import Tooltip from "../../components/common/Tooltip";
 import Modal from "../../components/common/Modal";
@@ -1037,7 +1038,7 @@ function MonitorContent({
       <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
         <form
           onSubmit={onSearchSubmit}
-          className="flex flex-wrap items-center gap-2"
+          className="flex items-center gap-2 overflow-x-auto"
         >
           <div className="relative w-full md:w-80">
             <Input
@@ -1403,14 +1404,7 @@ function DbPreviewContent({
               ariaLabel="Category"
               minWidth="w-40"
             />
-          ) : isEquityNewsPreview ? (
-            <Input
-              value={sourceType === "all" ? "" : sourceType}
-              onChange={(event) => onSourceTypeChange(event.target.value || "all")}
-              placeholder="News source"
-              className="w-44"
-            />
-          ) : isOhlcvPreview ? null : (
+          ) : isEquityNewsPreview || isOhlcvPreview ? null : (
             <>
               <Select
                 value={sourceType}
@@ -1440,18 +1434,20 @@ function DbPreviewContent({
 
           {needsDateFilter && (
             <>
-              <Input
-                type="date"
+              <DatePicker
                 value={fromDate}
-                onChange={(event) => onFromDateChange(event.target.value)}
-                className="w-40"
+                onChange={onFromDateChange}
+                placeholder="From date"
+                ariaLabel={`${previewLabel} from date`}
+                className="w-36 shrink-0"
               />
 
-              <Input
-                type="date"
+              <DatePicker
                 value={toDate}
-                onChange={(event) => onToDateChange(event.target.value)}
-                className="w-40"
+                onChange={onToDateChange}
+                placeholder="To date"
+                ariaLabel={`${previewLabel} to date`}
+                className="w-36 shrink-0"
               />
             </>
           )}

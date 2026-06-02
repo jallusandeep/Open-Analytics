@@ -9,9 +9,15 @@ function Tooltip({ text, children, side = "top" }) {
 
   function showTooltip(event) {
     const rect = event.currentTarget.getBoundingClientRect();
+    const safeText = String(text || "");
 
-    const width = Math.min(120, Math.max(54, text.length * 6 + 16));
-    const height = 22;
+    const width = Math.min(280, Math.max(72, safeText.length * 6 + 18));
+    const estimatedCharsPerLine = Math.max(10, Math.floor((width - 18) / 6));
+    const estimatedLines = Math.max(
+      1,
+      Math.ceil(safeText.length / estimatedCharsPerLine)
+    );
+    const height = Math.min(160, estimatedLines * 14 + 10);
     const gap = 6;
 
     let top = rect.top - height - gap;
@@ -77,11 +83,12 @@ function Tooltip({ text, children, side = "top" }) {
 
       {position.visible && text && (
         <span
-          className="pointer-events-none fixed z-[9999] truncate rounded border border-oa-border bg-[#151518] px-1.5 py-1 text-center text-[10px] leading-none text-oa-text shadow-xl"
+          className="pointer-events-none fixed z-[9999] whitespace-normal break-words rounded border border-oa-border bg-[#151518] px-2 py-1.5 text-center text-[10px] leading-snug text-oa-text shadow-xl"
           style={{
             top: `${position.top}px`,
             left: `${position.left}px`,
-            width: `${position.width}px`
+            maxWidth: `${position.width}px`,
+            width: "max-content"
           }}
         >
           {text}
