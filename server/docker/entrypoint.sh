@@ -3,10 +3,6 @@ set -e
 
 cd /app/backend
 
-echo "==========================================="
-echo "  INITIALIZING DATABASE..."
-echo "==========================================="
-
 # Get admin credentials from environment variables (if provided)
 ADMIN_USERNAME=${ADMIN_USERNAME:-}
 ADMIN_EMAIL=${ADMIN_EMAIL:-}

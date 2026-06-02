@@ -3,6 +3,7 @@ import time
 import duckdb
 from pathlib import Path
 from passlib.context import CryptContext
+import os
 
 from app.config import settings
 from app.version import APP_VERSION, SCHEMA_VERSION
@@ -133,8 +134,8 @@ def init_database():
         # -----------------------------
         # Default admin user
         # -----------------------------
-        admin_email = "admin@openanalytics.com"
-        admin_password = "admin123"
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
 
         existing_admin = conn.execute("""
             SELECT user_id
