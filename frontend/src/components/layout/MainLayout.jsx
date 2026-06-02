@@ -57,7 +57,7 @@ function MainLayout({ children }) {
       activeLine: "bg-purple-300"
     },
     {
-      label: "Database",
+      label: "Connections",
       icon: Link,
       path: "/connections",
       show: isAdminUser,

@@ -15,3 +15,31 @@ export function testUpstoxConnection() {
 export function disconnectUpstoxConnection() {
   return axiosClient.delete("/connections/upstox");
 }
+
+export function saveTelegramConnection(payload) {
+  return axiosClient.post("/connections/telegram", payload);
+}
+
+export function testTelegramConnection() {
+  return axiosClient.post("/connections/telegram/test");
+}
+
+export function disconnectTelegramConnection() {
+  return axiosClient.delete("/connections/telegram");
+}
+
+export function getMyTelegramConnection() {
+  return axiosClient.get("/connections/telegram/me");
+}
+
+export function startMyTelegramConnection() {
+  return axiosClient.post("/connections/telegram/me/start");
+}
+
+export function verifyMyTelegramConnection() {
+  return axiosClient.post("/connections/telegram/me/verify");
+}
+
+export function testMyTelegramConnection() {
+  return axiosClient.post("/connections/telegram/me/test");
+}

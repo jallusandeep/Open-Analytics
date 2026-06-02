@@ -1,4 +1,5 @@
 import uuid
+import time
 import duckdb
 from pathlib import Path
 from passlib.context import CryptContext
@@ -15,10 +16,35 @@ if not DB_PATH.is_absolute():
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+DB_CONNECT_RETRY_ATTEMPTS = 10
+DB_CONNECT_RETRY_DELAY_SECONDS = 0.2
+
+
+def is_transient_duckdb_lock_error(error: Exception) -> bool:
+    message = str(error).lower()
+
+    return (
+        "cannot open file" in message
+        and (
+            "being used by another process" in message
+            or "file is already open" in message
+        )
+    )
+
 
 def get_connection():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(DB_PATH))
+
+    for attempt in range(DB_CONNECT_RETRY_ATTEMPTS):
+        try:
+            return duckdb.connect(str(DB_PATH))
+        except duckdb.IOException as error:
+            is_last_attempt = attempt == DB_CONNECT_RETRY_ATTEMPTS - 1
+
+            if is_last_attempt or not is_transient_duckdb_lock_error(error):
+                raise
+
+            time.sleep(DB_CONNECT_RETRY_DELAY_SECONDS)
 
 
 def safe_execute(conn, query: str):
@@ -309,6 +335,8 @@ def init_database():
 
         # -----------------------------
         # External connections
+        # Global admin-level provider credentials.
+        # Telegram bot token is stored here globally.
         # -----------------------------
         conn.execute("""
             CREATE TABLE IF NOT EXISTS external_connections (
@@ -339,6 +367,63 @@ def init_database():
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN created_by VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN updated_by VARCHAR;")
+
+        # -----------------------------
+        # User Telegram connections
+        # User-level Telegram chat links.
+        # Admin configures the bot globally in external_connections.
+        # Each user connects their own Telegram account from Settings.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_telegram_connections (
+                telegram_connection_id VARCHAR PRIMARY KEY,
+                user_id VARCHAR UNIQUE NOT NULL,
+                telegram_chat_id VARCHAR,
+                telegram_username VARCHAR,
+                telegram_first_name VARCHAR,
+                telegram_last_name VARCHAR,
+                link_token VARCHAR UNIQUE NOT NULL,
+                connection_status VARCHAR DEFAULT 'pending',
+                record_status VARCHAR DEFAULT 'S',
+                version_no INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_chat_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_username VARCHAR;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_first_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_last_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN link_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN connection_status VARCHAR DEFAULT 'pending';")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN created_by VARCHAR;")
+        safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN updated_by VARCHAR;")
+
+        conn.execute("""
+            UPDATE user_telegram_connections
+            SET record_status = 'S'
+            WHERE record_status IS NULL;
+        """)
+
+        conn.execute("""
+            UPDATE user_telegram_connections
+            SET connection_status = CASE
+                WHEN telegram_chat_id IS NOT NULL AND telegram_chat_id <> '' THEN 'connected'
+                ELSE 'pending'
+            END
+            WHERE connection_status IS NULL;
+        """)
+
+        conn.execute("""
+            UPDATE user_telegram_connections
+            SET version_no = 1
+            WHERE version_no IS NULL;
+        """)
 
         # -----------------------------
         # Upstox instruments

@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Bot,
   Check,
-  CheckCircle2,
+  Copy,
   Edit3,
+  ExternalLink,
   Plus,
   PlugZap,
   RefreshCcw,
   Search,
+  Send,
   Trash2,
   X
 } from "lucide-react";
@@ -26,30 +29,52 @@ import {
   oaPillStyles
 } from "../../components/common/uiStyles";
 import {
+  disconnectTelegramConnection,
   disconnectUpstoxConnection,
   getConnections,
+  saveTelegramConnection,
   saveUpstoxConnection,
+  testTelegramConnection,
   testUpstoxConnection
 } from "../../api/connectionApi";
 
 const emptyFormData = {
-  provider: "upstox",
-  access_token: ""
+  provider: "",
+  api_key: "",
+  api_secret: "",
+  redirect_url: "",
+  authorization_code: "",
+  access_token: "",
+  bot_token: ""
 };
 
 const brokers = [
   {
     id: "upstox",
     name: "Upstox",
-    description: "Token based broker connection.",
-    apiSupported: true
+    description: "OAuth based broker connection.",
+    apiSupported: true,
+    icon: PlugZap
+  },
+  {
+    id: "telegram",
+    name: "Telegram",
+    description: "Bot based alert and notification connection.",
+    apiSupported: true,
+    icon: Send
   }
 ];
 
-const providerOptions = brokers.map((broker) => ({
-  value: broker.id,
-  label: broker.name
-}));
+const providerOptions = [
+  {
+    value: "",
+    label: "Select provider"
+  },
+  ...brokers.map((broker) => ({
+    value: broker.id,
+    label: broker.name
+  }))
+];
 
 const connectionColumns = [
   { key: "provider", label: "Provider", filterable: false },
@@ -98,6 +123,10 @@ function getStatusLabel(status) {
     return "Connected";
   }
 
+  if (status === "limited") {
+    return "Limited";
+  }
+
   if (status === "failed") {
     return "Failed";
   }
@@ -112,6 +141,10 @@ function getStatusLabel(status) {
 function getStatusClass(status) {
   if (status === "connected") {
     return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
+  }
+
+  if (status === "limited") {
+    return "border-amber-500/40 bg-amber-950/40 text-amber-200";
   }
 
   if (status === "failed") {
@@ -171,9 +204,13 @@ function getLastUpdated(connection) {
   );
 }
 
-function getTokenExpiry(connection) {
+function getTokenExpiry(connection, provider) {
   if (!connection) {
     return "--";
+  }
+
+  if (provider === "telegram") {
+    return "Bot token";
   }
 
   const explicitExpiry =
@@ -195,12 +232,59 @@ function getTokenExpiry(connection) {
   return "Valid for 1 year";
 }
 
+function buildUpstoxAuthorizationUrl(apiKey, redirectUrl) {
+  const cleanApiKey = apiKey.trim();
+  const cleanRedirectUrl = redirectUrl.trim();
+
+  if (!cleanApiKey || !cleanRedirectUrl) {
+    return "";
+  }
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: cleanApiKey,
+    redirect_uri: cleanRedirectUrl
+  });
+
+  return `https://api.upstox.com/v2/login/authorization/dialog?${params.toString()}`;
+}
+
+function getErrorMessage(error, fallback) {
+  const detail = error.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (detail?.message) {
+    return detail.message;
+  }
+
+  if (detail?.raw?.message) {
+    return detail.raw.message;
+  }
+
+  return fallback;
+}
+
 function StatusBadge({ status }) {
   return (
     <span className={`${oaPillStyles.base} ${getStatusClass(status)}`}>
-      {status === "connected" && <CheckCircle2 size={12} />}
       {getStatusLabel(status)}
     </span>
+  );
+}
+
+function ClearInputButton({ label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+      aria-label={label}
+    >
+      <X size={13} />
+    </button>
   );
 }
 
@@ -213,13 +297,46 @@ function ConnectionFormModal({
   isAdminControlAllowed,
   onClose,
   onSave,
-  onInputChange
+  onInputChange,
+  onClearField,
+  onCopyAuthUrl
 }) {
+  const selectedBroker =
+    brokers.find((broker) => broker.id === formData.provider) || null;
+
+  const isUpstox = formData.provider === "upstox";
+  const isTelegram = formData.provider === "telegram";
+  const hasProviderSelected = Boolean(selectedBroker);
+
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
-  const subtitle =
-    mode === "edit"
-      ? "Replace the saved provider token. Existing token number will not be shown."
-      : "Select provider and enter token number to save a new connection.";
+
+  const subtitle = !hasProviderSelected
+    ? "Select a provider to show connection information."
+    : isTelegram
+      ? "Enter Telegram bot token. Open the bot in Telegram and send /start before saving."
+      : mode === "edit"
+        ? "Replace the saved Upstox OAuth token."
+        : "Enter Upstox app details, generate login URL, then paste the authorization code.";
+
+  const authorizationUrl = buildUpstoxAuthorizationUrl(
+    formData.api_key,
+    formData.redirect_url
+  );
+
+  const hasAuthorizationCode = formData.authorization_code.trim();
+  const hasAccessToken = formData.access_token.trim();
+  const hasTelegramBotToken = formData.bot_token.trim();
+
+  const canSave =
+    isAdminControlAllowed &&
+    hasProviderSelected &&
+    ((isUpstox &&
+      (hasAccessToken ||
+        (formData.api_key.trim() &&
+          formData.api_secret.trim() &&
+          formData.redirect_url.trim() &&
+          hasAuthorizationCode))) ||
+      (isTelegram && hasTelegramBotToken));
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -232,7 +349,7 @@ function ConnectionFormModal({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
-      width="max-w-lg"
+      width="max-w-2xl"
       footer={
         <div className="flex items-center justify-end gap-2">
           <IconButton
@@ -248,9 +365,7 @@ function ConnectionFormModal({
             icon={Check}
             label={mode === "edit" ? "Update connection" : "Save connection"}
             variant="default"
-            disabled={
-              saving || !isAdminControlAllowed || !formData.access_token.trim()
-            }
+            disabled={saving || !canSave}
             onClick={onSave}
             tooltipSide="top"
           />
@@ -279,45 +394,236 @@ function ConnectionFormModal({
           </div>
         </div>
 
-        <div>
-          <label className={oaFormTextStyles.label}>Token Number</label>
-          <div className="relative mt-1">
-            <Input
-              name="access_token"
-              type="password"
-              value={formData.access_token}
-              onChange={onInputChange}
-              placeholder={
-                selectedConnection
-                  ? "Token saved - enter new token to replace"
-                  : "Enter token number"
-              }
-              className="pr-9"
-              autoFocus
-            />
-
-            {formData.access_token ? (
-              <button
-                type="button"
-                onClick={() =>
-                  onInputChange({
-                    target: {
-                      name: "access_token",
-                      value: ""
-                    }
-                  })
-                }
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                aria-label="Clear token number"
-              >
-                <X size={13} />
-              </button>
-            ) : null}
+        {!hasProviderSelected ? (
+          <div className="rounded border border-oa-border bg-black p-3">
+            <p className="text-[12px] text-oa-muted">
+              Select a provider from the dropdown to show connection fields.
+            </p>
           </div>
-        </div>
+        ) : null}
+
+        {isUpstox ? (
+          <>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <label className={oaFormTextStyles.label}>API Key</label>
+                <div className="relative mt-1">
+                  <Input
+                    name="api_key"
+                    type="text"
+                    value={formData.api_key}
+                    onChange={onInputChange}
+                    placeholder={
+                      selectedConnection?.api_key
+                        ? "Saved - enter to replace"
+                        : "Enter Upstox API key"
+                    }
+                    className="pr-9"
+                  />
+
+                  {formData.api_key ? (
+                    <ClearInputButton
+                      label="Clear API key"
+                      onClick={() => onClearField("api_key")}
+                    />
+                  ) : null}
+                </div>
+              </div>
+
+              <div>
+                <label className={oaFormTextStyles.label}>API Secret</label>
+                <div className="relative mt-1">
+                  <Input
+                    name="api_secret"
+                    type="password"
+                    value={formData.api_secret}
+                    onChange={onInputChange}
+                    placeholder={
+                      selectedConnection?.has_api_secret
+                        ? "Saved - enter to replace"
+                        : "Enter Upstox API secret"
+                    }
+                    className="pr-9"
+                  />
+
+                  {formData.api_secret ? (
+                    <ClearInputButton
+                      label="Clear API secret"
+                      onClick={() => onClearField("api_secret")}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>Redirect URL</label>
+              <div className="relative mt-1">
+                <Input
+                  name="redirect_url"
+                  type="text"
+                  value={formData.redirect_url}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.redirect_url
+                      ? selectedConnection.redirect_url
+                      : "Enter the same redirect URL added in Upstox app"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.redirect_url ? (
+                  <ClearInputButton
+                    label="Clear redirect URL"
+                    onClick={() => onClearField("redirect_url")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded border border-oa-border bg-black p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-oa-muted">
+                  Upstox Login URL
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <IconButton
+                    icon={Copy}
+                    label="Copy login URL"
+                    variant="default"
+                    disabled={!authorizationUrl}
+                    onClick={() => onCopyAuthUrl(authorizationUrl)}
+                    tooltipSide="top"
+                  />
+
+                  <a
+                    href={authorizationUrl || undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white ${
+                      authorizationUrl
+                        ? ""
+                        : "pointer-events-none cursor-not-allowed opacity-50"
+                    }`}
+                    aria-label="Open Upstox login URL"
+                    title="Open Upstox login URL"
+                  >
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
+              </div>
+
+              <p className="mt-2 break-all text-[11px] text-oa-muted">
+                {authorizationUrl ||
+                  "Enter API key and redirect URL to generate login URL."}
+              </p>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>
+                Authorization Code
+              </label>
+              <div className="relative mt-1">
+                <Input
+                  name="authorization_code"
+                  type="password"
+                  value={formData.authorization_code}
+                  onChange={onInputChange}
+                  placeholder="Paste code from Upstox redirect URL"
+                  className="pr-9"
+                  autoFocus
+                />
+
+                {formData.authorization_code ? (
+                  <ClearInputButton
+                    label="Clear authorization code"
+                    onClick={() => onClearField("authorization_code")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div className="border-t border-oa-border pt-3">
+              <label className={oaFormTextStyles.label}>
+                Access Token Override
+              </label>
+              <div className="relative mt-1">
+                <Input
+                  name="access_token"
+                  type="password"
+                  value={formData.access_token}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection
+                      ? "Optional - paste token directly to replace"
+                      : "Optional - paste token directly instead of OAuth code"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.access_token ? (
+                  <ClearInputButton
+                    label="Clear access token"
+                    onClick={() => onClearField("access_token")}
+                  />
+                ) : null}
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {isTelegram ? (
+          <>
+            <div className="rounded border border-oa-border bg-black p-2">
+              <div className="flex items-start gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300">
+                  <Bot size={15} />
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-oa-muted">
+                    Telegram Bot Setup
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5 text-oa-muted">
+                    Paste your Telegram bot token. Before saving, open this bot
+                    in Telegram and send /start. Open Analytics will collect the
+                    latest chat ID automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>Bot Token</label>
+              <div className="relative mt-1">
+                <Input
+                  name="bot_token"
+                  type="password"
+                  value={formData.bot_token}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_access_token
+                      ? "Saved - enter to replace"
+                      : "Enter Telegram bot token"
+                  }
+                  className="pr-9"
+                  autoFocus
+                />
+
+                {formData.bot_token ? (
+                  <ClearInputButton
+                    label="Clear bot token"
+                    onClick={() => onClearField("bot_token")}
+                  />
+                ) : null}
+              </div>
+            </div>
+          </>
+        ) : null}
 
         <button type="submit" className="hidden" aria-hidden="true">
-          Submit
+          Submit {selectedBroker?.name || "connection"}
         </button>
       </form>
     </Modal>
@@ -346,28 +652,37 @@ function Connections() {
 
   const connectionsByProvider = useMemo(() => {
     return connections.reduce((accumulator, item) => {
-      accumulator[item.provider] = item;
+      if (item?.provider) {
+        accumulator[item.provider] = item;
+      }
+
       return accumulator;
     }, {});
   }, [connections]);
 
   const rows = useMemo(() => {
-    return brokers.map((broker) => {
-      const connection = connectionsByProvider[broker.id] || null;
+    return connections
+      .map((connection) => {
+        const broker = brokers.find((item) => item.id === connection.provider);
 
-      return {
-        id: broker.id,
-        broker,
-        connection,
-        provider: broker.name,
-        description: broker.description,
-        status: getConnectionStatus(connection),
-        updated_at: getLastUpdated(connection),
-        token_expiry: getTokenExpiry(connection),
-        updated_by: connection ? formatUserName(currentUser) : "--"
-      };
-    });
-  }, [connectionsByProvider, currentUser]);
+        if (!broker) {
+          return null;
+        }
+
+        return {
+          id: connection.provider,
+          broker,
+          connection,
+          provider: broker.name,
+          description: broker.description,
+          status: getConnectionStatus(connection),
+          updated_at: getLastUpdated(connection),
+          token_expiry: getTokenExpiry(connection, broker.id),
+          updated_by: formatUserName(currentUser)
+        };
+      })
+      .filter(Boolean);
+  }, [connections, currentUser]);
 
   const filteredRows = useMemo(() => {
     const query = appliedSearchValue.trim().toLowerCase();
@@ -391,10 +706,13 @@ function Connections() {
   }, [rows, appliedSearchValue]);
 
   const formBroker = useMemo(() => {
-    return brokers.find((item) => item.id === formData.provider) || brokers[0];
+    return brokers.find((item) => item.id === formData.provider) || null;
   }, [formData.provider]);
 
-  const selectedConnection = connectionsByProvider[formData.provider] || null;
+  const selectedConnection = formData.provider
+    ? connectionsByProvider[formData.provider] || null
+    : null;
+
   const formOpen = formMode !== "closed";
 
   async function loadConnections(showRefreshToast = false) {
@@ -408,10 +726,7 @@ function Connections() {
         showToast("Connections refreshed successfully.", "success");
       }
     } catch (error) {
-      showToast(
-        error.response?.data?.detail || "Unable to load connections.",
-        "error"
-      );
+      showToast(getErrorMessage(error, "Unable to load connections."), "error");
     } finally {
       setLoading(false);
     }
@@ -428,10 +743,23 @@ function Connections() {
   }
 
   function openEditForm(provider) {
+    const connection = connectionsByProvider[provider] || null;
+
+    if (provider === "telegram") {
+      setFormMode("edit");
+      setFormData({
+        ...emptyFormData,
+        provider
+      });
+      return;
+    }
+
     setFormMode("edit");
     setFormData({
+      ...emptyFormData,
       provider,
-      access_token: ""
+      api_key: connection?.api_key || "",
+      redirect_url: connection?.redirect_url || ""
     });
   }
 
@@ -447,9 +775,24 @@ function Connections() {
   function handleInputChange(event) {
     const { name, value } = event.target;
 
+    if (name === "provider") {
+      setFormData({
+        ...emptyFormData,
+        provider: value
+      });
+      return;
+    }
+
     setFormData((previous) => ({
       ...previous,
       [name]: value
+    }));
+  }
+
+  function handleClearField(fieldName) {
+    setFormData((previous) => ({
+      ...previous,
+      [fieldName]: ""
     }));
   }
 
@@ -463,9 +806,23 @@ function Connections() {
     setAppliedSearchValue("");
   }
 
+  async function handleCopyAuthUrl(url) {
+    if (!url) {
+      showToast("Enter API key and redirect URL first.", "warning");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast("Upstox login URL copied.", "success");
+    } catch {
+      showToast("Unable to copy login URL.", "error");
+    }
+  }
+
   async function handleSave() {
     if (!formBroker) {
-      showToast("Select a provider before saving token.", "warning");
+      showToast("Select a provider before saving connection.", "warning");
       return;
     }
 
@@ -479,9 +836,37 @@ function Connections() {
       return;
     }
 
-    if (!formData.access_token.trim()) {
-      showToast("Enter token number before saving connection.", "warning");
-      return;
+    if (formBroker.id === "upstox") {
+      const hasAuthorizationCode = formData.authorization_code.trim();
+      const hasAccessToken = formData.access_token.trim();
+
+      if (!hasAuthorizationCode && !hasAccessToken) {
+        showToast(
+          "Enter authorization code or paste access token before saving.",
+          "warning"
+        );
+        return;
+      }
+
+      if (
+        hasAuthorizationCode &&
+        (!formData.api_key.trim() ||
+          !formData.api_secret.trim() ||
+          !formData.redirect_url.trim())
+      ) {
+        showToast(
+          "API key, API secret, and redirect URL are required with authorization code.",
+          "warning"
+        );
+        return;
+      }
+    }
+
+    if (formBroker.id === "telegram") {
+      if (!formData.bot_token.trim()) {
+        showToast("Telegram bot token is required.", "warning");
+        return;
+      }
     }
 
     setSaving(true);
@@ -489,21 +874,27 @@ function Connections() {
     try {
       if (formBroker.id === "upstox") {
         await saveUpstoxConnection({
-          api_key: "",
-          api_secret: "",
-          redirect_url: "",
+          api_key: formData.api_key.trim(),
+          api_secret: formData.api_secret.trim(),
+          redirect_url: formData.redirect_url.trim(),
+          authorization_code: formData.authorization_code.trim(),
           access_token: formData.access_token.trim()
         });
       }
 
-      showToast(`${formBroker.name} token saved successfully.`, "success");
+      if (formBroker.id === "telegram") {
+        await saveTelegramConnection({
+          bot_token: formData.bot_token.trim()
+        });
+      }
+
+      showToast(`${formBroker.name} connection saved successfully.`, "success");
       await loadConnections(false);
       setFormMode("closed");
       setFormData(emptyFormData);
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to save ${formBroker.name} token.`,
+        getErrorMessage(error, `Unable to save ${formBroker.name} connection.`),
         "error"
       );
     } finally {
@@ -538,16 +929,19 @@ function Connections() {
         response = await testUpstoxConnection();
       }
 
+      if (broker.id === "telegram") {
+        response = await testTelegramConnection();
+      }
+
       showToast(
         response?.data?.message ||
           `${broker.name} connection tested successfully.`,
-        "success"
+        response?.data?.status === "limited" ? "warning" : "success"
       );
       await loadConnections(false);
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to test ${broker.name} connection.`,
+        getErrorMessage(error, `Unable to test ${broker.name} connection.`),
         "error"
       );
     } finally {
@@ -580,6 +974,10 @@ function Connections() {
         await disconnectUpstoxConnection();
       }
 
+      if (broker.id === "telegram") {
+        await disconnectTelegramConnection();
+      }
+
       setConnections((previous) =>
         previous.filter((item) => item.provider !== provider)
       );
@@ -592,7 +990,7 @@ function Connections() {
       showToast(`${broker.name} connection deleted successfully.`, "success");
     } catch (error) {
       showToast(
-        error.response?.data?.detail || `Unable to delete ${broker.name}.`,
+        getErrorMessage(error, `Unable to delete ${broker.name}.`),
         "error"
       );
     } finally {
@@ -649,7 +1047,7 @@ function Connections() {
       <div className="flex justify-end gap-2">
         <IconButton
           icon={Edit3}
-          label="Edit token"
+          label="Edit connection"
           variant="default"
           disabled={
             !hasConnection || !row.broker.apiSupported || !isAdminControlAllowed
@@ -790,7 +1188,7 @@ function Connections() {
                 loadingMessage="Loading connections"
                 emptyMessage="No provider connections found."
                 gridTemplateColumns={connectionGridTemplateColumns}
-                minWidth="min-w-[1080px]"
+                minWidth="min-w-full"
                 getRowKey={(row) => row.id}
                 renderCell={renderCell}
                 renderActions={renderActions}
@@ -809,6 +1207,8 @@ function Connections() {
           onClose={closeForm}
           onSave={handleSave}
           onInputChange={handleInputChange}
+          onClearField={handleClearField}
+          onCopyAuthUrl={handleCopyAuthUrl}
         />
       </section>
     </MainLayout>

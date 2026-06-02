@@ -21,9 +21,6 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = APP_ROOT / "data" / "upstox"
 MASTER_INSTRUMENT_FILE = DATA_DIR / "upstox_instruments.json"
 
-# One-time current instruments master download.
-# This downloads the official gz file once, extracts it locally,
-# then DuckDB imports from the local JSON file.
 UPSTOX_CURRENT_MASTER_URL = (
     "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
 )
@@ -48,6 +45,15 @@ CANCEL_SIGNAL_FILE = CANCEL_SIGNAL_DIR / "upstox_data_collection.cancel"
 
 class SyncCancelled(Exception):
     pass
+
+
+def normalize_upstox_token(access_token: str) -> str:
+    token = access_token.strip() if access_token else ""
+
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+
+    return token
 
 
 def write_cancel_signal():
@@ -116,7 +122,8 @@ def safe_text(value: Any) -> Optional[str]:
     if value is None:
         return None
 
-    return str(value)
+    text = str(value).strip()
+    return text if text else None
 
 
 def safe_float(value: Any) -> Optional[float]:
@@ -143,6 +150,15 @@ def safe_bool(value: Any) -> Optional[bool]:
     if value is None:
         return None
 
+    if isinstance(value, str):
+        clean_value = value.strip().lower()
+
+        if clean_value in ("true", "1", "yes", "y"):
+            return True
+
+        if clean_value in ("false", "0", "no", "n"):
+            return False
+
     return bool(value)
 
 
@@ -163,10 +179,13 @@ def get_upstox_access_token(conn) -> str:
     if not row or not row[0]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox connection token is not saved. Please save token in Connections first."
+            detail=(
+                "Upstox connection token is not saved. "
+                "Please save Upstox connection in Connections first."
+            )
         )
 
-    return row[0]
+    return normalize_upstox_token(row[0])
 
 
 def get_upstox_connection_status(conn) -> str:
@@ -350,6 +369,24 @@ def request_cancel_active_sync_runs_service():
         conn.close()
 
 
+def print_current_file_sanity_check(file_path: Path):
+    try:
+        with open(file_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        total = len(data) if isinstance(data, list) else 0
+        print(f"Total active instruments found in file: {total}")
+
+        if total > 0:
+            sample = data[0]
+            trading_symbol = sample.get("trading_symbol", "--")
+            instrument_key = sample.get("instrument_key", "--")
+            print(f"Sample Instrument: {trading_symbol} ({instrument_key})")
+
+    except Exception as error:
+        print(f"Current file sanity check skipped: {error}")
+
+
 def download_upstox_master_file_once(force_download: bool = False) -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -366,10 +403,13 @@ def download_upstox_master_file_once(force_download: bool = False) -> Path:
 
     request = urllib.request.Request(
         UPSTOX_CURRENT_MASTER_URL,
-        headers={"User-Agent": "OpenAnalytics/1.0"}
+        headers={
+            "User-Agent": "OpenAnalytics/1.0"
+        }
     )
 
-    print("Downloading Upstox current instruments master file once...")
+    print("Downloading Upstox current instruments master file.")
+    print("No token required for current instruments.")
     print(f"URL  : {UPSTOX_CURRENT_MASTER_URL}")
     print(f"Save : {MASTER_INSTRUMENT_FILE}")
 
@@ -402,6 +442,8 @@ def download_upstox_master_file_once(force_download: bool = False) -> Path:
             pass
 
         print(f"Download completed: {MASTER_INSTRUMENT_FILE}")
+        print_current_file_sanity_check(MASTER_INSTRUMENT_FILE)
+
         return MASTER_INSTRUMENT_FILE
 
     except Exception:
@@ -417,17 +459,22 @@ def download_upstox_master_file_once(force_download: bool = False) -> Path:
         raise
 
 
-def get_current_instrument_count(conn) -> int:
-    try:
-        row = conn.execute("""
-            SELECT COUNT(*)
-            FROM upstox_instruments
-            WHERE source_type = 'bod_complete';
-        """).fetchone()
+def delete_downloaded_master_file(file_path: Optional[Path]):
+    if not file_path:
+        return
 
-        return int(row[0] or 0)
-    except Exception:
-        return 0
+    try:
+        resolved_file = file_path.resolve()
+        resolved_data_dir = DATA_DIR.resolve()
+
+        if resolved_data_dir not in resolved_file.parents:
+            return
+
+        if resolved_file.exists():
+            resolved_file.unlink()
+            print(f"Deleted temporary Upstox master file: {resolved_file}")
+    except Exception as error:
+        print(f"Unable to delete temporary Upstox master file: {error}")
 
 
 def import_current_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
@@ -533,14 +580,12 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
             trading_symbol,
             short_name,
             exchange_token,
-
             CASE
                 WHEN expiry IS NULL THEN NULL
                 WHEN TRY_CAST(expiry AS BIGINT) IS NOT NULL
                     THEN CAST(epoch_ms(TRY_CAST(expiry AS BIGINT)) AS DATE)
                 ELSE TRY_CAST(expiry AS DATE)
             END AS expiry,
-
             strike_price,
             lot_size,
             minimum_lot,
@@ -563,7 +608,86 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
     return int(total_rows or 0)
 
 
+def parse_upstox_error(error_body: str):
+    try:
+        payload = json.loads(error_body)
+    except Exception:
+        return {
+            "raw": error_body,
+            "error_code": None,
+            "message": error_body or "Upstox API request failed."
+        }
+
+    errors = payload.get("errors")
+
+    if isinstance(errors, list) and errors:
+        first_error = errors[0] or {}
+
+        return {
+            "raw": payload,
+            "error_code": (
+                first_error.get("errorCode")
+                or first_error.get("error_code")
+                or first_error.get("code")
+            ),
+            "message": first_error.get("message") or str(payload)
+        }
+
+    return {
+        "raw": payload,
+        "error_code": (
+            payload.get("errorCode")
+            or payload.get("error_code")
+            or payload.get("code")
+        ),
+        "message": payload.get("message") or str(payload)
+    }
+
+
+def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
+    parsed_error = parse_upstox_error(error_body)
+    error_code = parsed_error.get("error_code")
+    message = parsed_error.get("message") or ""
+
+    if upstox_status_code == 401:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Saved Upstox token is invalid, expired, or not authenticated. "
+                "Please save a fresh Upstox OAuth connection in Connections."
+            )
+        )
+
+    if error_code == "UDAPI100067" or "read only token" in message.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Saved Upstox token is valid, but Expired Instruments API is not permitted "
+                "with this token. Please use an OAuth token from an Upstox Plus/API enabled app."
+            )
+        )
+
+    if not message:
+        message = f"Upstox API request failed with status {upstox_status_code}."
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Upstox API error: {message}"
+    )
+
+
 def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]] = None):
+    token = normalize_upstox_token(access_token)
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Saved Upstox token is empty. "
+                "Please save a fresh Upstox OAuth connection in Connections."
+            )
+        )
+
     query_string = ""
 
     if params:
@@ -573,7 +697,7 @@ def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]
         f"{UPSTOX_BASE_URL}{path}{query_string}",
         headers={
             "Accept": "application/json",
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {token}",
             "User-Agent": "OpenAnalytics/1.0"
         }
     )
@@ -581,28 +705,90 @@ def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             content = response.read().decode("utf-8")
+
+            if not content:
+                return {}
+
             return json.loads(content)
+
     except urllib.error.HTTPError as error:
         error_body = error.read().decode("utf-8", errors="ignore")
-        raise HTTPException(
-            status_code=error.code,
-            detail=error_body or f"Upstox API request failed: {error.code}"
+        raise_clean_upstox_error(
+            upstox_status_code=error.code,
+            error_body=error_body
         )
+
     except urllib.error.URLError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to reach Upstox API: {error}"
         )
 
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON response received from Upstox API."
+        )
+
+
+def upstox_expired_api_get(
+    access_token: str,
+    path: str,
+    underlying_key: str,
+    expiry_date: Optional[str] = None
+):
+    primary_params = {
+        "underlying_key": underlying_key
+    }
+    fallback_params = {
+        "instrument_key": underlying_key
+    }
+
+    if expiry_date:
+        primary_params["expiry_date"] = expiry_date
+        fallback_params["expiry_date"] = expiry_date
+
+    try:
+        return upstox_api_get(
+            access_token=access_token,
+            path=path,
+            params=primary_params
+        )
+    except HTTPException as error:
+        detail = str(error.detail).lower()
+        should_retry_with_instrument_key = (
+            error.status_code == status.HTTP_400_BAD_REQUEST
+            and "instrument_key" in detail
+        )
+
+        if not should_retry_with_instrument_key:
+            raise
+
+        print(
+            "Upstox expired instruments request requires instrument_key. "
+            "Retrying with instrument_key."
+        )
+
+        return upstox_api_get(
+            access_token=access_token,
+            path=path,
+            params=fallback_params
+        )
+
 
 def get_expiries(access_token: str, underlying_key: str) -> List[str]:
-    response = upstox_api_get(
-        access_token,
-        "/expired-instruments/expiries",
-        {"instrument_key": underlying_key}
+    response = upstox_expired_api_get(
+        access_token=access_token,
+        path="/expired-instruments/expiries",
+        underlying_key=underlying_key
     )
 
-    return response.get("data") or []
+    data = response.get("data") if isinstance(response, dict) else []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
 def get_expired_option_contracts(
@@ -610,16 +796,19 @@ def get_expired_option_contracts(
     underlying_key: str,
     expiry_date: str
 ) -> List[Dict[str, Any]]:
-    response = upstox_api_get(
-        access_token,
-        "/expired-instruments/option/contract",
-        {
-            "instrument_key": underlying_key,
-            "expiry_date": expiry_date
-        }
+    response = upstox_expired_api_get(
+        access_token=access_token,
+        path="/expired-instruments/option/contract",
+        underlying_key=underlying_key,
+        expiry_date=expiry_date
     )
 
-    return response.get("data") or []
+    data = response.get("data") if isinstance(response, dict) else []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
 def get_expired_future_contracts(
@@ -627,16 +816,19 @@ def get_expired_future_contracts(
     underlying_key: str,
     expiry_date: str
 ) -> List[Dict[str, Any]]:
-    response = upstox_api_get(
-        access_token,
-        "/expired-instruments/future/contract",
-        {
-            "instrument_key": underlying_key,
-            "expiry_date": expiry_date
-        }
+    response = upstox_expired_api_get(
+        access_token=access_token,
+        path="/expired-instruments/future/contract",
+        underlying_key=underlying_key,
+        expiry_date=expiry_date
     )
 
-    return response.get("data") or []
+    data = response.get("data") if isinstance(response, dict) else []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
 def map_expired_instrument(row: Dict[str, Any], source_type: str):
@@ -664,6 +856,17 @@ def map_expired_instrument(row: Dict[str, Any], source_type: str):
     ]
 
 
+def is_valid_expired_row(row: Dict[str, Any]) -> bool:
+    if not isinstance(row, dict):
+        return False
+
+    instrument_key = safe_text(row.get("instrument_key"))
+    trading_symbol = safe_text(row.get("trading_symbol"))
+    expiry = normalize_expiry(row.get("expiry"))
+
+    return bool(instrument_key or trading_symbol or expiry)
+
+
 def insert_expired_instruments(
     conn,
     rows: List[Dict[str, Any]],
@@ -675,7 +878,12 @@ def insert_expired_instruments(
 
     check_sync_cancelled(conn, sync_id)
 
-    mapped_rows = [map_expired_instrument(row, source_type) for row in rows]
+    valid_rows = [row for row in rows if is_valid_expired_row(row)]
+
+    if not valid_rows:
+        return 0
+
+    mapped_rows = [map_expired_instrument(row, source_type) for row in valid_rows]
 
     check_sync_cancelled(conn, sync_id)
 
@@ -708,6 +916,37 @@ def insert_expired_instruments(
     check_sync_cancelled(conn, sync_id)
 
     return len(mapped_rows)
+
+
+def expired_instruments_exist(
+    conn,
+    underlying_key: str,
+    expiry_date: str,
+    source_type: str
+) -> bool:
+    row = conn.execute("""
+        SELECT COUNT(*)
+        FROM upstox_expired_instruments
+        WHERE underlying_key = ?
+          AND expiry = ?
+          AND source_type = ?;
+    """, [underlying_key, expiry_date, source_type]).fetchone()
+
+    return bool(row and row[0] > 0)
+
+
+def clear_expired_instruments_for_source(
+    conn,
+    underlying_key: str,
+    expiry_date: str,
+    source_type: str
+):
+    conn.execute("""
+        DELETE FROM upstox_expired_instruments
+        WHERE underlying_key = ?
+          AND expiry = ?
+          AND source_type = ?;
+    """, [underlying_key, expiry_date, source_type])
 
 
 def get_data_collection_summary_service():
@@ -835,6 +1074,7 @@ def sync_upstox_current_instruments_service(
     conn = get_connection()
     started_at = datetime.now()
     sync_id = None
+    local_file = None
     total_records = 0
 
     try:
@@ -843,8 +1083,6 @@ def sync_upstox_current_instruments_service(
 
         ensure_no_active_sync_run(conn)
 
-        existing_count = get_current_instrument_count(conn)
-
         sync_id = create_sync_run(
             conn,
             "upstox_current_instruments",
@@ -852,35 +1090,9 @@ def sync_upstox_current_instruments_service(
             "Current instrument dump started."
         )
 
-        local_file = download_upstox_master_file_once(force_download=False)
+        local_file = download_upstox_master_file_once(force_download=True)
 
         check_sync_cancelled(conn, sync_id)
-
-        if (
-            existing_count > 0
-            and local_file.exists()
-            and local_file.stat().st_size > 0
-        ):
-            total_records = existing_count
-
-            finish_sync_run(
-                conn,
-                sync_id,
-                "success",
-                "Current instruments already exist. Reused local/database records.",
-                total_records,
-                started_at
-            )
-
-            if clear_cancel_at_start:
-                clear_cancel_signal()
-
-            return {
-                "status": "success",
-                "message": "Current instruments already exist. No re-import needed.",
-                "total_records": total_records,
-                "duration_seconds": duration_seconds(started_at)
-            }
 
         conn.execute("BEGIN TRANSACTION")
 
@@ -896,7 +1108,7 @@ def sync_upstox_current_instruments_service(
             conn,
             sync_id,
             "success",
-            "Current instruments dumped successfully from local master file.",
+            "Current instruments downloaded and imported successfully.",
             total_records,
             started_at
         )
@@ -906,7 +1118,7 @@ def sync_upstox_current_instruments_service(
 
         return {
             "status": "success",
-            "message": "Current instruments dumped successfully from local master file.",
+            "message": "Current instruments downloaded and imported successfully.",
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at)
         }
@@ -983,6 +1195,7 @@ def sync_upstox_current_instruments_service(
         )
 
     finally:
+        delete_downloaded_master_file(local_file)
         conn.close()
 
 
@@ -1019,46 +1232,66 @@ def sync_upstox_expired_instruments_service(
             for expiry_date in expiries:
                 check_sync_cancelled(conn, sync_id)
 
-                conn.execute("""
-                    DELETE FROM upstox_expired_instruments
-                    WHERE underlying_key = ?
-                      AND expiry = ?;
-                """, [underlying_key, expiry_date])
+                if not expired_instruments_exist(
+                    conn=conn,
+                    underlying_key=underlying_key,
+                    expiry_date=expiry_date,
+                    source_type="expired_option"
+                ):
+                    option_rows = get_expired_option_contracts(
+                        access_token=access_token,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date
+                    )
+
+                    clear_expired_instruments_for_source(
+                        conn=conn,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date,
+                        source_type="expired_option"
+                    )
+
+                    total_records += insert_expired_instruments(
+                        conn=conn,
+                        rows=option_rows,
+                        source_type="expired_option",
+                        sync_id=sync_id
+                    )
+
+                    conn.commit()
+                    time.sleep(API_SLEEP_SECONDS)
 
                 check_sync_cancelled(conn, sync_id)
 
-                option_rows = get_expired_option_contracts(
-                    access_token,
-                    underlying_key,
-                    expiry_date
-                )
+                if not expired_instruments_exist(
+                    conn=conn,
+                    underlying_key=underlying_key,
+                    expiry_date=expiry_date,
+                    source_type="expired_future"
+                ):
+                    future_rows = get_expired_future_contracts(
+                        access_token=access_token,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date
+                    )
 
-                total_records += insert_expired_instruments(
-                    conn,
-                    option_rows,
-                    "expired_option",
-                    sync_id
-                )
+                    clear_expired_instruments_for_source(
+                        conn=conn,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date,
+                        source_type="expired_future"
+                    )
 
-                conn.commit()
-                time.sleep(API_SLEEP_SECONDS)
-                check_sync_cancelled(conn, sync_id)
+                    total_records += insert_expired_instruments(
+                        conn=conn,
+                        rows=future_rows,
+                        source_type="expired_future",
+                        sync_id=sync_id
+                    )
 
-                future_rows = get_expired_future_contracts(
-                    access_token,
-                    underlying_key,
-                    expiry_date
-                )
+                    conn.commit()
+                    time.sleep(API_SLEEP_SECONDS)
 
-                total_records += insert_expired_instruments(
-                    conn,
-                    future_rows,
-                    "expired_future",
-                    sync_id
-                )
-
-                conn.commit()
-                time.sleep(API_SLEEP_SECONDS)
                 check_sync_cancelled(conn, sync_id)
 
         finish_sync_run(
@@ -1178,13 +1411,18 @@ def sync_upstox_all_instruments_service(current_user: dict):
 
     return {
         "status": "success",
-        "message": "Current Upstox master instruments completed successfully. Expired instruments were not run because they require a non-read-only Upstox token.",
+        "message": (
+            "Current Upstox master instruments completed successfully. "
+            "Run expired instruments separately because it requires a valid "
+            "Upstox OAuth token with Expired Instruments API permission."
+        ),
         "total_records": total_records,
         "duration_seconds": duration_seconds(started_at),
         "jobs": {
             "current": current_result
         }
     }
+
 
 def normalize_page(value: int) -> int:
     try:
@@ -1234,11 +1472,13 @@ def build_preview_filters(
                 OR LOWER(COALESCE(exchange, '')) LIKE ?
                 OR LOWER(COALESCE(instrument_type, '')) LIKE ?
                 OR LOWER(COALESCE(underlying_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(underlying_key, '')) LIKE ?
             )
         """)
 
         search_value = f"%{clean_search.lower()}%"
         params.extend([
+            search_value,
             search_value,
             search_value,
             search_value,

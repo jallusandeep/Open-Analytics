@@ -215,6 +215,27 @@ function isRequestCancelled(error) {
   );
 }
 
+function getApiErrorMessage(error, fallbackMessage) {
+  const detail = error?.response?.data?.detail;
+
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail
+      .map((item) => item?.msg || item?.message)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (error?.response?.status) {
+    return `${fallbackMessage} (HTTP ${error.response.status})`;
+  }
+
+  return error?.message || fallbackMessage;
+}
+
 function getSyncTypeLabel(value) {
   const labels = {
     upstox_current_instruments: "Current Instruments",
@@ -679,11 +700,22 @@ function DbPreviewContent({
         </form>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">
+                Loading {previewLabel.toLowerCase()}
+              </span>
+            </div>
+          </div>
+        )}
+
         <DataTable
           columns={previewColumns}
           rows={previewData.rows}
-          loading={loading}
+          loading={false}
           loadingMessage={`Loading ${previewLabel.toLowerCase()}`}
           emptyMessage="No dumped records found."
           gridTemplateColumns={previewGridTemplateColumns}
@@ -955,53 +987,24 @@ function DataCollection() {
     }
   }
 
-  async function handleBulkSync() {
-    if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
-      return;
-    }
-
-    setRunningJob("bulk");
-    setCancelRequested(false);
-    setElapsedSeconds(0);
-    activeSyncControllerRef.current = new AbortController();
-
+  async function refreshAfterSync() {
     try {
-      const response = await syncUpstoxAllInstruments({
-        signal: activeSyncControllerRef.current.signal
-      });
-
-      if (response.data?.status === "cancelled") {
-        showToast(
-          response.data.message || "All instrument dumps cancelled.",
-          "warning"
-        );
-      } else {
-        showToast("All instrument dumps completed.", "success");
-      }
-
-      await loadData(false);
-      if (isPreviewView(activeView)) {
-        await loadPreview(1);
-      }
+      await loadData(false, { showLoading: false });
     } catch (error) {
-      if (isRequestCancelled(error)) {
-        showToast("Cancel requested for data collection.", "warning");
-        return;
-      }
-
       showToast(
-        error.response?.data?.detail || "Unable to run all instrument dumps.",
-        "error"
+        error.response?.data?.detail ||
+          "Dump completed, but the latest status could not be refreshed.",
+        "warning"
       );
-    } finally {
-      setRunningJob(null);
-      activeSyncControllerRef.current = null;
     }
   }
 
-  async function loadData(showRefreshToast = false) {
-    setLoading(true);
+  async function loadData(showRefreshToast = false, options = {}) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setLoading(true);
+    }
 
     try {
       const [summaryResponse, runsResponse] = await Promise.all([
@@ -1032,17 +1035,62 @@ function DataCollection() {
         showToast("Data collection status refreshed.", "success");
       }
     } catch (error) {
-      setSummary(emptySummary);
-      setRuns([]);
-      setRunningJob(null);
-      setElapsedSeconds(0);
+      if (showLoading) {
+        setSummary(emptySummary);
+        setRuns([]);
+        setRunningJob(null);
+        setElapsedSeconds(0);
+      }
+
       showToast(
-        error.response?.data?.detail ||
-          "Backend data collection APIs are not added yet.",
+        getApiErrorMessage(error, "Unable to load data collection status."),
         "warning"
       );
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function handleBulkSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    setRunningJob("bulk");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+
+    try {
+      const response = await syncUpstoxAllInstruments({
+        signal: activeSyncControllerRef.current.signal
+      });
+
+      if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "All instrument dumps cancelled.",
+          "warning"
+        );
+      } else {
+        showToast("All instrument dumps completed.", "success");
+      }
+
+      await refreshAfterSync();
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        error.response?.data?.detail || "Unable to run all instrument dumps.",
+        "error"
+      );
+    } finally {
+      setRunningJob(null);
+      activeSyncControllerRef.current = null;
     }
   }
 
@@ -1063,7 +1111,7 @@ function DataCollection() {
         response.data?.message || "Cancel requested for data collection.";
 
       showToast(message, "warning");
-      await loadData(false);
+      await loadData(false, { showLoading: false });
     } catch (error) {
       showToast(
         error.response?.data?.detail || "Unable to cancel data collection.",
@@ -1099,13 +1147,9 @@ function DataCollection() {
         showToast("Current instruments dump completed.", "success");
       }
 
-      await loadData(false);
-      if (activeView === "current_preview") {
-        await loadPreview(1);
-      }
+      await refreshAfterSync();
     } catch (error) {
       if (isRequestCancelled(error)) {
-        showToast("Cancel requested for current instruments dump.", "warning");
         return;
       }
 
@@ -1145,13 +1189,9 @@ function DataCollection() {
         showToast("Expired instruments dump completed.", "success");
       }
 
-      await loadData(false);
-      if (activeView === "expired_preview") {
-        await loadPreview(1);
-      }
+      await refreshAfterSync();
     } catch (error) {
       if (isRequestCancelled(error)) {
-        showToast("Cancel requested for expired instruments dump.", "warning");
         return;
       }
 
@@ -1301,7 +1341,7 @@ function DataCollection() {
     }
 
     const pollId = window.setInterval(() => {
-      loadData(false);
+      loadData(false, { showLoading: false });
     }, 5000);
 
     return () => window.clearInterval(pollId);

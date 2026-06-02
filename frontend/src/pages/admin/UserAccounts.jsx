@@ -522,7 +522,11 @@ function UserAccounts() {
 
     try {
       await createAdminUser({
-        ...formData,
+        full_name: formData.full_name,
+        email: formData.email,
+        mobile_number: formData.mobile_number,
+        password: formData.password,
+        role: formData.role,
         access_restrictions:
           formData.role === "user" ? formData.access_restrictions : []
       });
@@ -854,15 +858,7 @@ function UserAccounts() {
         }
       >
         <form id="create-user-form" onSubmit={handleCreateUser}>
-          <div className="grid gap-3 md:grid-cols-3">
-            <FloatingInput
-              name="login_id"
-              label="Login ID"
-              value={formData.login_id}
-              onChange={handleInputChange}
-              required
-            />
-
+          <div className="grid gap-3 md:grid-cols-2">
             <FloatingInput
               name="full_name"
               label="Full Name"
