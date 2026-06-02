@@ -12,11 +12,6 @@ ADMIN_USERNAME=${ADMIN_USERNAME:-}
 ADMIN_EMAIL=${ADMIN_EMAIL:-}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
-# Run database initialization
-# Run database initialization
-echo "[INFO] initializing database (running init_db.py)..."
-python init_db.py
-
 echo "==========================================="
 echo "  STARTING OPEN ANALYTICS BACKEND"
 echo "==========================================="
