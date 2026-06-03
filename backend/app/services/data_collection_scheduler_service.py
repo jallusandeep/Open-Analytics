@@ -6,6 +6,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException, status
 
 from app.database import get_connection
+from app.services.connection_service import (
+    notify_admin_super_admins_upstox_token_expiry_service
+)
 from app.services.data_collection_service import (
     sync_upstox_corporate_actions_service,
     sync_upstox_current_instruments_service,
@@ -638,6 +641,13 @@ def run_schedule_job(schedule_id: str, job_type: str):
     )
 
 
+def run_token_expiry_notification_check():
+    try:
+        notify_admin_super_admins_upstox_token_expiry_service()
+    except Exception as error:
+        print(f"Upstox analytics token expiry notification check failed: {error}")
+
+
 def execute_due_schedules_once():
     if not _scheduler_lock.acquire(blocking=False):
         return
@@ -645,6 +655,8 @@ def execute_due_schedules_once():
     conn = get_connection()
 
     try:
+        run_token_expiry_notification_check()
+
         rows = get_due_schedules(conn)
 
         if not rows:
