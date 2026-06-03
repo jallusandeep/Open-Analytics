@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8000
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS")
 
     DUCKDB_PATH: str = "app/db/open_analytics.duckdb"
 
