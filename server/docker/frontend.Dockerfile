@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y \
   libc6 \
   && rm -rf /var/lib/apt/lists/*
 
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm install
