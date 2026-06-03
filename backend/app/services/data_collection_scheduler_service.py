@@ -1,6 +1,4 @@
 import threading
-import time
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -70,7 +68,7 @@ def get_system_scheduler_user():
         "login_id": "system",
         "email": "system@openanalytics.local",
         "full_name": "System Scheduler",
-        "role": "admin"
+        "role": "system"
     }
 
 
@@ -113,6 +111,7 @@ def parse_schedule_time(schedule_time: str) -> tuple[int, int]:
         parts = clean_value.split(":")
         if len(parts) != 2:
             raise ValueError
+
         hour = int(parts[0])
         minute = int(parts[1])
     except Exception:
@@ -166,7 +165,10 @@ def normalize_time_format(time_format: str) -> str:
     return clean_time_format
 
 
-def calculate_next_run_at(schedule_time: str, is_active: bool = True) -> Optional[datetime]:
+def calculate_next_run_at(
+    schedule_time: str,
+    is_active: bool = True
+) -> Optional[datetime]:
     if not is_active:
         return None
 
@@ -180,7 +182,10 @@ def calculate_next_run_at(schedule_time: str, is_active: bool = True) -> Optiona
     return next_run.replace(tzinfo=None)
 
 
-def calculate_next_run_at_after_today(schedule_time: str, is_active: bool = True) -> Optional[datetime]:
+def calculate_next_run_at_after_today(
+    schedule_time: str,
+    is_active: bool = True
+) -> Optional[datetime]:
     if not is_active:
         return None
 
@@ -206,7 +211,7 @@ def row_to_schedule(row) -> Dict[str, Any]:
         "time_format": row[4],
         "timezone": row[5],
         "is_active": bool(row[6]),
-        "last_run_date": row[7],
+        "last_run_date": str(row[7]) if row[7] else None,
         "last_run_at": str(row[8]) if row[8] else None,
         "next_run_at": str(row[9]) if row[9] else None,
         "created_at": str(row[10]) if row[10] else None,
@@ -251,7 +256,7 @@ def create_data_collection_schedule_service(payload: dict, current_user: dict):
     schedule_label = format_schedule_label(schedule_time)
     time_format = normalize_time_format(payload.get("time_format"))
     is_active = bool(payload.get("is_active", True))
-    schedule_id = str(uuid.uuid4())
+    schedule_id = str(__import__("uuid").uuid4())
     user_id = get_user_id(current_user)
     next_run_at = calculate_next_run_at(schedule_time, is_active)
 
@@ -498,6 +503,7 @@ def get_due_schedules(conn):
     now = get_ist_now()
     current_time = now.strftime("%H:%M")
     current_run_at = now.replace(tzinfo=None)
+    today = now.date().isoformat()
 
     return conn.execute("""
         SELECT
@@ -511,6 +517,10 @@ def get_due_schedules(conn):
         WHERE record_status = 'S'
           AND is_active = TRUE
           AND (
+              last_run_date IS NULL
+              OR CAST(last_run_date AS VARCHAR) <> ?
+          )
+          AND (
               next_run_at <= ?
               OR (
                   next_run_at IS NULL
@@ -518,10 +528,15 @@ def get_due_schedules(conn):
               )
           )
         ORDER BY job_type, schedule_time;
-    """, [current_run_at, current_time]).fetchall()
+    """, [today, current_run_at, current_time]).fetchall()
 
 
-def mark_schedule_started(conn, schedule_id: str, schedule_time: str, run_date: str):
+def mark_schedule_started(
+    conn,
+    schedule_id: str,
+    schedule_time: str,
+    run_date: str
+):
     conn.execute("""
         UPDATE upstox_data_collection_schedules
         SET
@@ -541,7 +556,12 @@ def mark_schedule_started(conn, schedule_id: str, schedule_time: str, run_date: 
     conn.commit()
 
 
-def update_schedule_next_run(conn, schedule_id: str, schedule_time: str, is_active: bool):
+def update_schedule_next_run(
+    conn,
+    schedule_id: str,
+    schedule_time: str,
+    is_active: bool
+):
     conn.execute("""
         UPDATE upstox_data_collection_schedules
         SET
@@ -636,9 +656,13 @@ def execute_due_schedules_once():
             schedule_id = row[0]
             job_type = row[1]
             schedule_time = row[2]
+            last_run_date = str(row[3]) if row[3] else None
             is_active = bool(row[4])
 
             if not is_active:
+                continue
+
+            if last_run_date == today:
                 continue
 
             try:
@@ -723,7 +747,11 @@ def start_data_collection_scheduler():
 
 
 def stop_data_collection_scheduler():
+    global _scheduler_thread
+
     _scheduler_stop_event.set()
 
     if _scheduler_thread and _scheduler_thread.is_alive():
         _scheduler_thread.join(timeout=5)
+
+    _scheduler_thread = None

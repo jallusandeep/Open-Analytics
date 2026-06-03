@@ -43,6 +43,14 @@ OHLCV_API_RETRY_ATTEMPTS = 4
 OHLCV_API_RETRY_BASE_SLEEP_SECONDS = 0.75
 STALE_RUNNING_RUN_HOURS = 2
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4
+UPSTOX_FII_DATA_TYPES = [
+    "NSE_EQ|CASH",
+    "NSE_FO|INDEX_FUTURES",
+    "NSE_FO|STOCK_FUTURES",
+    "NSE_FO|INDEX_OPTIONS",
+    "NSE_FO|STOCK_OPTIONS"
+]
+UPSTOX_DII_DATA_TYPES = ["NSE_EQ|CASH"]
 
 CANCEL_SIGNAL_DIR = APP_ROOT / "runtime"
 CANCEL_SIGNAL_FILE = CANCEL_SIGNAL_DIR / "upstox_data_collection.cancel"
@@ -801,12 +809,13 @@ def get_equity_ohlcv_instruments(conn) -> List[Dict[str, str]]:
     rows = conn.execute("""
         SELECT
             instrument_key,
-            trading_symbol
+            MIN(trading_symbol) AS trading_symbol
         FROM upstox_equity_instruments
         WHERE instrument_key IS NOT NULL
           AND TRIM(instrument_key) <> ''
           AND trading_symbol IS NOT NULL
           AND TRIM(trading_symbol) <> ''
+        GROUP BY instrument_key
         ORDER BY trading_symbol;
     """).fetchall()
 
@@ -910,12 +919,13 @@ def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
             )
         )
 
-    if error_code == "UDAPI100067" or "read only token" in message.lower():
+    if error_code in ("UDAPI100067", "UDAPI1149") or "read only token" in message.lower():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Saved Upstox token is valid, but Expired Instruments API is not permitted "
-                "with this token. Please use an OAuth token from an Upstox Plus/API enabled app."
+                "Saved Upstox token is valid, but this Upstox API is not permitted "
+                "for the current account/app. Expired Instruments APIs need Upstox Plus, "
+                "and some market/fundamental/news APIs may need the correct enabled OAuth app."
             )
         )
 
@@ -990,28 +1000,23 @@ def upstox_v3_api_get(
 ):
     token = normalize_upstox_token(access_token)
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Saved Upstox token is empty. "
-                "Please save a fresh Upstox OAuth connection in Connections."
-            )
-        )
-
     query_string = ""
 
     if params:
         query_string = "?" + urllib.parse.urlencode(params)
 
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "OpenAnalytics/1.0"
+    }
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     request = urllib.request.Request(
         f"{UPSTOX_V3_BASE_URL}{path}{query_string}",
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "OpenAnalytics/1.0"
-        }
+        headers=headers
     )
 
     try:
@@ -1049,43 +1054,18 @@ def upstox_expired_api_get(
     underlying_key: str,
     expiry_date: Optional[str] = None
 ):
-    primary_params = {
-        "underlying_key": underlying_key
-    }
-    fallback_params = {
+    params = {
         "instrument_key": underlying_key
     }
 
     if expiry_date:
-        primary_params["expiry_date"] = expiry_date
-        fallback_params["expiry_date"] = expiry_date
+        params["expiry_date"] = expiry_date
 
-    try:
-        return upstox_api_get(
-            access_token=access_token,
-            path=path,
-            params=primary_params
-        )
-    except HTTPException as error:
-        detail = str(error.detail).lower()
-        should_retry_with_instrument_key = (
-            error.status_code == status.HTTP_400_BAD_REQUEST
-            and "instrument_key" in detail
-        )
-
-        if not should_retry_with_instrument_key:
-            raise
-
-        print(
-            "Upstox expired instruments request requires instrument_key. "
-            "Retrying with instrument_key."
-        )
-
-        return upstox_api_get(
-            access_token=access_token,
-            path=path,
-            params=fallback_params
-        )
+    return upstox_api_get(
+        access_token=access_token,
+        path=path,
+        params=params
+    )
 
 
 def get_expiries(access_token: str, underlying_key: str) -> List[str]:
@@ -2076,7 +2056,7 @@ def sync_upstox_ohlcv_daily_service(
             clear_cancel_signal()
 
         ensure_no_active_sync_run(conn)
-        access_token = get_upstox_access_token(conn)
+        access_token = ""
 
         sync_id = create_sync_run(
             conn,
@@ -2769,13 +2749,15 @@ def insert_fii_dii_activity_rows(conn, rows: List[List[Any]]) -> int:
         conn.execute("""
             DELETE FROM fii_dii_activity
             WHERE date = ?
-              AND category = ?;
-        """, [row[0], row[1]])
+              AND category = ?
+              AND data_type = ?;
+        """, [row[0], row[1], row[2]])
 
     conn.executemany("""
         INSERT INTO fii_dii_activity (
             date,
             category,
+            data_type,
             buy_value,
             sell_value,
             net_value,
@@ -2786,7 +2768,7 @@ def insert_fii_dii_activity_rows(conn, rows: List[List[Any]]) -> int:
             raw_json,
             ingested_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
     """, rows)
 
     return len(rows)
@@ -2820,6 +2802,7 @@ def map_market_activity_rows(
         rows.append([
             activity_date.date().isoformat(),
             category,
+            data_type,
             buy_value,
             sell_value,
             buy_value - sell_value,
@@ -3326,24 +3309,28 @@ def sync_upstox_fii_dii_activity_service(
             current_user=current_user
         )
 
-        fii_response = get_upstox_market_activity(
-            access_token,
-            "/market/fii",
-            "NSE_EQ|CASH",
-            "1D"
-        )
-        check_sync_cancelled(conn, sync_id)
-        dii_response = get_upstox_market_activity(
-            access_token,
-            "/market/dii",
-            "NSE_EQ|CASH",
-            "1D"
-        )
+        rows = []
 
-        rows = (
-            map_market_activity_rows("FII", fii_response, "NSE_EQ|CASH")
-            + map_market_activity_rows("DII", dii_response, "NSE_EQ|CASH")
-        )
+        for data_type in UPSTOX_FII_DATA_TYPES:
+            check_sync_cancelled(conn, sync_id)
+            response = get_upstox_market_activity(
+                access_token,
+                "/market/fii",
+                data_type,
+                "1D"
+            )
+            rows.extend(map_market_activity_rows("FII", response, data_type))
+
+        for data_type in UPSTOX_DII_DATA_TYPES:
+            check_sync_cancelled(conn, sync_id)
+            response = get_upstox_market_activity(
+                access_token,
+                "/market/dii",
+                data_type,
+                "1D"
+            )
+            rows.extend(map_market_activity_rows("DII", response, data_type))
+
         total_records = insert_fii_dii_activity_rows(conn, rows)
         conn.commit()
 
@@ -4438,10 +4425,11 @@ def row_to_fii_dii_activity_preview(row):
     return {
         "date": str(row[0]) if row[0] else None,
         "category": row[1],
-        "buy_value": row[2],
-        "sell_value": row[3],
-        "net_value": row[4],
-        "ingested_at": str(row[5]) if row[5] else None
+        "data_type": row[2],
+        "buy_value": row[3],
+        "sell_value": row[4],
+        "net_value": row[5],
+        "ingested_at": str(row[6]) if row[6] else None
     }
 
 
@@ -4671,13 +4659,14 @@ def get_fii_dii_activity_preview_service(
             SELECT
                 date,
                 category,
+                data_type,
                 buy_value,
                 sell_value,
                 net_value,
                 ingested_at
             FROM fii_dii_activity
             {where_sql}
-            ORDER BY date DESC, category
+            ORDER BY date DESC, category, data_type
             LIMIT ?
             OFFSET ?;
         """, params + [current_page_size, offset]).fetchall()

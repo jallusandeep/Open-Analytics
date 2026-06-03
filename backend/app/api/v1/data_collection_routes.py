@@ -13,8 +13,8 @@ from app.services.data_collection_service import (
     get_upstox_expired_instruments_preview_service,
     get_upstox_instruments_preview_service,
     request_cancel_active_sync_runs_service,
-    sync_upstox_corporate_actions_service,
     sync_upstox_all_instruments_service,
+    sync_upstox_corporate_actions_service,
     sync_upstox_current_instruments_service,
     sync_upstox_equity_instruments_service,
     sync_upstox_equity_news_service,
@@ -254,16 +254,34 @@ def get_upstox_fii_dii_activity_preview(
 
 @router.post("/upstox/sync-current")
 def sync_upstox_current_instruments(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_current_instruments_service(current_user)
+    background_tasks.add_task(
+        sync_upstox_current_instruments_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "Current Instruments collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-all")
 def sync_upstox_all_instruments(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_all_instruments_service(current_user)
+    background_tasks.add_task(
+        sync_upstox_all_instruments_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "All configured Upstox data collection jobs started. Monitor will update while they run."
+    }
 
 
 @router.post("/upstox/cancel")
@@ -275,16 +293,34 @@ def cancel_upstox_data_collection(
 
 @router.post("/upstox/sync-expired-default")
 def sync_upstox_expired_instruments(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_expired_instruments_service(current_user)
+    background_tasks.add_task(
+        sync_upstox_expired_instruments_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "Expired Instruments collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-equity")
 def sync_upstox_equity_instruments(
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    return sync_upstox_equity_instruments_service(current_user)
+    background_tasks.add_task(
+        sync_upstox_equity_instruments_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "Equity Instruments collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-ohlcv-daily")
@@ -302,12 +338,10 @@ def sync_upstox_ohlcv_daily(
         target_date=target_date or None
     )
 
-    return (
-        {
-            "status": "started",
-            "message": "Equity OHLCV collection started. Monitor will update while it runs."
-        }
-    )
+    return {
+        "status": "started",
+        "message": "Equity OHLCV collection started. Monitor will update while it runs."
+    }
 
 
 @router.post("/upstox/sync-equity-news")
@@ -315,7 +349,10 @@ def sync_upstox_equity_news(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    background_tasks.add_task(sync_upstox_equity_news_service, current_user)
+    background_tasks.add_task(
+        sync_upstox_equity_news_service,
+        current_user=current_user
+    )
 
     return {
         "status": "started",
@@ -328,7 +365,10 @@ def sync_upstox_fundamentals(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    background_tasks.add_task(sync_upstox_fundamentals_service, current_user)
+    background_tasks.add_task(
+        sync_upstox_fundamentals_service,
+        current_user=current_user
+    )
 
     return {
         "status": "started",
@@ -341,7 +381,10 @@ def sync_upstox_corporate_actions(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    background_tasks.add_task(sync_upstox_corporate_actions_service, current_user)
+    background_tasks.add_task(
+        sync_upstox_corporate_actions_service,
+        current_user=current_user
+    )
 
     return {
         "status": "started",
@@ -354,7 +397,10 @@ def sync_upstox_fii_dii_activity(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    background_tasks.add_task(sync_upstox_fii_dii_activity_service, current_user)
+    background_tasks.add_task(
+        sync_upstox_fii_dii_activity_service,
+        current_user=current_user
+    )
 
     return {
         "status": "started",

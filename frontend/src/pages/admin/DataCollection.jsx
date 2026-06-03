@@ -304,13 +304,14 @@ const corporateActionsGridTemplateColumns =
 const fiiDiiColumns = [
   { key: "date", label: "Date", filterable: false },
   { key: "category", label: "Category", filterable: false },
+  { key: "data_type", label: "Segment", filterable: false },
   { key: "buy_value", label: "Buy Value", filterable: false },
   { key: "sell_value", label: "Sell Value", filterable: false },
   { key: "net_value", label: "Net Value", filterable: false },
   { key: "ingested_at", label: "Ingested At", filterable: false }
 ];
 
-const fiiDiiGridTemplateColumns = "160px 140px 170px 170px 170px 230px";
+const fiiDiiGridTemplateColumns = "160px 140px 170px 170px 170px 170px 230px";
 
 function getStoredCurrentUser() {
   try {
@@ -1025,10 +1026,7 @@ function MonitorContent({
   loading,
   canRunAll,
   runAllDisabled,
-  canRunPreview,
-  runPreviewDisabled,
   onRefresh,
-  onRunPreview,
   onBulkSync,
   renderCell,
   renderActions
@@ -1078,20 +1076,6 @@ function MonitorContent({
             onClick={onRefresh}
             tooltipSide="top"
           />
-
-          {canRunPreview && (
-            <Tooltip text={`Run ${previewLabel}`} side="top">
-              <button
-                type="button"
-                disabled={runPreviewDisabled}
-                onClick={onRunPreview}
-                className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`Run ${previewLabel}`}
-              >
-                <Play size={14} />
-              </button>
-            </Tooltip>
-          )}
 
           {canRunAll && (
             <Tooltip text="Run all dumps" side="top">
@@ -1156,8 +1140,11 @@ function DbPreviewContent({
   loading,
   canRunAll,
   runAllDisabled,
+  canRunPreview,
+  runPreviewDisabled,
   onRefresh,
   onBulkSync,
+  onRunPreview,
   onPreviousPage,
   onNextPage,
   onPageChange
@@ -1204,7 +1191,7 @@ function DbPreviewContent({
               : previewGridTemplateColumns;
 
   const activeMinWidth = isFiiDiiPreview
-    ? "min-w-[1040px]"
+    ? "min-w-[1210px]"
     : isCorporateActionsPreview
       ? "min-w-[1830px]"
       : isFundamentalsPreview
@@ -1470,6 +1457,20 @@ function DbPreviewContent({
             onClick={onRefresh}
             tooltipSide="top"
           />
+
+          {canRunPreview && (
+            <Tooltip text={`Run ${previewLabel}`} side="top">
+              <button
+                type="button"
+                disabled={runPreviewDisabled}
+                onClick={onRunPreview}
+                className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label={`Run ${previewLabel}`}
+              >
+                <Play size={14} />
+              </button>
+            </Tooltip>
+          )}
 
           {canRunAll && (
             <Tooltip text="Run all dumps" side="top">
@@ -2184,13 +2185,21 @@ function DataCollection() {
     setCancelRequested(false);
     setElapsedSeconds(0);
     activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
 
     try {
       const response = await syncUpstoxAllInstruments({
         signal: activeSyncControllerRef.current.signal
       });
 
-      if (response.data?.status === "cancelled") {
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "All configured Upstox data collection jobs started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
         showToast(
           response.data.message || "All instrument dumps cancelled.",
           "warning"
@@ -2202,10 +2211,12 @@ function DataCollection() {
           "warning"
         );
       } else {
-        showToast("All instrument dumps completed.", "success");
+        showToast(response.data?.message || "All instrument dumps completed.", "success");
       }
 
-      await refreshAfterSync();
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -2216,7 +2227,9 @@ function DataCollection() {
         "error"
       );
     } finally {
-      setRunningJob(null);
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
       activeSyncControllerRef.current = null;
     }
   }
@@ -2259,22 +2272,35 @@ function DataCollection() {
     setCancelRequested(false);
     setElapsedSeconds(0);
     activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
 
     try {
       const response = await syncUpstoxCurrentInstruments({
         signal: activeSyncControllerRef.current.signal
       });
 
-      if (response.data?.status === "cancelled") {
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Current Instruments collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
         showToast(
           response.data.message || "Current instruments dump cancelled.",
           "warning"
         );
       } else {
-        showToast("Current instruments dump completed.", "success");
+        showToast(
+          response.data?.message || "Current instruments dump completed.",
+          "success"
+        );
       }
 
-      await refreshAfterSync();
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -2286,7 +2312,9 @@ function DataCollection() {
         "error"
       );
     } finally {
-      setRunningJob(null);
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
       activeSyncControllerRef.current = null;
     }
   }
@@ -2301,22 +2329,35 @@ function DataCollection() {
     setCancelRequested(false);
     setElapsedSeconds(0);
     activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
 
     try {
       const response = await syncUpstoxExpiredInstruments({
         signal: activeSyncControllerRef.current.signal
       });
 
-      if (response.data?.status === "cancelled") {
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Expired Instruments collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
         showToast(
           response.data.message || "Expired instruments dump cancelled.",
           "warning"
         );
       } else {
-        showToast("Expired instruments dump completed.", "success");
+        showToast(
+          response.data?.message || "Expired instruments dump completed.",
+          "success"
+        );
       }
 
-      await refreshAfterSync();
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -2328,7 +2369,9 @@ function DataCollection() {
         "error"
       );
     } finally {
-      setRunningJob(null);
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
       activeSyncControllerRef.current = null;
     }
   }
@@ -2343,13 +2386,21 @@ function DataCollection() {
     setCancelRequested(false);
     setElapsedSeconds(0);
     activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
 
     try {
       const response = await syncUpstoxEquityInstruments({
         signal: activeSyncControllerRef.current.signal
       });
 
-      if (response.data?.status === "cancelled") {
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Equity Instruments collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
         showToast(
           response.data.message || "Equity instruments dump cancelled.",
           "warning"
@@ -2360,10 +2411,15 @@ function DataCollection() {
           "success"
         );
       } else {
-        showToast("Equity instruments dump completed.", "success");
+        showToast(
+          response.data?.message || "Equity instruments dump completed.",
+          "success"
+        );
       }
 
-      await refreshAfterSync();
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
     } catch (error) {
       if (isRequestCancelled(error)) {
         return;
@@ -2374,7 +2430,9 @@ function DataCollection() {
         "error"
       );
     } finally {
-      setRunningJob(null);
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
       activeSyncControllerRef.current = null;
     }
   }
