@@ -2,7 +2,7 @@
 
 ## Project
 
-Open Analyticss
+Open Analytics
 
 Project path:
 
@@ -44,6 +44,32 @@ C:\Projects\open-analytics
 - `frontend/src/pages/admin/Connections.jsx` owns the Connections admin screen.
 - `frontend/src/api/connectionApi.js` isolates frontend connection API calls.
 - The `external_connections` table is initialized from `backend/app/database.py`.
+
+### Data Collection Feature
+
+- Admin users can open the Data Collection screen from the left sidebar.
+- `frontend/src/pages/admin/DataCollection.jsx` owns the collection monitor, preview tabs, run buttons, scheduler modal, and polling state.
+- `frontend/src/api/dataCollectionApi.js` isolates frontend data collection API calls.
+- `backend/app/api/v1/data_collection_routes.py` exposes `/api/v1/data-collection/upstox/...` endpoints.
+- `backend/app/services/data_collection_service.py` owns data collection runners, previews, summaries, run history, cancellation, and Upstox API calls.
+- `backend/app/services/data_collection_scheduler_service.py` owns schedule CRUD and the background scheduler loop.
+- `backend/app/instrument_sync.py` is the standalone instrument sync script.
+- There is no `backend/app/upstox/` package in the current structure. Do not import from `app.upstox`.
+- Monitor job keys currently supported by backend runner and scheduler:
+
+```txt
+current_instruments
+expired_instruments
+equity_instruments
+ohlcv_daily
+equity_news
+fundamentals
+corporate_actions
+fii_dii_activity
+```
+
+- Current, Expired, Equity, and OHLCV have real collection logic.
+- Equity News, Fundamentals, Corporate Actions, and FII/DII have tracked backend runners and scheduler support, but no external provider download/source logic configured yet.
 
 ### User Accounts Component Refactor
 
@@ -119,6 +145,7 @@ backend/
   run_backend.bat
   app/
     main.py
+    instrument_sync.py
     config.py
     database.py
     dependencies.py
@@ -138,6 +165,7 @@ backend/
 - `backend/requirements.txt`: Python dependencies.
 - `backend/run_backend.bat`: creates/uses backend venv, installs requirements, starts Uvicorn.
 - `backend/app/main.py`: FastAPI app creation, CORS, startup database initialization, router registration.
+- `backend/app/instrument_sync.py`: standalone instrument sync CLI/script.
 - `backend/app/config.py`: environment/settings loader; loads backend `.env`.
 - `backend/app/database.py`: DuckDB path resolution, connection helper, schema/table creation, default admin setup.
 - `backend/app/dependencies.py`: JWT current-user dependency plus admin/super-admin guards.
@@ -152,6 +180,7 @@ backend/app/api/v1/
   admin_routes.py
   auth_routes.py
   connection_routes.py
+  data_collection_routes.py
   dashboard_routes.py
   prediction_routes.py
   stock_routes.py
@@ -161,6 +190,7 @@ backend/app/api/v1/
 - `admin_routes.py`: admin-only user account endpoints.
 - `auth_routes.py`: register and login endpoints.
 - `connection_routes.py`: admin-only external provider connection endpoints.
+- `data_collection_routes.py`: admin-only data collection preview, sync, run history, cancellation, and scheduler endpoints.
 - `dashboard_routes.py`: placeholder for dashboard APIs.
 - `prediction_routes.py`: placeholder for prediction APIs.
 - `stock_routes.py`: placeholder for stock APIs.
@@ -181,6 +211,27 @@ GET    /api/v1/connections
 POST   /api/v1/connections/upstox
 POST   /api/v1/connections/upstox/test
 DELETE /api/v1/connections/upstox
+GET    /api/v1/data-collection/upstox/summary
+GET    /api/v1/data-collection/upstox/runs
+GET    /api/v1/data-collection/upstox/instruments
+GET    /api/v1/data-collection/upstox/expired-instruments
+GET    /api/v1/data-collection/upstox/equity-instruments
+GET    /api/v1/data-collection/upstox/ohlcv-daily
+GET    /api/v1/data-collection/upstox/equity-news
+GET    /api/v1/data-collection/upstox/fundamentals
+GET    /api/v1/data-collection/upstox/corporate-actions
+GET    /api/v1/data-collection/upstox/fii-dii-activity
+POST   /api/v1/data-collection/upstox/sync-current
+POST   /api/v1/data-collection/upstox/sync-all
+POST   /api/v1/data-collection/upstox/sync-expired-default
+POST   /api/v1/data-collection/upstox/sync-equity
+POST   /api/v1/data-collection/upstox/sync-ohlcv-daily
+POST   /api/v1/data-collection/upstox/sync-equity-news
+POST   /api/v1/data-collection/upstox/sync-fundamentals
+POST   /api/v1/data-collection/upstox/sync-corporate-actions
+POST   /api/v1/data-collection/upstox/sync-fii-dii-activity
+GET    /api/v1/data-collection/upstox/schedules
+POST   /api/v1/data-collection/upstox/schedules
 ```
 
 ### Backend Services
@@ -191,6 +242,8 @@ backend/app/services/
   audit_service.py
   auth_service.py
   connection_service.py
+  data_collection_service.py
+  data_collection_scheduler_service.py
   prediction_service.py
   stock_service.py
   user_service.py
@@ -199,6 +252,8 @@ backend/app/services/
 - `admin_service.py`: lists, creates, and deactivates users for admin screens.
 - `auth_service.py`: register/login logic and JWT issuance.
 - `connection_service.py`: stores, tests, lists, and disconnects external provider connections.
+- `data_collection_service.py`: data collection runners, preview queries, summary, run history, cancellation, and Upstox API helpers.
+- `data_collection_scheduler_service.py`: data collection schedule CRUD and background scheduled execution.
 - `audit_service.py`: reserved for audit-specific service logic.
 - `prediction_service.py`: reserved for prediction business logic.
 - `stock_service.py`: reserved for stock business logic.
@@ -308,6 +363,7 @@ frontend/src/api/
   authApi.js
   axiosClient.js
   connectionApi.js
+  dataCollectionApi.js
   predictionApi.js
   stockApi.js
 ```
@@ -316,6 +372,7 @@ frontend/src/api/
 - `authApi.js`: login, register, and current-user API calls.
 - `adminApi.js`: admin user list/create/delete API calls.
 - `connectionApi.js`: list, save, test, and disconnect provider connection API calls.
+- `dataCollectionApi.js`: data collection preview, sync, run history, cancellation, and schedule API calls.
 - `predictionApi.js`: placeholder for prediction API calls.
 - `stockApi.js`: placeholder for stock API calls.
 
@@ -420,12 +477,14 @@ frontend/src/pages/
 frontend/src/pages/admin/
   AuditLogs.jsx
   Connections.jsx
+  DataCollection.jsx
   UserAccounts.jsx
   UserManagement.jsx
 ```
 
 - `UserAccounts.jsx`: admin user account screen; owns page state and uses reusable table/common components.
 - `Connections.jsx`: admin external connection screen for saving/testing Upstox credentials.
+- `DataCollection.jsx`: admin collection monitor, preview tabs, run buttons, schedule modal, and polling/timer UI.
 - `AuditLogs.jsx`: placeholder for audit log screen.
 - `UserManagement.jsx`: placeholder for user management screen.
 
@@ -574,7 +633,7 @@ Frontend:     http://localhost:5173
 Compile backend:
 
 ```powershell
-backend\venv\Scripts\python.exe -m py_compile backend\app\config.py backend\app\database.py backend\app\main.py backend\app\services\admin_service.py backend\app\services\connection_service.py backend\app\api\v1\admin_routes.py backend\app\api\v1\connection_routes.py
+backend\venv\Scripts\python.exe -m py_compile backend\app\config.py backend\app\database.py backend\app\main.py backend\app\instrument_sync.py backend\app\services\admin_service.py backend\app\services\connection_service.py backend\app\services\data_collection_service.py backend\app\services\data_collection_scheduler_service.py backend\app\api\v1\admin_routes.py backend\app\api\v1\connection_routes.py backend\app\api\v1\data_collection_routes.py
 ```
 
 Check users:
@@ -601,10 +660,11 @@ Recent local commits:
 3fead09 Fix admin sidebar user accounts visibility
 ```
 
-## Next Work
+## Current Caveats / Next Work
 
-- Add Upstox OAuth/token refresh flow if live authenticated API calls are needed.
+- Do not use `backend/app/upstox`; the current project structure keeps data collection in `backend/app/services`.
+- Add real external source/download logic for Equity News, Fundamentals, Corporate Actions, and FII/DII. Their runners and scheduler jobs already exist but currently leave preview data unchanged.
+- Add Upstox OAuth/token refresh flow if live authenticated API calls need long-term refresh.
 - Add admin user history screen from `users_history`.
 - Add stronger frontend error display for 401/403 admin API failures.
-- Add backend tests for admin user listing and DB path resolution.
-- Add backend tests for external connection save/list/disconnect behavior.
+- Add backend tests for admin user listing, DB path resolution, external connection save/list/disconnect, and data collection scheduler behavior.

@@ -9,11 +9,19 @@ from app.config import settings
 from app.version import APP_VERSION, SCHEMA_VERSION
 
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = Path(__file__).resolve().parent
+BACKEND_ROOT = APP_ROOT.parent
 DB_PATH = Path(settings.DUCKDB_PATH)
 
 if not DB_PATH.is_absolute():
-    DB_PATH = BACKEND_ROOT / DB_PATH
+    # Supports both:
+    #   DUCKDB_PATH=app/db/open_analytics.duckdb
+    #   DUCKDB_PATH=db/open_analytics.duckdb
+    # and resolves both to the real backend/app database area.
+    if DB_PATH.parts and DB_PATH.parts[0] == "app":
+        DB_PATH = BACKEND_ROOT / DB_PATH
+    else:
+        DB_PATH = APP_ROOT / DB_PATH
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -53,6 +61,83 @@ def safe_execute(conn, query: str):
         conn.execute(query)
     except Exception as e:
         print(f"Skipped SQL: {query}")
+        print(f"Reason: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def migrate_fii_dii_activity_table(conn):
+    try:
+        columns = conn.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'fii_dii_activity';
+        """).fetchall()
+    except Exception:
+        return
+
+    column_names = {row[0] for row in columns}
+
+    if not column_names or "data_type" not in column_names:
+        return
+
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fii_dii_activity_v2 (
+                date DATE NOT NULL,
+                category VARCHAR NOT NULL,
+                data_type VARCHAR NOT NULL DEFAULT 'NSE_EQ|CASH',
+                buy_value DOUBLE,
+                sell_value DOUBLE,
+                net_value DOUBLE,
+                buy_contracts BIGINT DEFAULT 0,
+                sell_contracts BIGINT DEFAULT 0,
+                oi_contracts BIGINT DEFAULT 0,
+                oi_amount DOUBLE DEFAULT 0,
+                raw_json JSON,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (date, category, data_type)
+            );
+        """)
+
+        conn.execute("""
+            INSERT OR REPLACE INTO fii_dii_activity_v2 (
+                date,
+                category,
+                data_type,
+                buy_value,
+                sell_value,
+                net_value,
+                buy_contracts,
+                sell_contracts,
+                oi_contracts,
+                oi_amount,
+                raw_json,
+                ingested_at
+            )
+            SELECT
+                date,
+                category,
+                COALESCE(data_type, 'NSE_EQ|CASH'),
+                buy_value,
+                sell_value,
+                net_value,
+                COALESCE(buy_contracts, 0),
+                COALESCE(sell_contracts, 0),
+                COALESCE(oi_contracts, 0),
+                COALESCE(oi_amount, 0),
+                raw_json,
+                COALESCE(ingested_at, CURRENT_TIMESTAMP)
+            FROM fii_dii_activity;
+        """)
+
+        conn.execute("DROP TABLE fii_dii_activity;")
+        conn.execute("ALTER TABLE fii_dii_activity_v2 RENAME TO fii_dii_activity;")
+        conn.commit()
+    except Exception as e:
+        print("Skipped FII/DII activity table migration.")
         print(f"Reason: {e}")
         try:
             conn.rollback()
@@ -347,6 +432,10 @@ def init_database():
                 api_secret VARCHAR,
                 redirect_url VARCHAR,
                 access_token VARCHAR,
+                refresh_token VARCHAR,
+                token_type VARCHAR,
+                access_token_expires_at TIMESTAMP,
+                token_updated_at TIMESTAMP,
                 connection_status VARCHAR DEFAULT 'saved',
                 last_tested_at TIMESTAMP,
                 record_status VARCHAR DEFAULT 'S',
@@ -362,6 +451,10 @@ def init_database():
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_secret VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN redirect_url VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN refresh_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN token_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token_expires_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN token_updated_at TIMESTAMP;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN connection_status VARCHAR DEFAULT 'saved';")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN last_tested_at TIMESTAMP;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN record_status VARCHAR DEFAULT 'S';")
@@ -529,6 +622,43 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
         # -----------------------------
+        # Upstox equity instruments
+        # Daily NSE_EQ equity collection table.
+        # instrument_key is the Upstox API key used for all future API calls.
+        # downloaded_at is refreshed only when the daily equity dump runs.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_equity_instruments (
+                instrument_key VARCHAR PRIMARY KEY,
+                trading_symbol VARCHAR,
+                name VARCHAR,
+                isin VARCHAR,
+                exchange VARCHAR DEFAULT 'NSE',
+                segment VARCHAR DEFAULT 'NSE_EQ',
+                exchange_token VARCHAR,
+                tick_size DOUBLE,
+                lot_size BIGINT,
+                freeze_quantity DOUBLE,
+                short_name VARCHAR,
+                security_type VARCHAR,
+                downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN exchange VARCHAR DEFAULT 'NSE';")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN segment VARCHAR DEFAULT 'NSE_EQ';")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN exchange_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN tick_size DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN lot_size BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN freeze_quantity DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN short_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN security_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_equity_instruments ADD COLUMN downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
         # Upstox sync runs
         # -----------------------------
         conn.execute("""
@@ -540,7 +670,11 @@ def init_database():
                 finished_at TIMESTAMP,
                 duration_seconds BIGINT,
                 message VARCHAR,
-                total_records BIGINT DEFAULT 0
+                total_records BIGINT DEFAULT 0,
+                trigger_source VARCHAR DEFAULT 'manual',
+                triggered_by_id VARCHAR,
+                triggered_by_name VARCHAR,
+                triggered_by_role VARCHAR
             );
         """)
 
@@ -551,6 +685,16 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN duration_seconds BIGINT;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN message VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN total_records BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN trigger_source VARCHAR DEFAULT 'manual';")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_role VARCHAR;")
+
+        conn.execute("""
+            UPDATE upstox_sync_runs
+            SET trigger_source = 'manual'
+            WHERE trigger_source IS NULL OR TRIM(trigger_source) = '';
+        """)
 
         conn.execute("""
             UPDATE upstox_sync_runs
@@ -560,6 +704,71 @@ def init_database():
                 duration_seconds = date_diff('second', started_at, CURRENT_TIMESTAMP),
                 message = 'Sync run was interrupted before completion.'
             WHERE status IN ('running', 'cancel_requested');
+        """)
+
+        # -----------------------------
+        # Upstox data collection schedules
+        # Multiple IST schedules for current, expired, and equity instruments.
+        # schedule_time is stored in 24-hour HH:MM format.
+        # schedule_label is used for 12-hour display like 09:30 AM.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_data_collection_schedules (
+                schedule_id VARCHAR PRIMARY KEY,
+                job_type VARCHAR NOT NULL,
+                schedule_time VARCHAR NOT NULL,
+                schedule_label VARCHAR,
+                time_format VARCHAR DEFAULT '24',
+                timezone VARCHAR DEFAULT 'Asia/Kolkata',
+                is_active BOOLEAN DEFAULT TRUE,
+                last_run_date VARCHAR,
+                last_run_at TIMESTAMP,
+                next_run_at TIMESTAMP,
+                record_status VARCHAR DEFAULT 'S',
+                version_no INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN job_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_time VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_label VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN time_format VARCHAR DEFAULT '24';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN timezone VARCHAR DEFAULT 'Asia/Kolkata';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN is_active BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN last_run_date VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN last_run_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN next_run_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN version_no INTEGER DEFAULT 1;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN created_by VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN updated_by VARCHAR;")
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET timezone = 'Asia/Kolkata'
+            WHERE timezone IS NULL OR TRIM(timezone) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET time_format = '24'
+            WHERE time_format IS NULL OR TRIM(time_format) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET record_status = 'S'
+            WHERE record_status IS NULL;
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET version_no = 1
+            WHERE version_no IS NULL;
         """)
 
         # -----------------------------
@@ -665,8 +874,171 @@ def init_database():
             );
         """)
 
+        # -----------------------------
+        # OHLCV Daily
+        # Core daily price candle data for NSE equity instruments.
+        # Linked by instrument_key to upstox_equity_instruments.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ohlcv_daily (
+                instrument_key VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                date DATE NOT NULL,
+                open DOUBLE NOT NULL,
+                high DOUBLE NOT NULL,
+                low DOUBLE NOT NULL,
+                close DOUBLE NOT NULL,
+                volume BIGINT NOT NULL,
+                oi BIGINT DEFAULT 0,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instrument_key, date)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN date DATE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN open DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN high DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN low DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN close DOUBLE;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN volume BIGINT;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN oi BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE ohlcv_daily ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Equity news
+        # Stock-level news articles.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS equity_news (
+                news_id VARCHAR PRIMARY KEY,
+                instrument_key VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                title VARCHAR,
+                summary TEXT,
+                source VARCHAR,
+                url VARCHAR,
+                published_at TIMESTAMP,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN title VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN summary TEXT;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN source VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN url VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN thumbnail VARCHAR;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN published_at TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Fundamentals
+        # Company financial data.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fundamentals (
+                instrument_key VARCHAR NOT NULL,
+                isin VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                report_date DATE NOT NULL,
+                period_type VARCHAR NOT NULL,
+                revenue DOUBLE,
+                net_profit DOUBLE,
+                eps DOUBLE,
+                pe_ratio DOUBLE,
+                debt_to_equity DOUBLE,
+                roe DOUBLE,
+                cash_from_operations DOUBLE,
+                promoter_holding_pct DOUBLE,
+                fii_holding_pct DOUBLE,
+                dii_holding_pct DOUBLE,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instrument_key, report_date, period_type)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN report_date DATE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN period_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN revenue DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN net_profit DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN eps DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN pe_ratio DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN debt_to_equity DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN roe DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN cash_from_operations DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN promoter_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN fii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN dii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE fundamentals ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # Corporate actions
+        # Dividends, splits, bonuses, and similar company actions.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS corporate_actions (
+                instrument_key VARCHAR NOT NULL,
+                isin VARCHAR NOT NULL,
+                trading_symbol VARCHAR NOT NULL,
+                action_type VARCHAR NOT NULL,
+                ex_date DATE NOT NULL,
+                record_date DATE,
+                amount DOUBLE,
+                remarks VARCHAR,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instrument_key, action_type, ex_date)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN action_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ex_date DATE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN record_date DATE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN amount DOUBLE;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ratio VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN remarks VARCHAR;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE corporate_actions ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # FII / DII activity
+        # Market-level institutional flow data.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fii_dii_activity (
+                date DATE NOT NULL,
+                category VARCHAR NOT NULL,
+                data_type VARCHAR NOT NULL DEFAULT 'NSE_EQ|CASH',
+                buy_value DOUBLE,
+                sell_value DOUBLE,
+                net_value DOUBLE,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (date, category, data_type)
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN category VARCHAR;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN data_type VARCHAR DEFAULT 'NSE_EQ|CASH';")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN buy_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN sell_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN net_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN buy_contracts BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN sell_contracts BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN oi_contracts BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN oi_amount DOUBLE DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE fii_dii_activity ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        migrate_fii_dii_activity_table(conn)
+
         conn.commit()
-        print("Database initialized successfully.")
+        print(f"Database initialized successfully: {DB_PATH}")
 
     except Exception as e:
         try:
