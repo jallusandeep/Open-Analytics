@@ -67,7 +67,7 @@ const emptySummary = {
 const emptyPreviewData = {
   rows: [],
   page: 1,
-  page_size: 50,
+  page_size: 2000,
   total_pages: 1,
   total_records: 0
 };
@@ -1232,7 +1232,7 @@ function DataCollection() {
   const [previewSegment, setPreviewSegment] = useState("all");
   const [previewInstrumentType, setPreviewInstrumentType] = useState("all");
   const [previewPage, setPreviewPage] = useState(1);
-  const [previewPageSize] = useState(50);
+  const [previewPageSize] = useState(2000);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewData, setPreviewData] = useState(emptyPreviewData);
 
@@ -1461,7 +1461,7 @@ function DataCollection() {
   function scheduleStartedJobRefresh() {
     window.setTimeout(() => {
       loadData(false, { showLoading: false });
-    }, 1000);
+    }, 2000);
   }
 
   async function loadData(showRefreshToast = false, options = {}) {

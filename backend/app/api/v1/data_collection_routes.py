@@ -65,7 +65,7 @@ def get_upstox_instruments_preview(
     segment: str = Query("all", description="Filter by segment."),
     instrument_type: str = Query("all", description="Filter by instrument type."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=10, le=200),
+    page_size: int = Query(2000, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -91,7 +91,7 @@ def get_upstox_expired_instruments_preview(
     segment: str = Query("all", description="Filter by segment."),
     instrument_type: str = Query("all", description="Filter by instrument type."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=10, le=200),
+    page_size: int = Query(2000, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
