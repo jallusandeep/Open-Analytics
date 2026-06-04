@@ -3,6 +3,8 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 
@@ -14,10 +16,6 @@ TELEGRAM_PROVIDER = "telegram"
 
 UPSTOX_BASE_URL = "https://api.upstox.com/v2"
 
-UPSTOX_AUTHORIZE_URL = f"{UPSTOX_BASE_URL}/login/authorization/dialog"
-UPSTOX_TOKEN_URL = f"{UPSTOX_BASE_URL}/login/authorization/token"
-
-UPSTOX_PROFILE_TEST_PATH = "/user/profile"
 UPSTOX_EXPIRED_PERMISSION_TEST_PATH = "/expired-instruments/expiries"
 UPSTOX_EXPIRED_PERMISSION_TEST_KEY = "NSE_INDEX|Nifty 50"
 
@@ -31,11 +29,26 @@ UPSTOX_EXPIRED_HISTORICAL_CANDLE_PATH = "/expired-instruments/historical-candle"
 
 TELEGRAM_BASE_URL = "https://api.telegram.org"
 
+IST_TIMEZONE = "Asia/Kolkata"
 REQUEST_TIMEOUT_SECONDS = 30
 
 
 def safe_strip(value):
     return value.strip() if isinstance(value, str) else ""
+
+
+def get_ist_now():
+    try:
+        return datetime.now(ZoneInfo(IST_TIMEZONE)).replace(tzinfo=None)
+    except ZoneInfoNotFoundError:
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+
+def add_one_year(value: datetime) -> datetime:
+    try:
+        return value.replace(year=value.year + 1)
+    except ValueError:
+        return value.replace(month=2, day=28, year=value.year + 1)
 
 
 def normalize_upstox_token(access_token: str) -> str:
@@ -45,6 +58,44 @@ def normalize_upstox_token(access_token: str) -> str:
         token = token[7:].strip()
 
     return token
+
+
+def parse_db_datetime(value):
+    if not value:
+        return None
+
+    if isinstance(value, datetime):
+        return value
+
+    clean_value = str(value).strip()
+
+    for date_format in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y"
+    ):
+        try:
+            parsed_date = datetime.strptime(clean_value, date_format)
+
+            if date_format in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+                parsed_date = parsed_date.replace(hour=23, minute=59, second=59)
+
+            return parsed_date
+        except ValueError:
+            pass
+
+    try:
+        parsed_date = datetime.fromisoformat(clean_value.replace("Z", "+00:00"))
+
+        if parsed_date.tzinfo is not None:
+            parsed_date = parsed_date.astimezone(ZoneInfo(IST_TIMEZONE))
+            parsed_date = parsed_date.replace(tzinfo=None)
+
+        return parsed_date
+    except Exception:
+        return None
 
 
 def connection_to_response(row):
@@ -58,6 +109,7 @@ def connection_to_response(row):
         api_secret,
         redirect_url,
         access_token,
+        access_token_expires_at,
         connection_status,
         last_tested_at,
         created_at,
@@ -72,6 +124,9 @@ def connection_to_response(row):
         "connection_status": connection_status,
         "has_api_secret": bool(api_secret),
         "has_access_token": bool(access_token),
+        "access_token_expires_at": (
+            str(access_token_expires_at) if access_token_expires_at else None
+        ),
         "last_tested_at": str(last_tested_at) if last_tested_at else None,
         "created_at": str(created_at) if created_at else None,
         "updated_at": str(updated_at) if updated_at else None
@@ -87,12 +142,14 @@ def get_connection_raw_by_provider(conn, provider: str):
             api_secret,
             redirect_url,
             access_token,
+            access_token_expires_at,
             connection_status,
             last_tested_at,
             created_at,
             updated_at
         FROM external_connections
         WHERE provider = ?
+          AND record_status = 'S'
         LIMIT 1;
     """, [provider]).fetchone()
 
@@ -117,6 +174,7 @@ def list_connections_service():
                 api_secret,
                 redirect_url,
                 access_token,
+                access_token_expires_at,
                 connection_status,
                 last_tested_at,
                 created_at,
@@ -183,31 +241,6 @@ def is_expired_permission_error(error_code, message: str) -> bool:
         or "upstox plus" in lowered_message
         or "expired instruments api" in lowered_message
     )
-
-
-def build_upstox_authorization_url(api_key: str, redirect_url: str, state: str = ""):
-    if not safe_strip(api_key):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox API key is required."
-        )
-
-    if not safe_strip(redirect_url):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox redirect URL is required."
-        )
-
-    params = {
-        "response_type": "code",
-        "client_id": safe_strip(api_key),
-        "redirect_uri": safe_strip(redirect_url)
-    }
-
-    if safe_strip(state):
-        params["state"] = safe_strip(state)
-
-    return f"{UPSTOX_AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
 
 
 def upstox_api_get(access_token: str, path: str, params=None):
@@ -310,111 +343,6 @@ def upstox_public_api_get(url: str):
         )
 
 
-def exchange_upstox_authorization_code(
-    api_key: str,
-    api_secret: str,
-    redirect_url: str,
-    authorization_code: str
-):
-    clean_api_key = safe_strip(api_key)
-    clean_api_secret = safe_strip(api_secret)
-    clean_redirect_url = safe_strip(redirect_url)
-    clean_authorization_code = safe_strip(authorization_code)
-
-    if not clean_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox API key is required."
-        )
-
-    if not clean_api_secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox API secret is required."
-        )
-
-    if not clean_redirect_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox redirect URL is required."
-        )
-
-    if not clean_authorization_code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox authorization code is required."
-        )
-
-    payload = urllib.parse.urlencode({
-        "code": clean_authorization_code,
-        "client_id": clean_api_key,
-        "client_secret": clean_api_secret,
-        "redirect_uri": clean_redirect_url,
-        "grant_type": "authorization_code"
-    }).encode("utf-8")
-
-    request = urllib.request.Request(
-        UPSTOX_TOKEN_URL,
-        data=payload,
-        method="POST",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "OpenAnalytics/1.0"
-        }
-    )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=REQUEST_TIMEOUT_SECONDS
-        ) as response:
-            content = response.read().decode("utf-8")
-
-            if not content:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Empty response received from Upstox token API."
-                )
-
-            token_response = json.loads(content)
-
-    except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="ignore")
-        parsed_error = parse_upstox_error(error_body)
-
-        raise HTTPException(
-            status_code=error.code,
-            detail={
-                "message": parsed_error["message"] or "Unable to exchange Upstox authorization code.",
-                "error_code": parsed_error["error_code"],
-                "raw": parsed_error["raw"]
-            }
-        )
-
-    except urllib.error.URLError as error:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach Upstox token API: {error}"
-        )
-
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Invalid JSON response received from Upstox token API."
-        )
-
-    access_token = normalize_upstox_token(token_response.get("access_token", ""))
-
-    if not access_token:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Upstox token API did not return an access token."
-        )
-
-    return token_response
-
-
 def download_upstox_active_instruments(exchange: str = "complete"):
     exchange_code = safe_strip(exchange) if exchange else "complete"
 
@@ -425,133 +353,17 @@ def download_upstox_active_instruments(exchange: str = "complete"):
     return upstox_public_api_get(url)
 
 
-def validate_upstox_token(access_token: str):
-    token = normalize_upstox_token(access_token)
+def save_upstox_connection_service(request, current_user):
+    access_token = normalize_upstox_token(getattr(request, "access_token", None))
 
-    if not token:
+    if not access_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox access token is required."
+            detail="Upstox analytics token is required."
         )
 
-    try:
-        profile_response = upstox_api_get(
-            access_token=token,
-            path=UPSTOX_PROFILE_TEST_PATH
-        )
-
-        if not isinstance(profile_response, dict):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Invalid response received from Upstox profile API."
-            )
-
-        return profile_response
-
-    except HTTPException as e:
-        detail = e.detail
-        message = ""
-
-        if isinstance(detail, dict):
-            message = detail.get("message") or ""
-        else:
-            message = str(detail)
-
-        error_code = detail.get("error_code") if isinstance(detail, dict) else None
-
-        if error_code == "UDAPI100067" or "read only token" in message.lower():
-            return {
-                "status": "limited",
-                "message": message or "Upstox token is read only."
-            }
-
-        if e.status_code == status.HTTP_403_FORBIDDEN:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Upstox token was rejected by Upstox authorization. "
-                    f"Upstox response: {message or detail}"
-                )
-            )
-
-        if e.status_code == status.HTTP_401_UNAUTHORIZED:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Upstox token is invalid or expired. Please save a fresh OAuth access token."
-            )
-
-        raise HTTPException(
-            status_code=e.status_code,
-            detail=f"Unable to validate Upstox token. Upstox response: {message or detail}"
-        )
-
-
-def get_upstox_profile_label(profile_response):
-    try:
-        data = profile_response.get("data") or {}
-        user_name = data.get("user_name")
-        user_id = data.get("user_id")
-
-        if user_name and user_id:
-            return f"{user_name} ({user_id})"
-
-        if user_name:
-            return user_name
-
-        if user_id:
-            return user_id
-
-    except Exception:
-        pass
-
-    return None
-
-
-def resolve_upstox_access_token_from_request(request):
-    authorization_code = safe_strip(getattr(request, "authorization_code", None))
-    manual_access_token = normalize_upstox_token(getattr(request, "access_token", None))
-
-    api_key = safe_strip(getattr(request, "api_key", None))
-    api_secret = safe_strip(getattr(request, "api_secret", None))
-    redirect_url = safe_strip(getattr(request, "redirect_url", None))
-
-    if authorization_code:
-        token_response = exchange_upstox_authorization_code(
-            api_key=api_key,
-            api_secret=api_secret,
-            redirect_url=redirect_url,
-            authorization_code=authorization_code
-        )
-
-        return {
-            "access_token": normalize_upstox_token(token_response.get("access_token")),
-            "api_key": api_key,
-            "api_secret": api_secret,
-            "redirect_url": redirect_url,
-            "used_oauth_code": True
-        }
-
-    if manual_access_token:
-        return {
-            "access_token": manual_access_token,
-            "api_key": api_key,
-            "api_secret": api_secret,
-            "redirect_url": redirect_url,
-            "used_oauth_code": False
-        }
-
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Enter either Upstox authorization code or access token."
-    )
-
-
-def save_upstox_connection_service(request, current_user):
-    resolved = resolve_upstox_access_token_from_request(request)
-
-    access_token = resolved["access_token"]
-    profile_response = validate_upstox_token(access_token)
-    profile_label = get_upstox_profile_label(profile_response)
+    saved_at = get_ist_now()
+    access_token_expires_at = add_one_year(saved_at).strftime("%Y-%m-%d %H:%M:%S")
 
     conn = get_connection()
 
@@ -560,21 +372,16 @@ def save_upstox_connection_service(request, current_user):
 
         if existing:
             connection_id = existing[0]
-            existing_api_key = existing[2]
-            existing_api_secret = existing[3]
-            existing_redirect_url = existing[4]
-
-            api_key_to_save = resolved["api_key"] or existing_api_key
-            api_secret_to_save = resolved["api_secret"] or existing_api_secret
-            redirect_url_to_save = resolved["redirect_url"] or existing_redirect_url
 
             conn.execute("""
                 UPDATE external_connections
                 SET
-                    api_key = ?,
-                    api_secret = ?,
-                    redirect_url = ?,
+                    api_key = NULL,
+                    api_secret = NULL,
+                    redirect_url = NULL,
                     access_token = ?,
+                    access_token_expires_at = ?,
+                    token_updated_at = CURRENT_TIMESTAMP,
                     connection_status = 'connected',
                     record_status = 'S',
                     last_tested_at = CURRENT_TIMESTAMP,
@@ -582,10 +389,8 @@ def save_upstox_connection_service(request, current_user):
                     updated_by = ?
                 WHERE connection_id = ?;
             """, [
-                api_key_to_save,
-                api_secret_to_save,
-                redirect_url_to_save,
                 access_token,
+                access_token_expires_at,
                 current_user["user_id"],
                 connection_id
             ])
@@ -601,6 +406,8 @@ def save_upstox_connection_service(request, current_user):
                     api_secret,
                     redirect_url,
                     access_token,
+                    access_token_expires_at,
+                    token_updated_at,
                     connection_status,
                     record_status,
                     version_no,
@@ -608,14 +415,15 @@ def save_upstox_connection_service(request, current_user):
                     created_by,
                     updated_by
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
             """, [
                 connection_id,
                 UPSTOX_PROVIDER,
-                resolved["api_key"] or None,
-                resolved["api_secret"] or None,
-                resolved["redirect_url"] or None,
+                None,
+                None,
+                None,
                 access_token,
+                access_token_expires_at,
                 "connected",
                 "S",
                 1,
@@ -623,11 +431,12 @@ def save_upstox_connection_service(request, current_user):
                 current_user["user_id"]
             ])
 
+        clear_upstox_expiry_notification_marker(conn)
         conn.commit()
 
         return {
             "status": "success",
-            "message": "Upstox connected successfully."
+            "message": "Upstox analytics token saved successfully."
         }
 
     except HTTPException:
@@ -645,7 +454,7 @@ def save_upstox_connection_service(request, current_user):
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to save Upstox connection: {e}"
+            detail=f"Unable to save Upstox analytics token: {e}"
         )
 
     finally:
@@ -679,7 +488,7 @@ def validate_upstox_expired_permission(access_token: str):
         if primary_error.status_code == status.HTTP_401_UNAUTHORIZED:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Upstox token is invalid or expired. Please save a fresh OAuth access token."
+                detail="Upstox token is invalid or expired. Please save a fresh analytics token."
             )
 
         return upstox_api_get(
@@ -780,7 +589,7 @@ def test_upstox_connection_service(current_user):
     try:
         existing = get_upstox_connection_raw(conn)
 
-        if not existing or existing[6] == "disconnected":
+        if not existing or existing[7] == "disconnected":
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Upstox connection is not configured."
@@ -796,20 +605,6 @@ def test_upstox_connection_service(current_user):
             )
 
         try:
-            profile_response = validate_upstox_token(access_token)
-
-        except HTTPException:
-            update_connection_test_status(
-                conn=conn,
-                connection_id=connection_id,
-                current_user=current_user,
-                connection_status="failed"
-            )
-            raise
-
-        profile_label = get_upstox_profile_label(profile_response)
-
-        try:
             validate_upstox_expired_permission(access_token)
 
         except HTTPException as e:
@@ -823,6 +618,19 @@ def test_upstox_connection_service(current_user):
             else:
                 message = str(detail)
 
+            if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(error_code, message):
+                update_connection_test_status(
+                    conn=conn,
+                    connection_id=connection_id,
+                    current_user=current_user,
+                    connection_status="connected"
+                )
+
+                return {
+                    "status": "success",
+                    "message": "Upstox analytics token verified successfully."
+                }
+
             if e.status_code == status.HTTP_401_UNAUTHORIZED:
                 update_connection_test_status(
                     conn=conn,
@@ -833,35 +641,8 @@ def test_upstox_connection_service(current_user):
 
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Upstox token is invalid or expired. Please save a fresh OAuth access token."
+                    detail="Upstox token is invalid or expired. Please save a fresh analytics token."
                 )
-
-            if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(error_code, message):
-                update_connection_test_status(
-                    conn=conn,
-                    connection_id=connection_id,
-                    current_user=current_user,
-                    connection_status="limited"
-                )
-
-                if profile_label:
-                    return {
-                        "status": "limited",
-                        "message": (
-                            f"Upstox token is valid for {profile_label}, but Expired Instruments API "
-                            "permission is not enabled for this Upstox app. Current instruments and profile "
-                            "verification can work, but expired instruments need Upstox Plus/API permission."
-                        )
-                    }
-
-                return {
-                    "status": "limited",
-                    "message": (
-                        "Upstox token is valid, but Expired Instruments API permission is not enabled "
-                        "for this Upstox app. Current instruments and profile verification can work, "
-                        "but expired instruments need Upstox Plus/API permission."
-                    )
-                }
 
             update_connection_test_status(
                 conn=conn,
@@ -872,10 +653,7 @@ def test_upstox_connection_service(current_user):
 
             return {
                 "status": "limited",
-                "message": (
-                    "Upstox token is valid, but unable to verify Expired Instruments API permission. "
-                    f"Upstox response: {message or detail}"
-                )
+                "message": f"Upstox token check returned: {message or detail}"
             }
 
         update_connection_test_status(
@@ -887,7 +665,7 @@ def test_upstox_connection_service(current_user):
 
         return {
             "status": "success",
-            "message": "Upstox connected successfully."
+            "message": "Upstox analytics token verified successfully."
         }
 
     except HTTPException:
@@ -914,7 +692,7 @@ def disconnect_upstox_connection_service(current_user):
     try:
         existing = get_upstox_connection_raw(conn)
 
-        if not existing or existing[6] == "disconnected":
+        if not existing or existing[7] == "disconnected":
             return {
                 "status": "success",
                 "message": "Upstox connection is already disconnected."
@@ -1053,7 +831,7 @@ def validate_telegram_bot_token(bot_token: str):
 def get_telegram_bot_token(conn):
     existing = get_telegram_connection_raw(conn)
 
-    if not existing or existing[6] == "disconnected":
+    if not existing or existing[7] == "disconnected":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Telegram bot is not configured by admin."
@@ -1126,6 +904,215 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
             "text": message
         }
     )
+
+
+def get_admin_super_admin_telegram_chat_ids(conn):
+    rows = conn.execute("""
+        SELECT DISTINCT utc.telegram_chat_id
+        FROM user_telegram_connections utc
+        INNER JOIN users u
+            ON u.user_id = utc.user_id
+        WHERE utc.record_status = 'S'
+          AND utc.connection_status = 'connected'
+          AND utc.telegram_chat_id IS NOT NULL
+          AND TRIM(utc.telegram_chat_id) <> ''
+          AND u.record_status = 'S'
+          AND u.is_active = TRUE
+          AND u.role IN ('admin', 'super_admin');
+    """).fetchall()
+
+    return [row[0] for row in rows if row and row[0]]
+
+
+def ensure_app_metadata_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_metadata (
+            key VARCHAR PRIMARY KEY,
+            value VARCHAR,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+
+def get_app_metadata_value(conn, key: str):
+    ensure_app_metadata_table(conn)
+
+    row = conn.execute("""
+        SELECT value
+        FROM app_metadata
+        WHERE key = ?
+        LIMIT 1;
+    """, [key]).fetchone()
+
+    return row[0] if row else None
+
+
+def set_app_metadata_value(conn, key: str, value: str):
+    ensure_app_metadata_table(conn)
+
+    existing = conn.execute("""
+        SELECT key
+        FROM app_metadata
+        WHERE key = ?
+        LIMIT 1;
+    """, [key]).fetchone()
+
+    if existing:
+        conn.execute("""
+            UPDATE app_metadata
+            SET value = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE key = ?;
+        """, [value, key])
+        return
+
+    conn.execute("""
+        INSERT INTO app_metadata (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP);
+    """, [key, value])
+
+
+def clear_upstox_expiry_notification_marker(conn):
+    ensure_app_metadata_table(conn)
+
+    conn.execute("""
+        DELETE FROM app_metadata
+        WHERE key IN (
+            'upstox_analytics_token_expiry_notified_date',
+            'upstox_analytics_token_expiry_notified_expiry'
+        );
+    """)
+
+
+def notify_admin_super_admins_upstox_token_expiry_service():
+    conn = get_connection()
+
+    try:
+        upstox_connection = get_upstox_connection_raw(conn)
+
+        if not upstox_connection:
+            return {
+                "status": "skipped",
+                "message": "Upstox connection is not configured."
+            }
+
+        access_token = safe_strip(upstox_connection[5])
+        expiry_value = upstox_connection[6]
+
+        if not access_token or not expiry_value:
+            return {
+                "status": "skipped",
+                "message": "Upstox analytics token or expiry date is missing."
+            }
+
+        expiry_date = parse_db_datetime(expiry_value)
+
+        if not expiry_date:
+            return {
+                "status": "skipped",
+                "message": "Upstox analytics token expiry date is invalid."
+            }
+
+        now = get_ist_now()
+        today = now.date()
+        expiry_day = expiry_date.date()
+        days_left = (expiry_day - today).days
+
+        if days_left > 1:
+            return {
+                "status": "skipped",
+                "message": "Upstox analytics token is not near expiry."
+            }
+
+        notified_date = get_app_metadata_value(
+            conn,
+            "upstox_analytics_token_expiry_notified_date"
+        )
+        notified_expiry = get_app_metadata_value(
+            conn,
+            "upstox_analytics_token_expiry_notified_expiry"
+        )
+
+        today_key = today.isoformat()
+        expiry_key = expiry_day.isoformat()
+
+        if notified_date == today_key and notified_expiry == expiry_key:
+            return {
+                "status": "skipped",
+                "message": "Upstox analytics token expiry notification already sent today."
+            }
+
+        bot_token = get_telegram_bot_token(conn)
+        chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
+
+        if not chat_ids:
+            return {
+                "status": "skipped",
+                "message": "No connected admin/super admin Telegram users found."
+            }
+
+        if days_left < 0:
+            message = (
+                "Open Analytics alert: Upstox analytics token has expired. "
+                "Please update the token in Connections."
+            )
+        elif days_left == 0:
+            message = (
+                "Open Analytics alert: Upstox analytics token expires today. "
+                "Please update the token in Connections."
+            )
+        else:
+            message = (
+                "Open Analytics alert: Upstox analytics token expires tomorrow. "
+                "Please update the token in Connections."
+            )
+
+        sent_count = 0
+
+        for chat_id in chat_ids:
+            try:
+                send_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    message=message
+                )
+                sent_count += 1
+            except Exception as error:
+                print(f"Unable to send Upstox token expiry Telegram alert: {error}")
+
+        set_app_metadata_value(
+            conn,
+            "upstox_analytics_token_expiry_notified_date",
+            today_key
+        )
+        set_app_metadata_value(
+            conn,
+            "upstox_analytics_token_expiry_notified_expiry",
+            expiry_key
+        )
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": f"Upstox analytics token expiry notification sent to {sent_count} admin user(s)."
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to notify Upstox analytics token expiry: {e}"
+        )
+
+    finally:
+        conn.close()
 
 
 def save_telegram_connection_service(request, current_user):
@@ -1253,7 +1240,7 @@ def disconnect_telegram_connection_service(current_user):
     try:
         existing = get_telegram_connection_raw(conn)
 
-        if not existing or existing[6] == "disconnected":
+        if not existing or existing[7] == "disconnected":
             return {
                 "status": "success",
                 "message": "Telegram connection is already disconnected."

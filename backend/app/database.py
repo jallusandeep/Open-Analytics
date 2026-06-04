@@ -621,6 +621,48 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN raw_json JSON;")
         safe_execute(conn, "ALTER TABLE upstox_expired_instruments ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_expired_contract_sync_status (
+                underlying_key VARCHAR,
+                expiry DATE,
+                source_type VARCHAR,
+                status VARCHAR DEFAULT 'success',
+                record_count BIGINT DEFAULT 0,
+                last_error VARCHAR,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN underlying_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN expiry DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN source_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN status VARCHAR DEFAULT 'success';")
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN record_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN last_error VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_contract_sync_status ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_expired_underlying_sync_status (
+                underlying_key VARCHAR,
+                status VARCHAR DEFAULT 'success',
+                expiry_count BIGINT DEFAULT 0,
+                record_count BIGINT DEFAULT 0,
+                include_options BOOLEAN DEFAULT TRUE,
+                include_futures BOOLEAN DEFAULT TRUE,
+                last_error VARCHAR,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN underlying_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN status VARCHAR DEFAULT 'success';")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN expiry_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN record_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN include_options BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN include_futures BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN last_error VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_expired_underlying_sync_status ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
         # -----------------------------
         # Upstox equity instruments
         # Daily NSE_EQ equity collection table.

@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
-  DownloadCloud,
   Edit3,
   Play,
   Power,
@@ -20,7 +19,6 @@ import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Input from "../../components/common/Input";
-import DatePicker from "../../components/common/DatePicker";
 import Select from "../../components/common/Select";
 import Tooltip from "../../components/common/Tooltip";
 import Modal from "../../components/common/Modal";
@@ -36,26 +34,13 @@ import {
   cancelUpstoxDataCollection,
   createUpstoxDataCollectionSchedule,
   deleteUpstoxDataCollectionSchedule,
-  getUpstoxCorporateActionsPreview,
   getUpstoxDataCollectionRuns,
   getUpstoxDataCollectionSchedules,
   getUpstoxDataCollectionSummary,
-  getUpstoxEquityInstrumentsPreview,
-  getUpstoxEquityNewsPreview,
   getUpstoxExpiredInstrumentsPreview,
-  getUpstoxFiiDiiActivityPreview,
-  getUpstoxFundamentalsPreview,
   getUpstoxInstrumentsPreview,
-  getUpstoxOhlcvDailyPreview,
-  syncUpstoxAllInstruments,
-  syncUpstoxCorporateActions,
   syncUpstoxCurrentInstruments,
-  syncUpstoxEquityInstruments,
-  syncUpstoxEquityNews,
   syncUpstoxExpiredInstruments,
-  syncUpstoxFiiDiiActivity,
-  syncUpstoxFundamentals,
-  syncUpstoxOhlcvDaily,
   toggleUpstoxDataCollectionSchedule,
   updateUpstoxDataCollectionSchedule
 } from "../../api/dataCollectionApi";
@@ -64,12 +49,6 @@ const emptySummary = {
   connection_status: "not_connected",
   total_current_instruments: 0,
   total_expired_instruments: 0,
-  total_equity_instruments: 0,
-  total_ohlcv_daily: 0,
-  total_equity_news: 0,
-  total_fundamentals: 0,
-  total_corporate_actions: 0,
-  total_fii_dii_activity: 0,
   total_sync_runs: 0,
   last_sync_at: "",
   last_duration_seconds: null,
@@ -77,13 +56,12 @@ const emptySummary = {
   current_duration_seconds: null,
   expired_last_sync_at: "",
   expired_duration_seconds: null,
-  equity_last_sync_at: "",
-  equity_duration_seconds: null,
-  ohlcv_daily_last_sync_at: "",
-  ohlcv_daily_duration_seconds: null,
   active_job: null,
   active_job_status: null,
-  active_job_started_at: null
+  active_job_started_at: null,
+  active_job_current_records: null,
+  active_job_records_at_start: null,
+  active_job_records_added: null
 };
 
 const emptyPreviewData = {
@@ -105,13 +83,7 @@ const emptyScheduleForm = {
 const viewOptions = [
   { key: "monitor", label: "Collection Monitor" },
   { key: "current_preview", label: "Current Instruments" },
-  { key: "expired_preview", label: "Expired Instruments" },
-  { key: "equity_preview", label: "Equity" },
-  { key: "ohlcv_daily_preview", label: "Equity OHLCV" },
-  { key: "equity_news_preview", label: "Equity News" },
-  { key: "fundamentals_preview", label: "Fundamentals" },
-  { key: "corporate_actions_preview", label: "Corporate Actions" },
-  { key: "fii_dii_preview", label: "FII/DII Activity" }
+  { key: "expired_preview", label: "Expired Instruments" }
 ];
 
 const timeFormatOptions = [
@@ -124,12 +96,15 @@ const timePeriodOptions = [
   { value: "PM", label: "PM" }
 ];
 
-const sourceTypeOptions = [
+const currentSourceTypeOptions = [
   { value: "all", label: "All Sources" },
-  { value: "bod_complete", label: "BOD Complete" },
-  { value: "suspended", label: "Suspended" },
-  { value: "expired_option", label: "Expired Options" },
-  { value: "expired_future", label: "Expired Futures" }
+  { value: "bod_complete", label: "BOD Complete" }
+];
+
+const expiredSourceTypeOptions = [
+  { value: "all", label: "All Sources" },
+  { value: "expired_option_contract", label: "Expired Options" },
+  { value: "expired_future_contract", label: "Expired Futures" }
 ];
 
 const segmentOptions = [
@@ -153,32 +128,6 @@ const instrumentTypeOptions = [
   { value: "INDEX", label: "INDEX" }
 ];
 
-const securityTypeOptions = [
-  { value: "all", label: "All Security Types" },
-  { value: "NORMAL", label: "NORMAL" },
-  { value: "BE", label: "BE" }
-];
-
-const periodTypeOptions = [
-  { value: "all", label: "All Periods" },
-  { value: "quarterly", label: "Quarterly" },
-  { value: "annual", label: "Annual" }
-];
-
-const actionTypeOptions = [
-  { value: "all", label: "All Actions" },
-  { value: "DIVIDEND", label: "Dividend" },
-  { value: "SPLIT", label: "Split" },
-  { value: "BONUS", label: "Bonus" },
-  { value: "RIGHTS", label: "Rights" }
-];
-
-const categoryOptions = [
-  { value: "all", label: "All Categories" },
-  { value: "FII", label: "FII" },
-  { value: "DII", label: "DII" }
-];
-
 const dumpJobColumns = [
   { key: "source", label: "Source", filterable: false },
   { key: "saved", label: "Saved", filterable: false },
@@ -189,7 +138,7 @@ const dumpJobColumns = [
 ];
 
 const dumpJobGridTemplateColumns =
-  "1.25fr 0.55fr 0.75fr 0.8fr 0.5fr 0.7fr 152px";
+  "1.2fr 0.85fr 0.75fr 0.75fr 0.45fr 0.7fr 152px";
 
 const scheduleColumns = [
   { key: "schedule_time", label: "Time", filterable: false },
@@ -215,104 +164,6 @@ const previewColumns = [
 const previewGridTemplateColumns =
   "280px 300px 300px 150px 150px 130px 150px 140px 190px 230px";
 
-const equityPreviewColumns = [
-  { key: "instrument_key", label: "Instrument Key", filterable: false },
-  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
-  { key: "name", label: "Name", filterable: false },
-  { key: "isin", label: "ISIN", filterable: false },
-  { key: "exchange", label: "Exchange", filterable: false },
-  { key: "segment", label: "Segment", filterable: false },
-  { key: "exchange_token", label: "Exchange Token", filterable: false },
-  { key: "tick_size", label: "Tick Size", filterable: false },
-  { key: "lot_size", label: "Lot Size", filterable: false },
-  { key: "freeze_quantity", label: "Freeze Qty", filterable: false },
-  { key: "short_name", label: "Short Name", filterable: false },
-  { key: "security_type", label: "Security Type", filterable: false },
-  { key: "downloaded_at", label: "Downloaded At", filterable: false }
-];
-
-const equityPreviewGridTemplateColumns =
-  "280px 220px 320px 170px 130px 130px 160px 120px 120px 150px 180px 150px 230px";
-
-const ohlcvDailyColumns = [
-  { key: "instrument_key", label: "Instrument Key", filterable: false },
-  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
-  { key: "date", label: "Date", filterable: false },
-  { key: "open", label: "Open", filterable: false },
-  { key: "high", label: "High", filterable: false },
-  { key: "low", label: "Low", filterable: false },
-  { key: "close", label: "Close", filterable: false },
-  { key: "volume", label: "Volume", filterable: false },
-  { key: "oi", label: "OI", filterable: false },
-  { key: "ingested_at", label: "Ingested At", filterable: false }
-];
-
-const ohlcvDailyGridTemplateColumns =
-  "280px 220px 150px 130px 130px 130px 130px 160px 120px 230px";
-
-const equityNewsColumns = [
-  { key: "instrument_key", label: "Instrument Key", filterable: false },
-  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
-  { key: "title", label: "Title", filterable: false },
-  { key: "summary", label: "Summary", filterable: false },
-  { key: "source", label: "Source", filterable: false },
-  { key: "url", label: "URL", filterable: false },
-  { key: "published_at", label: "Published At", filterable: false },
-  { key: "ingested_at", label: "Ingested At", filterable: false }
-];
-
-const equityNewsGridTemplateColumns =
-  "280px 220px 420px 520px 180px 320px 220px 220px";
-
-const fundamentalsColumns = [
-  { key: "instrument_key", label: "Instrument Key", filterable: false },
-  { key: "isin", label: "ISIN", filterable: false },
-  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
-  { key: "report_date", label: "Report Date", filterable: false },
-  { key: "period_type", label: "Period", filterable: false },
-  { key: "revenue", label: "Revenue", filterable: false },
-  { key: "net_profit", label: "Net Profit", filterable: false },
-  { key: "eps", label: "EPS", filterable: false },
-  { key: "pe_ratio", label: "PE", filterable: false },
-  { key: "debt_to_equity", label: "Debt/Equity", filterable: false },
-  { key: "roe", label: "ROE", filterable: false },
-  { key: "cash_from_operations", label: "CFO", filterable: false },
-  { key: "promoter_holding_pct", label: "Promoter %", filterable: false },
-  { key: "fii_holding_pct", label: "FII %", filterable: false },
-  { key: "dii_holding_pct", label: "DII %", filterable: false },
-  { key: "ingested_at", label: "Ingested At", filterable: false }
-];
-
-const fundamentalsGridTemplateColumns =
-  "280px 170px 220px 150px 130px 140px 140px 110px 110px 140px 110px 140px 140px 110px 110px 220px";
-
-const corporateActionsColumns = [
-  { key: "instrument_key", label: "Instrument Key", filterable: false },
-  { key: "isin", label: "ISIN", filterable: false },
-  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
-  { key: "action_type", label: "Action Type", filterable: false },
-  { key: "ex_date", label: "Ex Date", filterable: false },
-  { key: "record_date", label: "Record Date", filterable: false },
-  { key: "amount", label: "Amount", filterable: false },
-  { key: "remarks", label: "Remarks", filterable: false },
-  { key: "ingested_at", label: "Ingested At", filterable: false }
-];
-
-const corporateActionsGridTemplateColumns =
-  "280px 170px 220px 150px 150px 150px 130px 360px 220px";
-
-const fiiDiiColumns = [
-  { key: "date", label: "Date", filterable: false },
-  { key: "category", label: "Category", filterable: false },
-  { key: "data_type", label: "Segment", filterable: false },
-  { key: "buy_value", label: "Buy Value", filterable: false },
-  { key: "sell_value", label: "Sell Value", filterable: false },
-  { key: "net_value", label: "Net Value", filterable: false },
-  { key: "ingested_at", label: "Ingested At", filterable: false }
-];
-
-const fiiDiiGridTemplateColumns = "160px 140px 170px 170px 170px 170px 230px";
-
 function getStoredCurrentUser() {
   try {
     const savedUser =
@@ -335,6 +186,29 @@ function formatNumber(value) {
   }
 
   return Number(value).toLocaleString("en-IN");
+}
+
+function formatCompactNumber(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "0";
+  }
+
+  const numericValue = Number(value);
+  const absoluteValue = Math.abs(numericValue);
+
+  if (absoluteValue >= 1000000) {
+    return `${Number((numericValue / 1000000).toFixed(1)).toLocaleString(
+      "en-IN"
+    )}M`;
+  }
+
+  if (absoluteValue >= 1000) {
+    return `${Number((numericValue / 1000).toFixed(1)).toLocaleString(
+      "en-IN"
+    )}K`;
+  }
+
+  return formatNumber(numericValue);
 }
 
 function formatDuration(seconds) {
@@ -410,6 +284,10 @@ function getApiErrorMessage(error, fallbackMessage) {
       .join(", ");
   }
 
+  if (detail?.message) {
+    return detail.message;
+  }
+
   if (error?.response?.status) {
     return `${fallbackMessage} (HTTP ${error.response.status})`;
   }
@@ -421,25 +299,11 @@ function getSyncTypeLabel(value) {
   const labels = {
     upstox_current_instruments: "Current Instruments",
     upstox_expired_instruments: "Expired Instruments",
-    upstox_equity_instruments: "Equity",
-    upstox_ohlcv_daily: "Equity OHLCV",
-    upstox_equity_news: "Equity News",
-    upstox_fundamentals: "Fundamentals",
-    upstox_corporate_actions: "Corporate Actions",
-    upstox_fii_dii_activity: "FII/DII Activity",
-    upstox_all_instruments: "All Instruments",
     current_instruments: "Current Instruments",
     expired_instruments: "Expired Instruments",
-    equity_instruments: "Equity",
-    ohlcv_daily: "Equity OHLCV",
-    equity_news: "Equity News",
-    fundamentals: "Fundamentals",
-    corporate_actions: "Corporate Actions",
-    fii_dii_activity: "FII/DII Activity",
     bod_complete: "BOD Complete",
-    suspended: "Suspended",
-    expired_option: "Expired Options",
-    expired_future: "Expired Futures"
+    expired_option_contract: "Expired Options",
+    expired_future_contract: "Expired Futures"
   };
 
   return labels[value] || value || "--";
@@ -473,7 +337,6 @@ function getStatusLabel(status) {
   if (status === "failed") return "Failed";
   if (status === "active") return "Active";
   if (status === "inactive") return "Inactive";
-  if (status === "preview_only") return "Preview Only";
 
   return status || "Idle";
 }
@@ -482,20 +345,16 @@ function getLatestRunByTypes(runs, syncTypes = []) {
   return runs.find((run) => syncTypes.includes(run.sync_type)) || null;
 }
 
-function getPreviewTypeFromView(activeView) {
-  if (activeView === "expired_preview") return "expired";
-  if (activeView === "equity_preview") return "equity";
-  if (activeView === "ohlcv_daily_preview") return "ohlcv_daily";
-  if (activeView === "equity_news_preview") return "equity_news";
-  if (activeView === "fundamentals_preview") return "fundamentals";
-  if (activeView === "corporate_actions_preview") return "corporate_actions";
-  if (activeView === "fii_dii_preview") return "fii_dii";
-
-  return "current";
-}
-
 function isPreviewView(activeView) {
   return activeView !== "monitor";
+}
+
+function getPreviewMode(activeView) {
+  if (activeView === "expired_preview") {
+    return "expired";
+  }
+
+  return "current";
 }
 
 function getPaginationItems(currentPage, totalPages) {
@@ -1024,10 +883,7 @@ function MonitorContent({
   onClearSearch,
   rows,
   loading,
-  canRunAll,
-  runAllDisabled,
   onRefresh,
-  onBulkSync,
   renderCell,
   renderActions
 }) {
@@ -1076,20 +932,6 @@ function MonitorContent({
             onClick={onRefresh}
             tooltipSide="top"
           />
-
-          {canRunAll && (
-            <Tooltip text="Run all dumps" side="top">
-              <button
-                type="button"
-                disabled={runAllDisabled}
-                onClick={onBulkSync}
-                className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Run all data collection dumps"
-              >
-                <DownloadCloud size={14} />
-              </button>
-            </Tooltip>
-          )}
         </form>
       </div>
 
@@ -1112,8 +954,7 @@ function MonitorContent({
 }
 
 function DbPreviewContent({
-  previewType,
-  previewLabel,
+  previewMode,
   searchValue,
   onSearchChange,
   onSearchSubmit,
@@ -1124,95 +965,23 @@ function DbPreviewContent({
   onSegmentChange,
   instrumentType,
   onInstrumentTypeChange,
-  securityType,
-  onSecurityTypeChange,
-  periodType,
-  onPeriodTypeChange,
-  actionType,
-  onActionTypeChange,
-  category,
-  onCategoryChange,
-  fromDate,
-  onFromDateChange,
-  toDate,
-  onToDateChange,
   previewData,
   loading,
-  canRunAll,
-  runAllDisabled,
-  canRunPreview,
   runPreviewDisabled,
   onRefresh,
-  onBulkSync,
   onRunPreview,
   onPreviousPage,
   onNextPage,
   onPageChange
 }) {
-  const isEquityPreview = previewType === "equity";
-  const isOhlcvPreview = previewType === "ohlcv_daily";
-  const isEquityNewsPreview = previewType === "equity_news";
-  const isFundamentalsPreview = previewType === "fundamentals";
-  const isCorporateActionsPreview = previewType === "corporate_actions";
-  const isFiiDiiPreview = previewType === "fii_dii";
-  const needsDateFilter =
-    isOhlcvPreview ||
-    isEquityNewsPreview ||
-    isFundamentalsPreview ||
-    isCorporateActionsPreview ||
-    isFiiDiiPreview;
-
-  const activeColumns = isFiiDiiPreview
-    ? fiiDiiColumns
-    : isCorporateActionsPreview
-      ? corporateActionsColumns
-      : isFundamentalsPreview
-        ? fundamentalsColumns
-        : isEquityNewsPreview
-          ? equityNewsColumns
-          : isOhlcvPreview
-            ? ohlcvDailyColumns
-            : isEquityPreview
-              ? equityPreviewColumns
-              : previewColumns;
-
-  const activeGridTemplateColumns = isFiiDiiPreview
-    ? fiiDiiGridTemplateColumns
-    : isCorporateActionsPreview
-      ? corporateActionsGridTemplateColumns
-      : isFundamentalsPreview
-        ? fundamentalsGridTemplateColumns
-        : isEquityNewsPreview
-          ? equityNewsGridTemplateColumns
-          : isOhlcvPreview
-            ? ohlcvDailyGridTemplateColumns
-            : isEquityPreview
-              ? equityPreviewGridTemplateColumns
-              : previewGridTemplateColumns;
-
-  const activeMinWidth = isFiiDiiPreview
-    ? "min-w-[1210px]"
-    : isCorporateActionsPreview
-      ? "min-w-[1830px]"
-      : isFundamentalsPreview
-        ? "min-w-[2660px]"
-        : isEquityNewsPreview
-          ? "min-w-[2360px]"
-          : isOhlcvPreview
-            ? "min-w-[1680px]"
-            : isEquityPreview
-              ? "min-w-[2440px]"
-              : "min-w-[2020px]";
+  const isExpired = previewMode === "expired";
+  const title = isExpired ? "Expired Instruments" : "Current Instruments";
+  const sourceOptions = isExpired
+    ? expiredSourceTypeOptions
+    : currentSourceTypeOptions;
 
   function renderPreviewCell(row, column) {
-    if (
-      [
-        "synced_at",
-        "downloaded_at",
-        "ingested_at",
-        "published_at"
-      ].includes(column.key)
-    ) {
+    if (column.key === "synced_at") {
       return (
         <span className="truncate oa-code-font text-oa-muted">
           {formatDateTime(row[column.key])}
@@ -1220,15 +989,7 @@ function DbPreviewContent({
       );
     }
 
-    if (
-      [
-        "date",
-        "report_date",
-        "ex_date",
-        "record_date",
-        "expiry"
-      ].includes(column.key)
-    ) {
+    if (column.key === "expiry") {
       return (
         <span className="truncate oa-code-font text-cyan-200">
           {row[column.key] || "--"}
@@ -1246,40 +1007,6 @@ function DbPreviewContent({
       );
     }
 
-    if (column.key === "security_type") {
-      return (
-        <span
-          className={`${oaPillStyles.base} ${
-            row.security_type === "BE"
-              ? "border-amber-500/40 bg-amber-950/40 text-amber-200"
-              : "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
-          }`}
-        >
-          {row.security_type || "--"}
-        </span>
-      );
-    }
-
-    if (column.key === "action_type" || column.key === "category") {
-      return (
-        <span className={`${oaPillStyles.base} border-sky-500/40 bg-sky-950/40 text-sky-200`}>
-          {row[column.key] || "--"}
-        </span>
-      );
-    }
-
-    if (column.key === "title") {
-      return <span className="truncate text-white">{row.title || "--"}</span>;
-    }
-
-    if (column.key === "summary" || column.key === "remarks" || column.key === "url") {
-      return (
-        <span className="truncate text-oa-muted">
-          {row[column.key] || "--"}
-        </span>
-      );
-    }
-
     if (column.key === "name") {
       return <span className="truncate text-white">{row.name || "--"}</span>;
     }
@@ -1292,39 +1019,8 @@ function DbPreviewContent({
       );
     }
 
-    const numericKeys = [
-      "open",
-      "high",
-      "low",
-      "close",
-      "volume",
-      "oi",
-      "strike_price",
-      "tick_size",
-      "lot_size",
-      "freeze_quantity",
-      "revenue",
-      "net_profit",
-      "eps",
-      "pe_ratio",
-      "debt_to_equity",
-      "roe",
-      "cash_from_operations",
-      "promoter_holding_pct",
-      "fii_holding_pct",
-      "dii_holding_pct",
-      "amount",
-      "buy_value",
-      "sell_value",
-      "net_value"
-    ];
-
     return (
-      <span
-        className={`truncate oa-code-font ${
-          numericKeys.includes(column.key) ? "text-white" : "text-oa-muted"
-        }`}
-      >
+      <span className="truncate oa-code-font text-oa-muted">
         {row[column.key] ?? "--"}
       </span>
     );
@@ -1337,107 +1033,49 @@ function DbPreviewContent({
           onSubmit={onSearchSubmit}
           className="flex flex-wrap items-center gap-2"
         >
-          {!isFiiDiiPreview && (
-            <div className="relative w-full md:w-80">
-              <Input
-                value={searchValue}
-                onChange={(event) => onSearchChange(event.target.value)}
-                placeholder={`Search ${previewLabel.toLowerCase()}`}
-                className="pr-9"
-              />
-
-              {searchValue ? (
-                <button
-                  type="button"
-                  onClick={onClearSearch}
-                  className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                  aria-label="Clear search"
-                >
-                  <X size={13} />
-                </button>
-              ) : null}
-            </div>
-          )}
-
-          {isEquityPreview ? (
-            <Select
-              value={securityType}
-              onChange={(event) => onSecurityTypeChange(event.target.value)}
-              options={securityTypeOptions}
-              ariaLabel="Security type"
-              minWidth="w-44"
+          <div className="relative w-full md:w-80">
+            <Input
+              value={searchValue}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={`Search ${title.toLowerCase()}`}
+              className="pr-9"
             />
-          ) : isFundamentalsPreview ? (
-            <Select
-              value={periodType}
-              onChange={(event) => onPeriodTypeChange(event.target.value)}
-              options={periodTypeOptions}
-              ariaLabel="Period type"
-              minWidth="w-40"
-            />
-          ) : isCorporateActionsPreview ? (
-            <Select
-              value={actionType}
-              onChange={(event) => onActionTypeChange(event.target.value)}
-              options={actionTypeOptions}
-              ariaLabel="Action type"
-              minWidth="w-40"
-            />
-          ) : isFiiDiiPreview ? (
-            <Select
-              value={category}
-              onChange={(event) => onCategoryChange(event.target.value)}
-              options={categoryOptions}
-              ariaLabel="Category"
-              minWidth="w-40"
-            />
-          ) : isEquityNewsPreview || isOhlcvPreview ? null : (
-            <>
-              <Select
-                value={sourceType}
-                onChange={(event) => onSourceTypeChange(event.target.value)}
-                options={sourceTypeOptions}
-                ariaLabel="Source type"
-                minWidth="w-40"
-              />
 
-              <Select
-                value={segment}
-                onChange={(event) => onSegmentChange(event.target.value)}
-                options={segmentOptions}
-                ariaLabel="Segment"
-                minWidth="w-36"
-              />
+            {searchValue ? (
+              <button
+                type="button"
+                onClick={onClearSearch}
+                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+                aria-label="Clear search"
+              >
+                <X size={13} />
+              </button>
+            ) : null}
+          </div>
 
-              <Select
-                value={instrumentType}
-                onChange={(event) => onInstrumentTypeChange(event.target.value)}
-                options={instrumentTypeOptions}
-                ariaLabel="Instrument type"
-                minWidth="w-36"
-              />
-            </>
-          )}
+          <Select
+            value={sourceType}
+            onChange={(event) => onSourceTypeChange(event.target.value)}
+            options={sourceOptions}
+            ariaLabel="Source type"
+            minWidth="w-40"
+          />
 
-          {needsDateFilter && (
-            <>
-              <DatePicker
-                value={fromDate}
-                onChange={onFromDateChange}
-                placeholder="From date"
-                ariaLabel={`${previewLabel} from date`}
-                className="w-36 shrink-0"
-              />
+          <Select
+            value={segment}
+            onChange={(event) => onSegmentChange(event.target.value)}
+            options={segmentOptions}
+            ariaLabel="Segment"
+            minWidth="w-36"
+          />
 
-              <DatePicker
-                value={toDate}
-                onChange={onToDateChange}
-                placeholder="To date"
-                ariaLabel={`${previewLabel} to date`}
-                className="w-36 shrink-0"
-              />
-            </>
-          )}
+          <Select
+            value={instrumentType}
+            onChange={(event) => onInstrumentTypeChange(event.target.value)}
+            options={instrumentTypeOptions}
+            ariaLabel="Instrument type"
+            minWidth="w-36"
+          />
 
           <Tooltip text="Search" side="top">
             <button
@@ -1458,33 +1096,17 @@ function DbPreviewContent({
             tooltipSide="top"
           />
 
-          {canRunPreview && (
-            <Tooltip text={`Run ${previewLabel}`} side="top">
-              <button
-                type="button"
-                disabled={runPreviewDisabled}
-                onClick={onRunPreview}
-                className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`Run ${previewLabel}`}
-              >
-                <Play size={14} />
-              </button>
-            </Tooltip>
-          )}
-
-          {canRunAll && (
-            <Tooltip text="Run all dumps" side="top">
-              <button
-                type="button"
-                disabled={runAllDisabled}
-                onClick={onBulkSync}
-                className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Run all data collection dumps"
-              >
-                <DownloadCloud size={14} />
-              </button>
-            </Tooltip>
-          )}
+          <Tooltip text={`Run ${title}`} side="top">
+            <button
+              type="button"
+              disabled={runPreviewDisabled}
+              onClick={onRunPreview}
+              className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label={`Run ${title}`}
+            >
+              <Play size={14} />
+            </button>
+          </Tooltip>
         </form>
       </div>
 
@@ -1494,22 +1116,22 @@ function DbPreviewContent({
             <div className="flex flex-col items-center gap-3 text-oa-muted">
               <Spinner size="md" color="light" />
               <span className="oa-code-font text-[12px]">
-                Loading {previewLabel.toLowerCase()}
+                Loading {title.toLowerCase()}
               </span>
             </div>
           </div>
         )}
 
         <DataTable
-          columns={activeColumns}
+          columns={previewColumns}
           rows={previewData.rows}
           loading={false}
-          loadingMessage={`Loading ${previewLabel.toLowerCase()}`}
+          loadingMessage={`Loading ${title.toLowerCase()}`}
           emptyMessage="No records found."
-          gridTemplateColumns={activeGridTemplateColumns}
-          minWidth={activeMinWidth}
+          gridTemplateColumns={previewGridTemplateColumns}
+          minWidth="min-w-[2020px]"
           getRowKey={(row, index) =>
-            `${row.instrument_key || row.news_id || row.date || index}-${index}`
+            `${row.instrument_key || row.trading_symbol || index}-${index}`
           }
           renderCell={renderPreviewCell}
         />
@@ -1609,12 +1231,6 @@ function DataCollection() {
   const [previewSourceType, setPreviewSourceType] = useState("all");
   const [previewSegment, setPreviewSegment] = useState("all");
   const [previewInstrumentType, setPreviewInstrumentType] = useState("all");
-  const [previewSecurityType, setPreviewSecurityType] = useState("all");
-  const [previewPeriodType, setPreviewPeriodType] = useState("all");
-  const [previewActionType, setPreviewActionType] = useState("all");
-  const [previewCategory, setPreviewCategory] = useState("all");
-  const [previewFromDate, setPreviewFromDate] = useState("");
-  const [previewToDate, setPreviewToDate] = useState("");
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPageSize] = useState(50);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -1627,161 +1243,38 @@ function DataCollection() {
     currentUser?.role
   );
 
-  const previewType = getPreviewTypeFromView(activeView);
-  const previewLabel =
-    previewType === "expired"
-      ? "Expired Instruments"
-      : previewType === "equity"
-        ? "Equity"
-        : previewType === "ohlcv_daily"
-          ? "Equity OHLCV"
-          : previewType === "equity_news"
-            ? "Equity News"
-            : previewType === "fundamentals"
-              ? "Fundamentals"
-              : previewType === "corporate_actions"
-                ? "Corporate Actions"
-                : previewType === "fii_dii"
-                  ? "FII/DII Activity"
-                  : "Current Instruments";
-
   const hasActiveJob = Boolean(runningJob || summary.active_job);
   const isCancelRequested =
     cancelRequested || summary.active_job_status === "cancel_requested";
 
-  const isBulkJobRunning =
-    runningJob === "bulk" || summary.active_job === "upstox_all_instruments";
-
   const isCurrentJobRunning =
     !isCancelRequested &&
     (runningJob === "current" ||
-      isBulkJobRunning ||
       summary.active_job === "upstox_current_instruments");
 
   const isExpiredJobRunning =
     !isCancelRequested &&
     (runningJob === "expired" ||
-      isBulkJobRunning ||
       summary.active_job === "upstox_expired_instruments");
-
-  const isEquityJobRunning =
-    !isCancelRequested &&
-    (runningJob === "equity" ||
-      isBulkJobRunning ||
-      summary.active_job === "upstox_equity_instruments");
-
-  const isOhlcvDailyJobRunning =
-    !isCancelRequested &&
-    (runningJob === "ohlcv_daily" ||
-      summary.active_job === "upstox_ohlcv_daily");
-
-  const isEquityNewsJobRunning =
-    !isCancelRequested &&
-    (runningJob === "equity_news" ||
-      summary.active_job === "upstox_equity_news");
-
-  const isFundamentalsJobRunning =
-    !isCancelRequested &&
-    (runningJob === "fundamentals" ||
-      summary.active_job === "upstox_fundamentals");
-
-  const isCorporateActionsJobRunning =
-    !isCancelRequested &&
-    (runningJob === "corporate_actions" ||
-      summary.active_job === "upstox_corporate_actions");
-
-  const isFiiDiiActivityJobRunning =
-    !isCancelRequested &&
-    (runningJob === "fii_dii_activity" ||
-      summary.active_job === "upstox_fii_dii_activity");
 
   const currentCancelRequested =
     isCancelRequested &&
     (runningJob === "current" ||
-      isBulkJobRunning ||
-      summary.active_job === "upstox_current_instruments" ||
-      summary.active_job === "upstox_all_instruments");
+      summary.active_job === "upstox_current_instruments");
 
   const expiredCancelRequested =
     isCancelRequested &&
     (runningJob === "expired" ||
-      isBulkJobRunning ||
-      summary.active_job === "upstox_expired_instruments" ||
-      summary.active_job === "upstox_all_instruments");
+      summary.active_job === "upstox_expired_instruments");
 
-  const equityCancelRequested =
-    isCancelRequested &&
-    (runningJob === "equity" ||
-      isBulkJobRunning ||
-      summary.active_job === "upstox_equity_instruments" ||
-      summary.active_job === "upstox_all_instruments");
-
-  const ohlcvDailyCancelRequested =
-    isCancelRequested &&
-    (runningJob === "ohlcv_daily" ||
-      summary.active_job === "upstox_ohlcv_daily");
-
-  const equityNewsCancelRequested =
-    isCancelRequested &&
-    (runningJob === "equity_news" ||
-      summary.active_job === "upstox_equity_news");
-
-  const fundamentalsCancelRequested =
-    isCancelRequested &&
-    (runningJob === "fundamentals" ||
-      summary.active_job === "upstox_fundamentals");
-
-  const corporateActionsCancelRequested =
-    isCancelRequested &&
-    (runningJob === "corporate_actions" ||
-      summary.active_job === "upstox_corporate_actions");
-
-  const fiiDiiActivityCancelRequested =
-    isCancelRequested &&
-    (runningJob === "fii_dii_activity" ||
-      summary.active_job === "upstox_fii_dii_activity");
-
-  const shouldShowRunAllButton = !hasActiveJob;
   const shouldShowCancelButton = hasActiveJob && !isCancelRequested;
 
   const currentLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, [
-      "upstox_current_instruments",
-      "bod_complete",
-      "suspended"
-    ]);
+    return getLatestRunByTypes(runs, ["upstox_current_instruments"]);
   }, [runs]);
 
   const expiredLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, [
-      "upstox_expired_instruments",
-      "expired_option",
-      "expired_future"
-    ]);
-  }, [runs]);
-
-  const equityLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, ["upstox_equity_instruments"]);
-  }, [runs]);
-
-  const ohlcvDailyLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, ["upstox_ohlcv_daily"]);
-  }, [runs]);
-
-  const equityNewsLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, ["upstox_equity_news"]);
-  }, [runs]);
-
-  const fundamentalsLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, ["upstox_fundamentals"]);
-  }, [runs]);
-
-  const corporateActionsLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, ["upstox_corporate_actions"]);
-  }, [runs]);
-
-  const fiiDiiActivityLastRun = useMemo(() => {
-    return getLatestRunByTypes(runs, ["upstox_fii_dii_activity"]);
+    return getLatestRunByTypes(runs, ["upstox_expired_instruments"]);
   }, [runs]);
 
   const selectedSchedules = useMemo(() => {
@@ -1797,12 +1290,37 @@ function DataCollection() {
   const selectedScheduleTitle = getSyncTypeLabel(selectedScheduleJob);
 
   const dumpJobRows = useMemo(() => {
+    const currentRecords =
+      isCurrentJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_current_instruments ?? 0;
+
+    const expiredRecords =
+      isExpiredJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_expired_instruments ?? 0;
+
+    const currentRecordsAdded =
+      isCurrentJobRunning &&
+      summary.active_job === "upstox_current_instruments" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const expiredRecordsAdded =
+      isExpiredJobRunning &&
+      summary.active_job === "upstox_expired_instruments" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
     return [
       {
         id: "current",
         title: "Current Instruments",
         scheduleJobType: "current_instruments",
-        records: currentLastRun?.total_records ?? 0,
+        records: currentRecords,
+        recordsAdded: currentRecordsAdded,
         lastSyncedAt: summary.current_last_sync_at || summary.last_sync_at,
         triggeredBy: currentLastRun?.triggered_by_name,
         triggerSource: currentLastRun?.trigger_source,
@@ -1821,8 +1339,9 @@ function DataCollection() {
         id: "expired",
         title: "Expired Instruments",
         scheduleJobType: "expired_instruments",
-        records: expiredLastRun?.total_records ?? 0,
-        lastSyncedAt: summary.expired_last_sync_at || summary.last_sync_at,
+        records: expiredRecords,
+        recordsAdded: expiredRecordsAdded,
+        lastSyncedAt: summary.expired_last_sync_at,
         triggeredBy: expiredLastRun?.triggered_by_name,
         triggerSource: expiredLastRun?.trigger_source,
         duration: summary.expired_duration_seconds,
@@ -1835,148 +1354,16 @@ function DataCollection() {
         disabled: hasActiveJob && !isExpiredJobRunning,
         canCancel: isExpiredJobRunning && shouldShowCancelButton,
         onRun: handleExpiredSync
-      },
-      {
-        id: "equity",
-        title: "Equity",
-        scheduleJobType: "equity_instruments",
-        records: equityLastRun?.total_records ?? 0,
-        lastSyncedAt: summary.equity_last_sync_at || summary.last_sync_at,
-        triggeredBy: equityLastRun?.triggered_by_name,
-        triggerSource: equityLastRun?.trigger_source,
-        duration: summary.equity_duration_seconds,
-        lastStatus: equityCancelRequested
-          ? "cancel_requested"
-          : isEquityJobRunning
-            ? "running"
-            : equityLastRun?.status,
-        loading: isEquityJobRunning,
-        disabled: hasActiveJob && !isEquityJobRunning,
-        canCancel: isEquityJobRunning && shouldShowCancelButton,
-        onRun: handleEquitySync
-      },
-      {
-        id: "ohlcv_daily",
-        title: "Equity OHLCV",
-        scheduleJobType: "ohlcv_daily",
-        records: ohlcvDailyLastRun?.total_records ?? 0,
-        lastSyncedAt: summary.ohlcv_daily_last_sync_at || summary.last_sync_at,
-        triggeredBy: ohlcvDailyLastRun?.triggered_by_name,
-        triggerSource: ohlcvDailyLastRun?.trigger_source,
-        duration: summary.ohlcv_daily_duration_seconds,
-        lastStatus: ohlcvDailyCancelRequested
-          ? "cancel_requested"
-          : isOhlcvDailyJobRunning
-            ? "running"
-            : ohlcvDailyLastRun?.status,
-        loading: isOhlcvDailyJobRunning,
-        disabled: hasActiveJob && !isOhlcvDailyJobRunning,
-        canCancel: isOhlcvDailyJobRunning && shouldShowCancelButton,
-        onRun: handleOhlcvDailySync
-      },
-      {
-        id: "equity_news",
-        title: "Equity News",
-        scheduleJobType: "equity_news",
-        records: equityNewsLastRun?.total_records ?? 0,
-        lastSyncedAt: equityNewsLastRun?.finished_at,
-        triggeredBy: equityNewsLastRun?.triggered_by_name,
-        triggerSource: equityNewsLastRun?.trigger_source,
-        duration: equityNewsLastRun?.duration_seconds,
-        lastStatus: equityNewsCancelRequested
-          ? "cancel_requested"
-          : isEquityNewsJobRunning
-            ? "running"
-            : equityNewsLastRun?.status,
-        loading: isEquityNewsJobRunning,
-        disabled: hasActiveJob && !isEquityNewsJobRunning,
-        canCancel: isEquityNewsJobRunning && shouldShowCancelButton,
-        onRun: handleEquityNewsSync
-      },
-      {
-        id: "fundamentals",
-        title: "Fundamentals",
-        scheduleJobType: "fundamentals",
-        records: fundamentalsLastRun?.total_records ?? 0,
-        lastSyncedAt: fundamentalsLastRun?.finished_at,
-        triggeredBy: fundamentalsLastRun?.triggered_by_name,
-        triggerSource: fundamentalsLastRun?.trigger_source,
-        duration: fundamentalsLastRun?.duration_seconds,
-        lastStatus: fundamentalsCancelRequested
-          ? "cancel_requested"
-          : isFundamentalsJobRunning
-            ? "running"
-            : fundamentalsLastRun?.status,
-        loading: isFundamentalsJobRunning,
-        disabled: hasActiveJob && !isFundamentalsJobRunning,
-        canCancel: isFundamentalsJobRunning && shouldShowCancelButton,
-        onRun: handleFundamentalsSync
-      },
-      {
-        id: "corporate_actions",
-        title: "Corporate Actions",
-        scheduleJobType: "corporate_actions",
-        records: corporateActionsLastRun?.total_records ?? 0,
-        lastSyncedAt: corporateActionsLastRun?.finished_at,
-        triggeredBy: corporateActionsLastRun?.triggered_by_name,
-        triggerSource: corporateActionsLastRun?.trigger_source,
-        duration: corporateActionsLastRun?.duration_seconds,
-        lastStatus: corporateActionsCancelRequested
-          ? "cancel_requested"
-          : isCorporateActionsJobRunning
-            ? "running"
-            : corporateActionsLastRun?.status,
-        loading: isCorporateActionsJobRunning,
-        disabled: hasActiveJob && !isCorporateActionsJobRunning,
-        canCancel: isCorporateActionsJobRunning && shouldShowCancelButton,
-        onRun: handleCorporateActionsSync
-      },
-      {
-        id: "fii_dii_activity",
-        title: "FII/DII Activity",
-        scheduleJobType: "fii_dii_activity",
-        records: fiiDiiActivityLastRun?.total_records ?? 0,
-        lastSyncedAt: fiiDiiActivityLastRun?.finished_at,
-        triggeredBy: fiiDiiActivityLastRun?.triggered_by_name,
-        triggerSource: fiiDiiActivityLastRun?.trigger_source,
-        duration: fiiDiiActivityLastRun?.duration_seconds,
-        lastStatus: fiiDiiActivityCancelRequested
-          ? "cancel_requested"
-          : isFiiDiiActivityJobRunning
-            ? "running"
-            : fiiDiiActivityLastRun?.status,
-        loading: isFiiDiiActivityJobRunning,
-        disabled: hasActiveJob && !isFiiDiiActivityJobRunning,
-        canCancel: isFiiDiiActivityJobRunning && shouldShowCancelButton,
-        onRun: handleFiiDiiActivitySync
       }
     ];
   }, [
     summary,
     currentCancelRequested,
     expiredCancelRequested,
-    equityCancelRequested,
-    ohlcvDailyCancelRequested,
-    equityNewsCancelRequested,
-    fundamentalsCancelRequested,
-    corporateActionsCancelRequested,
-    fiiDiiActivityCancelRequested,
     isCurrentJobRunning,
     isExpiredJobRunning,
-    isEquityJobRunning,
-    isOhlcvDailyJobRunning,
-    isEquityNewsJobRunning,
-    isFundamentalsJobRunning,
-    isCorporateActionsJobRunning,
-    isFiiDiiActivityJobRunning,
     currentLastRun,
     expiredLastRun,
-    equityLastRun,
-    ohlcvDailyLastRun,
-    equityNewsLastRun,
-    fundamentalsLastRun,
-    corporateActionsLastRun,
-    fiiDiiActivityLastRun,
     hasActiveJob,
     shouldShowCancelButton
   ]);
@@ -2003,72 +1390,23 @@ function DataCollection() {
   }, [dumpJobRows, appliedMonitorSearch]);
 
   async function loadPreview(customPage = previewPage) {
+    const previewMode = getPreviewMode(activeView);
     setPreviewLoading(true);
 
     try {
       const params = {
         search: appliedPreviewSearch,
+        source_type: previewSourceType,
+        segment: previewSegment,
+        instrument_type: previewInstrumentType,
         page: customPage,
         page_size: previewPageSize
       };
 
-      let response;
-
-      if (previewType === "expired") {
-        response = await getUpstoxExpiredInstrumentsPreview({
-          ...params,
-          source_type: previewSourceType,
-          segment: previewSegment,
-          instrument_type: previewInstrumentType
-        });
-      } else if (previewType === "equity") {
-        response = await getUpstoxEquityInstrumentsPreview({
-          ...params,
-          security_type: previewSecurityType
-        });
-      } else if (previewType === "ohlcv_daily") {
-        response = await getUpstoxOhlcvDailyPreview({
-          ...params,
-          from_date: previewFromDate,
-          to_date: previewToDate
-        });
-      } else if (previewType === "equity_news") {
-        response = await getUpstoxEquityNewsPreview({
-          ...params,
-          source: previewSourceType,
-          from_date: previewFromDate,
-          to_date: previewToDate
-        });
-      } else if (previewType === "fundamentals") {
-        response = await getUpstoxFundamentalsPreview({
-          ...params,
-          period_type: previewPeriodType,
-          from_date: previewFromDate,
-          to_date: previewToDate
-        });
-      } else if (previewType === "corporate_actions") {
-        response = await getUpstoxCorporateActionsPreview({
-          ...params,
-          action_type: previewActionType,
-          from_date: previewFromDate,
-          to_date: previewToDate
-        });
-      } else if (previewType === "fii_dii") {
-        response = await getUpstoxFiiDiiActivityPreview({
-          category: previewCategory,
-          from_date: previewFromDate,
-          to_date: previewToDate,
-          page: customPage,
-          page_size: previewPageSize
-        });
-      } else {
-        response = await getUpstoxInstrumentsPreview({
-          ...params,
-          source_type: previewSourceType,
-          segment: previewSegment,
-          instrument_type: previewInstrumentType
-        });
-      }
+      const response =
+        previewMode === "expired"
+          ? await getUpstoxExpiredInstrumentsPreview(params)
+          : await getUpstoxInstrumentsPreview(params);
 
       const nextData = response.data.data || response.data || emptyPreviewData;
 
@@ -2077,7 +1415,12 @@ function DataCollection() {
     } catch (error) {
       setPreviewData(emptyPreviewData);
       showToast(
-        error.response?.data?.detail || "Unable to load preview records.",
+        getApiErrorMessage(
+          error,
+          previewMode === "expired"
+            ? "Unable to load expired instruments."
+            : "Unable to load current instruments."
+        ),
         "error"
       );
     } finally {
@@ -2175,65 +1518,6 @@ function DataCollection() {
     }
   }
 
-  async function handleBulkSync() {
-    if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
-      return;
-    }
-
-    setRunningJob("bulk");
-    setCancelRequested(false);
-    setElapsedSeconds(0);
-    activeSyncControllerRef.current = new AbortController();
-    let backgroundStarted = false;
-
-    try {
-      const response = await syncUpstoxAllInstruments({
-        signal: activeSyncControllerRef.current.signal
-      });
-
-      if (response.data?.status === "started") {
-        backgroundStarted = true;
-        showToast(
-          response.data.message || "All configured Upstox data collection jobs started.",
-          "success"
-        );
-        scheduleStartedJobRefresh();
-      } else if (response.data?.status === "cancelled") {
-        showToast(
-          response.data.message || "All instrument dumps cancelled.",
-          "warning"
-        );
-      } else if (response.data?.status === "partial_success") {
-        showToast(
-          response.data.message ||
-            "All configured runners completed with some failures.",
-          "warning"
-        );
-      } else {
-        showToast(response.data?.message || "All instrument dumps completed.", "success");
-      }
-
-      if (!backgroundStarted) {
-        await refreshAfterSync();
-      }
-    } catch (error) {
-      if (isRequestCancelled(error)) {
-        return;
-      }
-
-      showToast(
-        error.response?.data?.detail || "Unable to run all instrument dumps.",
-        "error"
-      );
-    } finally {
-      if (!backgroundStarted) {
-        setRunningJob(null);
-      }
-      activeSyncControllerRef.current = null;
-    }
-  }
-
   async function handleCancelSync() {
     if (!isAdminControlAllowed) {
       showToast("Admin access required to cancel data collection.", "error");
@@ -2254,7 +1538,7 @@ function DataCollection() {
       await loadData(false, { showLoading: false });
     } catch (error) {
       showToast(
-        error.response?.data?.detail || "Unable to cancel data collection.",
+        getApiErrorMessage(error, "Unable to cancel data collection."),
         "error"
       );
     } finally {
@@ -2307,8 +1591,7 @@ function DataCollection() {
       }
 
       showToast(
-        error.response?.data?.detail ||
-          "Unable to run current instruments dump.",
+        getApiErrorMessage(error, "Unable to run current instruments dump."),
         "error"
       );
     } finally {
@@ -2332,9 +1615,12 @@ function DataCollection() {
     let backgroundStarted = false;
 
     try {
-      const response = await syncUpstoxExpiredInstruments({
-        signal: activeSyncControllerRef.current.signal
-      });
+      const response = await syncUpstoxExpiredInstruments(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
 
       if (response.data?.status === "started") {
         backgroundStarted = true;
@@ -2364,8 +1650,7 @@ function DataCollection() {
       }
 
       showToast(
-        error.response?.data?.detail ||
-          "Unable to run expired instruments dump.",
+        getApiErrorMessage(error, "Unable to run expired instruments dump."),
         "error"
       );
     } finally {
@@ -2374,262 +1659,6 @@ function DataCollection() {
       }
       activeSyncControllerRef.current = null;
     }
-  }
-
-  async function handleEquitySync() {
-    if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
-      return;
-    }
-
-    setRunningJob("equity");
-    setCancelRequested(false);
-    setElapsedSeconds(0);
-    activeSyncControllerRef.current = new AbortController();
-    let backgroundStarted = false;
-
-    try {
-      const response = await syncUpstoxEquityInstruments({
-        signal: activeSyncControllerRef.current.signal
-      });
-
-      if (response.data?.status === "started") {
-        backgroundStarted = true;
-        showToast(
-          response.data.message || "Equity Instruments collection started.",
-          "success"
-        );
-        scheduleStartedJobRefresh();
-      } else if (response.data?.status === "cancelled") {
-        showToast(
-          response.data.message || "Equity instruments dump cancelled.",
-          "warning"
-        );
-      } else if (response.data?.skipped) {
-        showToast(
-          response.data.message || "Equity instruments already collected today.",
-          "success"
-        );
-      } else {
-        showToast(
-          response.data?.message || "Equity instruments dump completed.",
-          "success"
-        );
-      }
-
-      if (!backgroundStarted) {
-        await refreshAfterSync();
-      }
-    } catch (error) {
-      if (isRequestCancelled(error)) {
-        return;
-      }
-
-      showToast(
-        error.response?.data?.detail || "Unable to run equity instruments dump.",
-        "error"
-      );
-    } finally {
-      if (!backgroundStarted) {
-        setRunningJob(null);
-      }
-      activeSyncControllerRef.current = null;
-    }
-  }
-
-  async function handleOhlcvDailySync() {
-    if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
-      return;
-    }
-
-    setRunningJob("ohlcv_daily");
-    setCancelRequested(false);
-    setElapsedSeconds(0);
-    activeSyncControllerRef.current = new AbortController();
-    let backgroundStarted = false;
-
-    try {
-      const response = await syncUpstoxOhlcvDaily(
-        {},
-        {
-          signal: activeSyncControllerRef.current.signal
-        }
-      );
-
-      if (response.data?.status === "started") {
-        backgroundStarted = true;
-        showToast(
-          response.data.message || "Equity OHLCV collection started.",
-          "success"
-        );
-        scheduleStartedJobRefresh();
-      } else if (response.data?.status === "cancelled") {
-        showToast(
-          response.data.message || "Equity OHLCV collection cancelled.",
-          "warning"
-        );
-      } else if (response.data?.status === "failed") {
-        showToast(
-          response.data.message || "Equity OHLCV collection failed.",
-          "error"
-        );
-      } else if (response.data?.skipped) {
-        showToast(
-          response.data.message || "Equity OHLCV already collected today.",
-          "success"
-        );
-      } else {
-        showToast("Equity OHLCV collection completed.", "success");
-      }
-
-      if (!backgroundStarted) {
-        await refreshAfterSync();
-      }
-    } catch (error) {
-      if (isRequestCancelled(error)) {
-        return;
-      }
-
-      showToast(
-        error.response?.data?.detail || "Unable to run Equity OHLCV collection.",
-        "error"
-      );
-    } finally {
-      if (!backgroundStarted) {
-        setRunningJob(null);
-      }
-      activeSyncControllerRef.current = null;
-    }
-  }
-
-  async function handleTrackedPlaceholderSync({
-    jobKey,
-    runRequest,
-    successMessage,
-    cancelledMessage,
-    errorMessage
-  }) {
-    if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
-      return;
-    }
-
-    setRunningJob(jobKey);
-    setCancelRequested(false);
-    setElapsedSeconds(0);
-    activeSyncControllerRef.current = new AbortController();
-    let backgroundStarted = false;
-
-    try {
-      const response = await runRequest({
-        signal: activeSyncControllerRef.current.signal
-      });
-
-      if (response.data?.status === "started") {
-        backgroundStarted = true;
-        showToast(response.data.message || successMessage, "success");
-        scheduleStartedJobRefresh();
-      } else if (response.data?.status === "cancelled") {
-        showToast(response.data.message || cancelledMessage, "warning");
-      } else {
-        showToast(response.data?.message || successMessage, "success");
-      }
-
-      if (!backgroundStarted) {
-        await refreshAfterSync();
-      }
-    } catch (error) {
-      if (isRequestCancelled(error)) {
-        return;
-      }
-
-      showToast(error.response?.data?.detail || errorMessage, "error");
-    } finally {
-      if (!backgroundStarted) {
-        setRunningJob(null);
-      }
-      activeSyncControllerRef.current = null;
-    }
-  }
-
-  function handleEquityNewsSync() {
-    return handleTrackedPlaceholderSync({
-      jobKey: "equity_news",
-      runRequest: syncUpstoxEquityNews,
-      successMessage: "Equity News runner completed.",
-      cancelledMessage: "Equity News collection cancelled.",
-      errorMessage: "Unable to run Equity News collection."
-    });
-  }
-
-  function handleFundamentalsSync() {
-    return handleTrackedPlaceholderSync({
-      jobKey: "fundamentals",
-      runRequest: syncUpstoxFundamentals,
-      successMessage: "Fundamentals runner completed.",
-      cancelledMessage: "Fundamentals collection cancelled.",
-      errorMessage: "Unable to run Fundamentals collection."
-    });
-  }
-
-  function handleCorporateActionsSync() {
-    return handleTrackedPlaceholderSync({
-      jobKey: "corporate_actions",
-      runRequest: syncUpstoxCorporateActions,
-      successMessage: "Corporate Actions runner completed.",
-      cancelledMessage: "Corporate Actions collection cancelled.",
-      errorMessage: "Unable to run Corporate Actions collection."
-    });
-  }
-
-  function handleFiiDiiActivitySync() {
-    return handleTrackedPlaceholderSync({
-      jobKey: "fii_dii_activity",
-      runRequest: syncUpstoxFiiDiiActivity,
-      successMessage: "FII/DII Activity runner completed.",
-      cancelledMessage: "FII/DII Activity collection cancelled.",
-      errorMessage: "Unable to run FII/DII Activity collection."
-    });
-  }
-
-  function handlePreviewSync() {
-    if (previewType === "expired") {
-      handleExpiredSync();
-      return;
-    }
-
-    if (previewType === "equity") {
-      handleEquitySync();
-      return;
-    }
-
-    if (previewType === "ohlcv_daily") {
-      handleOhlcvDailySync();
-      return;
-    }
-
-    if (previewType === "equity_news") {
-      handleEquityNewsSync();
-      return;
-    }
-
-    if (previewType === "fundamentals") {
-      handleFundamentalsSync();
-      return;
-    }
-
-    if (previewType === "corporate_actions") {
-      handleCorporateActionsSync();
-      return;
-    }
-
-    if (previewType === "fii_dii") {
-      handleFiiDiiActivitySync();
-      return;
-    }
-
-    handleCurrentSync();
   }
 
   async function openSchedulePopup(jobType) {
@@ -2697,7 +1726,7 @@ function DataCollection() {
     setScheduleFormMode("edit");
     setScheduleFormData({
       schedule_id: schedule.schedule_id,
-      job_type: schedule.job_type || selectedScheduleJob,
+      job_type: schedule.job_type || selectedScheduleJob || "current_instruments",
       schedule_time: schedule.schedule_time || "",
       time_format: schedule.time_format || "24",
       is_active: Boolean(schedule.is_active)
@@ -2708,7 +1737,7 @@ function DataCollection() {
     setScheduleFormMode("add");
     setScheduleFormData({
       ...emptyScheduleForm,
-      job_type: selectedScheduleJob
+      job_type: selectedScheduleJob || "current_instruments"
     });
   }
 
@@ -2726,7 +1755,7 @@ function DataCollection() {
     setSavingSchedule(true);
 
     const payload = {
-      job_type: scheduleFormData.job_type,
+      job_type: scheduleFormData.job_type || selectedScheduleJob,
       schedule_time: scheduleFormData.schedule_time,
       time_format: scheduleFormData.time_format,
       is_active: Boolean(scheduleFormData.is_active)
@@ -2748,7 +1777,7 @@ function DataCollection() {
       setScheduleFormMode("add");
       setScheduleFormData({
         ...emptyScheduleForm,
-        job_type: selectedScheduleJob
+        job_type: selectedScheduleJob || "current_instruments"
       });
     } catch (error) {
       showToast(getApiErrorMessage(error, "Unable to save schedule."), "error");
@@ -2839,13 +1868,8 @@ function DataCollection() {
       setPreviewSourceType("all");
       setPreviewSegment("all");
       setPreviewInstrumentType("all");
-      setPreviewSecurityType("all");
-      setPreviewPeriodType("all");
-      setPreviewActionType("all");
-      setPreviewCategory("all");
-      setPreviewFromDate("");
-      setPreviewToDate("");
       setPreviewPage(1);
+      setPreviewData(emptyPreviewData);
     }
   }
 
@@ -2859,9 +1883,29 @@ function DataCollection() {
     }
 
     if (column.key === "saved") {
+      const recordsAdded = Number(row.recordsAdded || 0);
+      const savedLabel = formatCompactNumber(row.records);
+      const addedLabel = formatCompactNumber(recordsAdded);
+
       return (
-        <span className="truncate oa-code-font text-white">
-          {formatNumber(row.records)}
+        <span
+          className="inline-flex w-full min-w-[92px] items-center gap-1 overflow-visible whitespace-nowrap oa-code-font"
+          title={
+            recordsAdded > 0
+              ? `${formatNumber(row.records)} saved (+${formatNumber(
+                  recordsAdded
+                )})`
+              : `${formatNumber(row.records)} saved`
+          }
+        >
+          <span className="inline-block min-w-[42px] text-right text-white">
+            {savedLabel}
+          </span>
+          {row.loading && recordsAdded > 0 ? (
+            <span className="inline-block shrink-0 text-emerald-300">
+              (+{addedLabel})
+            </span>
+          ) : null}
         </span>
       );
     }
@@ -2882,9 +1926,7 @@ function DataCollection() {
     }
 
     if (column.key === "time") {
-      const displaySeconds = row.loading
-        ? elapsedSeconds
-        : row.duration;
+      const displaySeconds = row.loading ? elapsedSeconds : row.duration;
 
       return (
         <span className="truncate oa-code-font text-white">
@@ -2901,34 +1943,6 @@ function DataCollection() {
   }
 
   function renderDumpJobActions(row) {
-    if (row.readOnly) {
-      return (
-        <div className="flex justify-end gap-2">
-          <Tooltip text="Scheduler not added yet" side="left">
-            <button
-              type="button"
-              disabled
-              className="flex h-8 w-8 cursor-not-allowed items-center justify-center rounded border border-oa-border bg-black text-oa-muted opacity-50"
-              aria-label={`${row.title} scheduler not available yet`}
-            >
-              <Clock3 size={14} />
-            </button>
-          </Tooltip>
-
-          <Tooltip text="Download sync not added yet" side="left">
-            <button
-              type="button"
-              disabled
-              className="flex h-8 w-8 cursor-not-allowed items-center justify-center rounded border border-oa-border bg-black text-oa-muted opacity-50"
-              aria-label={`${row.title} sync not available yet`}
-            >
-              <Play size={14} />
-            </button>
-          </Tooltip>
-        </div>
-      );
-    }
-
     return (
       <DumpJobActions
         title={row.title}
@@ -2962,12 +1976,6 @@ function DataCollection() {
     previewSourceType,
     previewSegment,
     previewInstrumentType,
-    previewSecurityType,
-    previewPeriodType,
-    previewActionType,
-    previewCategory,
-    previewFromDate,
-    previewToDate,
     previewPage
   ]);
 
@@ -3051,10 +2059,7 @@ function DataCollection() {
                   onClearSearch={handleClearMonitorSearch}
                   rows={filteredDumpJobRows}
                   loading={loading}
-                  canRunAll={shouldShowRunAllButton}
-                  runAllDisabled={!isAdminControlAllowed || loading}
                   onRefresh={() => loadData(true)}
-                  onBulkSync={handleBulkSync}
                   renderCell={renderDumpJobCell}
                   renderActions={renderDumpJobActions}
                 />
@@ -3062,8 +2067,7 @@ function DataCollection() {
 
               {isPreviewView(activeView) ? (
                 <DbPreviewContent
-                  previewType={previewType}
-                  previewLabel={previewLabel}
+                  previewMode={getPreviewMode(activeView)}
                   searchValue={previewSearch}
                   onSearchChange={setPreviewSearch}
                   onSearchSubmit={handlePreviewSearchSubmit}
@@ -3083,52 +2087,8 @@ function DataCollection() {
                     setPreviewInstrumentType(value);
                     setPreviewPage(1);
                   }}
-                  securityType={previewSecurityType}
-                  onSecurityTypeChange={(value) => {
-                    setPreviewSecurityType(value);
-                    setPreviewPage(1);
-                  }}
-                  periodType={previewPeriodType}
-                  onPeriodTypeChange={(value) => {
-                    setPreviewPeriodType(value);
-                    setPreviewPage(1);
-                  }}
-                  actionType={previewActionType}
-                  onActionTypeChange={(value) => {
-                    setPreviewActionType(value);
-                    setPreviewPage(1);
-                  }}
-                  category={previewCategory}
-                  onCategoryChange={(value) => {
-                    setPreviewCategory(value);
-                    setPreviewPage(1);
-                  }}
-                  fromDate={previewFromDate}
-                  onFromDateChange={(value) => {
-                    setPreviewFromDate(value);
-                    setPreviewPage(1);
-                  }}
-                  toDate={previewToDate}
-                  onToDateChange={(value) => {
-                    setPreviewToDate(value);
-                    setPreviewPage(1);
-                  }}
                   previewData={previewData}
                   loading={previewLoading}
-                  canRunAll={shouldShowRunAllButton}
-                  runAllDisabled={
-                    !isAdminControlAllowed || loading || previewLoading
-                  }
-                  canRunPreview={[
-                    "current",
-                    "expired",
-                    "equity",
-                    "ohlcv_daily",
-                    "equity_news",
-                    "fundamentals",
-                    "corporate_actions",
-                    "fii_dii"
-                  ].includes(previewType)}
                   runPreviewDisabled={
                     !isAdminControlAllowed ||
                     loading ||
@@ -3136,8 +2096,11 @@ function DataCollection() {
                     hasActiveJob
                   }
                   onRefresh={() => loadPreview(previewPage)}
-                  onRunPreview={handlePreviewSync}
-                  onBulkSync={handleBulkSync}
+                  onRunPreview={
+                    getPreviewMode(activeView) === "expired"
+                      ? handleExpiredSync
+                      : handleCurrentSync
+                  }
                   onPreviousPage={() =>
                     setPreviewPage((value) => Math.max(1, value - 1))
                   }

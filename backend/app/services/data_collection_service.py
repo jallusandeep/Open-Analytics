@@ -1,12 +1,9 @@
 import gzip
-import hashlib
 import json
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
-from datetime import datetime, timezone, timedelta
+import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,57 +13,51 @@ from app.database import get_connection
 
 
 UPSTOX_PROVIDER = "upstox"
-UPSTOX_BASE_URL = "https://api.upstox.com/v2"
-UPSTOX_V3_BASE_URL = "https://api.upstox.com/v3"
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = APP_ROOT / "data" / "upstox"
 MASTER_INSTRUMENT_FILE = DATA_DIR / "upstox_instruments.json"
+EXPIRED_INSTRUMENT_FILE = DATA_DIR / "upstox_expired_instruments.json"
 
 UPSTOX_CURRENT_MASTER_URL = (
     "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
 )
 
-DEFAULT_UNDERLYING_KEYS = [
-    "NSE_INDEX|Nifty 50",
-    "NSE_INDEX|Nifty Bank",
-    "NSE_INDEX|Nifty Fin Service",
-    "NSE_INDEX|Nifty Midcap Select",
-    "BSE_INDEX|SENSEX",
-    "BSE_INDEX|BANKEX"
-]
-
 REQUEST_TIMEOUT_SECONDS = 180
-API_SLEEP_SECONDS = 0.45
-OHLCV_API_SLEEP_SECONDS = 0.35
-OHLCV_API_RETRY_ATTEMPTS = 4
-OHLCV_API_RETRY_BASE_SLEEP_SECONDS = 0.75
 STALE_RUNNING_RUN_HOURS = 2
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4
-UPSTOX_FII_DATA_TYPES = [
-    "NSE_EQ|CASH",
-    "NSE_FO|INDEX_FUTURES",
-    "NSE_FO|STOCK_FUTURES",
-    "NSE_FO|INDEX_OPTIONS",
-    "NSE_FO|STOCK_OPTIONS"
-]
-UPSTOX_DII_DATA_TYPES = ["NSE_EQ|CASH"]
 
 CANCEL_SIGNAL_DIR = APP_ROOT / "runtime"
 CANCEL_SIGNAL_FILE = CANCEL_SIGNAL_DIR / "upstox_data_collection.cancel"
+
+DEFAULT_EXPIRED_UNDERLYING_KEYS = [
+    "NSE_INDEX|Nifty 50",
+    "NSE_INDEX|Nifty Bank",
+    "NSE_INDEX|Nifty Fin Service",
+    "NSE_INDEX|Nifty Midcap Select"
+]
+DEFAULT_EXPIRED_UNDERLYING_SEGMENT = "NSE_FO"
+DEFAULT_EXPIRED_UNDERLYING_TYPES = ["INDEX", "EQUITY"]
+
+EXPIRED_SOURCE_OPTION = "expired_option_contract"
+EXPIRED_SOURCE_FUTURE = "expired_future_contract"
 
 
 class SyncCancelled(Exception):
     pass
 
 
-def normalize_upstox_token(access_token: str) -> str:
-    token = access_token.strip() if access_token else ""
+def is_upstox_expired_permission_error(error_text: str) -> bool:
+    lowered_error = (error_text or "").lower()
 
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
-
-    return token
+    return (
+        "udapi100067" in lowered_error
+        or "udapi1149" in lowered_error
+        or "read only token" in lowered_error
+        or "upstox plus" in lowered_error
+        or "not permitted" in lowered_error
+        or "permission" in lowered_error
+    )
 
 
 def write_cancel_signal():
@@ -97,108 +88,17 @@ def normalize_duckdb_file_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/")
 
 
-def normalize_expiry(value: Any) -> Optional[str]:
-    if value in (None, "", 0):
-        return None
-
-    if isinstance(value, str):
-        value = value.strip()
-
-        if not value:
-            return None
-
-        if len(value) == 10 and value[4] == "-" and value[7] == "-":
-            return value
-
-        try:
-            number_value = int(value)
-            return datetime.fromtimestamp(
-                number_value / 1000,
-                tz=timezone.utc
-            ).date().isoformat()
-        except Exception:
-            return None
-
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(
-                value / 1000,
-                tz=timezone.utc
-            ).date().isoformat()
-        except Exception:
-            return None
-
-    return None
+def safe_strip(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
-def safe_text(value: Any) -> Optional[str]:
-    if value is None:
-        return None
+def normalize_upstox_token(access_token: Any) -> str:
+    token = safe_strip(access_token)
 
-    text = str(value).strip()
-    return text if text else None
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
 
-
-def safe_float(value: Any) -> Optional[float]:
-    if value in (None, ""):
-        return None
-
-    try:
-        return float(value)
-    except Exception:
-        return None
-
-
-def safe_int(value: Any) -> Optional[int]:
-    if value in (None, ""):
-        return None
-
-    try:
-        return int(float(value))
-    except Exception:
-        return None
-
-
-def safe_bool(value: Any) -> Optional[bool]:
-    if value is None:
-        return None
-
-    if isinstance(value, str):
-        clean_value = value.strip().lower()
-
-        if clean_value in ("true", "1", "yes", "y"):
-            return True
-
-        if clean_value in ("false", "0", "no", "n"):
-            return False
-
-    return bool(value)
-
-
-def get_upstox_access_token(conn) -> str:
-    row = conn.execute("""
-        SELECT
-            access_token,
-            connection_status
-        FROM external_connections
-        WHERE provider = ?
-          AND record_status = 'S'
-          AND access_token IS NOT NULL
-          AND TRIM(access_token) <> ''
-        ORDER BY updated_at DESC
-        LIMIT 1;
-    """, [UPSTOX_PROVIDER]).fetchone()
-
-    if not row or not row[0]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Upstox connection token is not saved. "
-                "Please save Upstox connection in Connections first."
-            )
-        )
-
-    return normalize_upstox_token(row[0])
+    return token
 
 
 def get_upstox_connection_status(conn) -> str:
@@ -214,6 +114,40 @@ def get_upstox_connection_status(conn) -> str:
         return "not_connected"
 
     return row[0] or "saved"
+
+
+def get_saved_upstox_access_token(conn) -> str:
+    row = conn.execute("""
+        SELECT access_token, connection_status
+        FROM external_connections
+        WHERE provider = ?
+          AND record_status = 'S'
+        LIMIT 1;
+    """, [UPSTOX_PROVIDER]).fetchone()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Upstox connection is not configured. Save analytics token in Connections first."
+        )
+
+    connection_status = row[1] or "saved"
+
+    if connection_status == "disconnected":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox connection is disconnected. Save analytics token in Connections first."
+        )
+
+    access_token = normalize_upstox_token(row[0])
+
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox analytics token is missing. Save analytics token in Connections first."
+        )
+
+    return access_token
 
 
 def mark_stale_sync_runs(conn):
@@ -511,6 +445,51 @@ def download_upstox_master_file_once(force_download: bool = False) -> Path:
         raise
 
 
+def download_upstox_master_gz_file_once() -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    gz_file = MASTER_INSTRUMENT_FILE.with_suffix(".json.gz")
+    temp_gz_file = gz_file.with_suffix(".gz.download")
+
+    request = urllib.request.Request(
+        UPSTOX_CURRENT_MASTER_URL,
+        headers={
+            "User-Agent": "OpenAnalytics/1.0"
+        }
+    )
+
+    print("Downloading Upstox current instruments compressed master file.")
+    print("No token required for current instruments.")
+    print(f"URL  : {UPSTOX_CURRENT_MASTER_URL}")
+    print(f"Save : {gz_file}")
+
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            with open(temp_gz_file, "wb") as output_file:
+                while True:
+                    chunk = response.read(DOWNLOAD_CHUNK_SIZE)
+
+                    if not chunk:
+                        break
+
+                    output_file.write(chunk)
+
+        temp_gz_file.replace(gz_file)
+
+        print(f"Download completed: {gz_file}")
+
+        return gz_file
+
+    except Exception:
+        try:
+            if temp_gz_file.exists():
+                temp_gz_file.unlink()
+        except Exception:
+            pass
+
+        raise
+
+
 def delete_downloaded_master_file(file_path: Optional[Path]):
     if not file_path:
         return
@@ -524,67 +503,15 @@ def delete_downloaded_master_file(file_path: Optional[Path]):
 
         if resolved_file.exists():
             resolved_file.unlink()
-            print(f"Deleted temporary Upstox master file: {resolved_file}")
+            print(f"Deleted temporary Upstox data file: {resolved_file}")
     except Exception as error:
-        print(f"Unable to delete temporary Upstox master file: {error}")
+        print(f"Unable to delete temporary Upstox data file: {error}")
 
 
 def import_current_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
     check_sync_cancelled(conn, sync_id)
 
     duckdb_path = normalize_duckdb_file_path(local_file)
-
-    conn.execute("DROP TABLE IF EXISTS temp_upstox_current")
-
-    read_started_at = time.time()
-
-    print("Reading required columns directly with DuckDB...")
-
-    conn.execute(
-        """
-        CREATE TEMP TABLE temp_upstox_current AS
-        SELECT *
-        FROM read_json(
-            ?,
-            format = 'array',
-            maximum_object_size = 16777216,
-            columns = {
-                instrument_key: 'VARCHAR',
-                segment: 'VARCHAR',
-                name: 'VARCHAR',
-                exchange: 'VARCHAR',
-                isin: 'VARCHAR',
-                instrument_type: 'VARCHAR',
-                trading_symbol: 'VARCHAR',
-                short_name: 'VARCHAR',
-                exchange_token: 'VARCHAR',
-                expiry: 'VARCHAR',
-                strike_price: 'DOUBLE',
-                lot_size: 'BIGINT',
-                minimum_lot: 'BIGINT',
-                freeze_quantity: 'DOUBLE',
-                tick_size: 'DOUBLE',
-                weekly: 'BOOLEAN',
-                underlying_key: 'VARCHAR',
-                underlying_symbol: 'VARCHAR',
-                underlying_type: 'VARCHAR',
-                security_type: 'VARCHAR'
-            }
-        );
-        """,
-        [duckdb_path]
-    )
-
-    print(f"DuckDB JSON read time: {round(time.time() - read_started_at, 2)} seconds")
-
-    check_sync_cancelled(conn, sync_id)
-
-    total_rows = conn.execute("""
-        SELECT COUNT(*)
-        FROM temp_upstox_current;
-    """).fetchone()[0]
-
-    print(f"Rows loaded into temp table: {total_rows}")
 
     insert_started_at = time.time()
 
@@ -650,29 +577,6 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
             security_type,
             NULL AS raw_json,
             CURRENT_TIMESTAMP AS synced_at
-        FROM temp_upstox_current;
-    """)
-
-    print(f"DuckDB insert time: {round(time.time() - insert_started_at, 2)} seconds")
-
-    conn.execute("DROP TABLE IF EXISTS temp_upstox_current")
-
-    return int(total_rows or 0)
-
-
-def import_equity_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
-    check_sync_cancelled(conn, sync_id)
-
-    duckdb_path = normalize_duckdb_file_path(local_file)
-
-    conn.execute("DROP TABLE IF EXISTS temp_upstox_equity")
-
-    print("Reading NSE_EQ equity instruments directly with DuckDB...")
-
-    conn.execute(
-        """
-        CREATE TEMP TABLE temp_upstox_equity AS
-        SELECT *
         FROM read_json(
             ?,
             format = 'array',
@@ -687,820 +591,1240 @@ def import_equity_instruments_from_local_file(conn, sync_id: str, local_file: Pa
                 trading_symbol: 'VARCHAR',
                 short_name: 'VARCHAR',
                 exchange_token: 'VARCHAR',
+                expiry: 'VARCHAR',
+                strike_price: 'DOUBLE',
                 lot_size: 'BIGINT',
+                minimum_lot: 'BIGINT',
                 freeze_quantity: 'DOUBLE',
                 tick_size: 'DOUBLE',
+                weekly: 'BOOLEAN',
+                underlying_key: 'VARCHAR',
+                underlying_symbol: 'VARCHAR',
+                underlying_type: 'VARCHAR',
                 security_type: 'VARCHAR'
             }
+        );
+    """, [duckdb_path])
+
+    print(f"DuckDB insert time: {round(time.time() - insert_started_at, 2)} seconds")
+
+    total_rows = conn.execute("""
+        SELECT COUNT(*)
+        FROM upstox_instruments
+        WHERE source_type = 'bod_complete';
+    """).fetchone()[0]
+
+    print(f"Current instruments inserted directly into DB: {total_rows}")
+
+    return int(total_rows or 0)
+
+
+def import_upstox_client():
+    try:
+        import upstox_client
+        return upstox_client
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Upstox Python SDK is not installed. "
+                "Run: pip install -r backend/requirements.txt"
+            )
         )
-        WHERE segment = 'NSE_EQ'
-          AND exchange = 'NSE'
-          AND instrument_key IS NOT NULL
-          AND TRIM(instrument_key) <> '';
+
+
+def create_expired_instrument_api(access_token: str):
+    upstox_client = import_upstox_client()
+
+    configuration = upstox_client.Configuration()
+    configuration.access_token = normalize_upstox_token(access_token)
+
+    return upstox_client.ExpiredInstrumentApi(
+        upstox_client.ApiClient(configuration)
+    )
+
+
+def model_to_dict(value: Any):
+    if value is None:
+        return None
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, list):
+        return [model_to_dict(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [model_to_dict(item) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            str(key): model_to_dict(item)
+            for key, item in value.items()
+            if not str(key).startswith("_")
+        }
+
+    if hasattr(value, "to_dict"):
+        try:
+            return model_to_dict(value.to_dict())
+        except Exception:
+            pass
+
+    if hasattr(value, "__dict__"):
+        return {
+            str(key): model_to_dict(item)
+            for key, item in value.__dict__.items()
+            if not str(key).startswith("_")
+        }
+
+    return str(value)
+
+
+def extract_api_data(response: Any):
+    payload = model_to_dict(response)
+
+    if isinstance(payload, dict):
+        data = payload.get("data")
+
+        if data is not None:
+            return data
+
+        if "expiries" in payload:
+            return payload.get("expiries")
+
+        if "expiry_dates" in payload:
+            return payload.get("expiry_dates")
+
+    return payload
+
+
+def normalize_expiry_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+
+    clean_value = str(value).strip()
+
+    if not clean_value:
+        return None
+
+    return clean_value[:10]
+
+
+def first_available(data: dict, keys: List[str], default=None):
+    for key in keys:
+        value = data.get(key)
+
+        if value is not None:
+            return value
+
+    return default
+
+
+def normalize_expired_contract_record(
+    record: dict,
+    source_type: str,
+    underlying_key: str,
+    expiry_date: str
+) -> dict:
+    plain_record = model_to_dict(record)
+
+    if not isinstance(plain_record, dict):
+        plain_record = {
+            "value": plain_record
+        }
+
+    expiry = first_available(
+        plain_record,
+        ["expiry", "expiry_date", "expiration_date"],
+        expiry_date
+    )
+
+    instrument_type = first_available(
+        plain_record,
+        ["instrument_type", "type"],
+        "OPT" if source_type == EXPIRED_SOURCE_OPTION else "FUT"
+    )
+
+    return {
+        "instrument_key": first_available(plain_record, ["instrument_key", "instrumentKey"]),
+        "segment": first_available(plain_record, ["segment"]),
+        "name": first_available(plain_record, ["name"]),
+        "exchange": first_available(plain_record, ["exchange"]),
+        "instrument_type": instrument_type,
+        "trading_symbol": first_available(
+            plain_record,
+            ["trading_symbol", "tradingSymbol", "symbol"]
+        ),
+        "exchange_token": first_available(
+            plain_record,
+            ["exchange_token", "exchangeToken"]
+        ),
+        "expiry": normalize_expiry_value(expiry),
+        "strike_price": first_available(
+            plain_record,
+            ["strike_price", "strikePrice", "strike"]
+        ),
+        "lot_size": first_available(
+            plain_record,
+            ["lot_size", "lotSize"]
+        ),
+        "minimum_lot": first_available(
+            plain_record,
+            ["minimum_lot", "minimumLot"]
+        ),
+        "freeze_quantity": first_available(
+            plain_record,
+            ["freeze_quantity", "freezeQuantity"]
+        ),
+        "tick_size": first_available(
+            plain_record,
+            ["tick_size", "tickSize"]
+        ),
+        "weekly": first_available(plain_record, ["weekly"]),
+        "underlying_key": first_available(
+            plain_record,
+            ["underlying_key", "underlyingKey"],
+            underlying_key
+        ),
+        "underlying_symbol": first_available(
+            plain_record,
+            ["underlying_symbol", "underlyingSymbol"]
+        ),
+        "underlying_type": first_available(
+            plain_record,
+            ["underlying_type", "underlyingType"]
+        ),
+        "source_type": source_type,
+        "raw_json": json.dumps(plain_record, ensure_ascii=False, default=str)
+    }
+
+
+def normalize_expiry_list(response: Any) -> List[str]:
+    data = extract_api_data(response)
+
+    values = []
+
+    if isinstance(data, list):
+        values = data
+    elif isinstance(data, dict):
+        for key in ("expiries", "expiry_dates", "expiryDates", "data"):
+            if isinstance(data.get(key), list):
+                values = data.get(key)
+                break
+
+    normalized = []
+
+    for item in values:
+        if isinstance(item, dict):
+            expiry = first_available(
+                item,
+                ["expiry", "expiry_date", "expiryDate", "date"]
+            )
+        else:
+            expiry = item
+
+        expiry_value = normalize_expiry_value(expiry)
+
+        if expiry_value:
+            normalized.append(expiry_value)
+
+    return sorted(set(normalized))
+
+
+def normalize_contract_list(
+    response: Any,
+    source_type: str,
+    underlying_key: str,
+    expiry_date: str
+) -> List[dict]:
+    data = extract_api_data(response)
+
+    if isinstance(data, dict):
+        possible_rows = None
+
+        for key in ("contracts", "instruments", "data"):
+            if isinstance(data.get(key), list):
+                possible_rows = data.get(key)
+                break
+
+        if possible_rows is None:
+            possible_rows = [data]
+
+        data = possible_rows
+
+    if not isinstance(data, list):
+        return []
+
+    rows = []
+
+    for item in data:
+        normalized = normalize_expired_contract_record(
+            record=item,
+            source_type=source_type,
+            underlying_key=underlying_key,
+            expiry_date=expiry_date
+        )
+
+        if normalized.get("instrument_key"):
+            rows.append(normalized)
+
+    return rows
+
+
+def unique_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    unique_values = []
+
+    for value in values:
+        clean_value = safe_strip(value)
+
+        if clean_value and clean_value not in seen:
+            seen.add(clean_value)
+            unique_values.append(clean_value)
+
+    return unique_values
+
+
+def get_configured_expired_underlying_keys(
+    conn,
+    segment: str = DEFAULT_EXPIRED_UNDERLYING_SEGMENT,
+    underlying_types: Optional[List[str]] = None
+) -> List[str]:
+    clean_segment = safe_strip(segment) or DEFAULT_EXPIRED_UNDERLYING_SEGMENT
+    clean_underlying_types = unique_preserve_order(
+        underlying_types or DEFAULT_EXPIRED_UNDERLYING_TYPES
+    )
+
+    if not clean_underlying_types:
+        clean_underlying_types = DEFAULT_EXPIRED_UNDERLYING_TYPES.copy()
+
+    type_placeholders = ", ".join(["?"] * len(clean_underlying_types))
+
+    try:
+        rows = conn.execute(f"""
+            SELECT
+                underlying_key,
+                MIN(COALESCE(underlying_symbol, '')) AS symbol,
+                MIN(COALESCE(underlying_type, '')) AS type,
+                COUNT(1) AS contract_count
+            FROM upstox_instruments
+            WHERE segment = ?
+              AND underlying_key IS NOT NULL
+              AND TRIM(underlying_key) <> ''
+              AND UPPER(COALESCE(underlying_type, '')) IN ({type_placeholders})
+            GROUP BY underlying_key
+            ORDER BY
+                CASE
+                    WHEN MIN(UPPER(COALESCE(underlying_type, ''))) = 'INDEX' THEN 0
+                    ELSE 1
+                END,
+                MIN(COALESCE(underlying_symbol, '')),
+                underlying_key;
+        """, [clean_segment] + clean_underlying_types).fetchall()
+    except Exception as error:
+        print(f"Unable to discover expired underlying keys: {error}")
+        rows = []
+
+    discovered_keys = [row[0] for row in rows if row and safe_strip(row[0])]
+
+    if discovered_keys:
+        print(
+            "Discovered expired underlying keys from current instruments: "
+            f"{len(discovered_keys)}"
+        )
+        return unique_preserve_order(discovered_keys)
+
+    print("Using fallback expired index underlying keys.")
+    return DEFAULT_EXPIRED_UNDERLYING_KEYS.copy()
+
+
+def normalize_sync_expired_config(payload: Optional[dict]) -> dict:
+    payload = payload or {}
+
+    raw_underlying_keys = payload.get("underlying_keys")
+
+    if isinstance(raw_underlying_keys, str):
+        underlying_keys = [
+            value.strip()
+            for value in raw_underlying_keys.split(",")
+            if value.strip()
+        ]
+    elif isinstance(raw_underlying_keys, list):
+        underlying_keys = [
+            str(value).strip()
+            for value in raw_underlying_keys
+            if str(value).strip()
+        ]
+    else:
+        underlying_keys = []
+
+    raw_underlying_types = payload.get("underlying_types")
+
+    if isinstance(raw_underlying_types, str):
+        underlying_types = [
+            value.strip().upper()
+            for value in raw_underlying_types.split(",")
+            if value.strip()
+        ]
+    elif isinstance(raw_underlying_types, list):
+        underlying_types = [
+            str(value).strip().upper()
+            for value in raw_underlying_types
+            if str(value).strip()
+        ]
+    else:
+        underlying_types = DEFAULT_EXPIRED_UNDERLYING_TYPES.copy()
+
+    underlying_types = unique_preserve_order(underlying_types)
+    underlying_segment = safe_strip(
+        payload.get("underlying_segment")
+    ) or DEFAULT_EXPIRED_UNDERLYING_SEGMENT
+
+    include_options = bool(payload.get("include_options", True))
+    include_futures = bool(payload.get("include_futures", True))
+
+    try:
+        max_expiries = payload.get("max_expiries_per_underlying")
+
+        if max_expiries in (None, "", 0, "0"):
+            max_expiries = None
+        else:
+            max_expiries = max(1, int(max_expiries))
+    except Exception:
+        max_expiries = None
+
+    try:
+        request_pause_seconds = float(payload.get("request_pause_seconds", 0.05))
+    except Exception:
+        request_pause_seconds = 0.05
+
+    if request_pause_seconds < 0:
+        request_pause_seconds = 0
+
+    force_refresh = bool(payload.get("force_refresh", False))
+
+    return {
+        "underlying_keys": underlying_keys,
+        "underlying_segment": underlying_segment,
+        "underlying_types": underlying_types,
+        "include_options": include_options,
+        "include_futures": include_futures,
+        "max_expiries_per_underlying": max_expiries,
+        "request_pause_seconds": request_pause_seconds,
+        "force_refresh": force_refresh
+    }
+
+
+def write_expired_records_to_local_json(records: List[dict]) -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    temp_file = EXPIRED_INSTRUMENT_FILE.with_suffix(".json.download")
+
+    with open(temp_file, "w", encoding="utf-8") as output_file:
+        json.dump(records, output_file, ensure_ascii=False, default=str)
+
+    temp_file.replace(EXPIRED_INSTRUMENT_FILE)
+
+    return EXPIRED_INSTRUMENT_FILE
+
+
+def ensure_expired_contract_sync_status_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS upstox_expired_contract_sync_status (
+            underlying_key VARCHAR,
+            expiry DATE,
+            source_type VARCHAR,
+            status VARCHAR DEFAULT 'success',
+            record_count BIGINT DEFAULT 0,
+            last_error VARCHAR,
+            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+
+def ensure_expired_underlying_sync_status_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS upstox_expired_underlying_sync_status (
+            underlying_key VARCHAR,
+            status VARCHAR DEFAULT 'success',
+            expiry_count BIGINT DEFAULT 0,
+            record_count BIGINT DEFAULT 0,
+            include_options BOOLEAN DEFAULT TRUE,
+            include_futures BOOLEAN DEFAULT TRUE,
+            last_error VARCHAR,
+            synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+
+def has_expired_underlying_been_fully_checked(
+    conn,
+    underlying_key: str,
+    include_options: bool,
+    include_futures: bool,
+    max_expiries: Optional[int] = None,
+    force_refresh: bool = False
+) -> bool:
+    if force_refresh or max_expiries:
+        return False
+
+    ensure_expired_underlying_sync_status_table(conn)
+
+    row = conn.execute("""
+        SELECT status
+        FROM upstox_expired_underlying_sync_status
+        WHERE underlying_key = ?
+          AND status = 'success'
+          AND (? = FALSE OR include_options = TRUE)
+          AND (? = FALSE OR include_futures = TRUE)
+        LIMIT 1;
+    """, [underlying_key, include_options, include_futures]).fetchone()
+
+    return bool(row)
+
+
+def record_expired_underlying_status(
+    conn,
+    underlying_key: str,
+    status_value: str,
+    expiry_count: int = 0,
+    record_count: int = 0,
+    include_options: bool = True,
+    include_futures: bool = True,
+    error_message: Optional[str] = None
+):
+    ensure_expired_underlying_sync_status_table(conn)
+
+    conn.execute("""
+        DELETE FROM upstox_expired_underlying_sync_status
+        WHERE underlying_key = ?
+          AND include_options = ?
+          AND include_futures = ?;
+    """, [underlying_key, include_options, include_futures])
+
+    conn.execute("""
+        INSERT INTO upstox_expired_underlying_sync_status (
+            underlying_key,
+            status,
+            expiry_count,
+            record_count,
+            include_options,
+            include_futures,
+            last_error,
+            synced_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+    """, [
+        underlying_key,
+        status_value,
+        int(expiry_count or 0),
+        int(record_count or 0),
+        bool(include_options),
+        bool(include_futures),
+        error_message
+    ])
+
+
+def has_expired_contract_group_been_checked(
+    conn,
+    underlying_key: str,
+    expiry_date: str,
+    source_type: str,
+    force_refresh: bool = False
+) -> bool:
+    if force_refresh:
+        return False
+
+    existing_records = conn.execute("""
+        SELECT COUNT(1)
+        FROM upstox_expired_instruments
+        WHERE underlying_key = ?
+          AND expiry = TRY_CAST(? AS DATE)
+          AND source_type = ?;
+    """, [underlying_key, expiry_date, source_type]).fetchone()[0]
+
+    if existing_records:
+        return True
+
+    ensure_expired_contract_sync_status_table(conn)
+
+    status_row = conn.execute("""
+        SELECT status
+        FROM upstox_expired_contract_sync_status
+        WHERE underlying_key = ?
+          AND expiry = TRY_CAST(? AS DATE)
+          AND source_type = ?
+          AND status = 'success'
+        LIMIT 1;
+    """, [underlying_key, expiry_date, source_type]).fetchone()
+
+    return bool(status_row)
+
+
+def record_expired_contract_group_status(
+    conn,
+    underlying_key: str,
+    expiry_date: str,
+    source_type: str,
+    status_value: str,
+    record_count: int = 0,
+    error_message: Optional[str] = None
+):
+    ensure_expired_contract_sync_status_table(conn)
+
+    conn.execute("""
+        DELETE FROM upstox_expired_contract_sync_status
+        WHERE underlying_key = ?
+          AND expiry = TRY_CAST(? AS DATE)
+          AND source_type = ?;
+    """, [underlying_key, expiry_date, source_type])
+
+    conn.execute("""
+        INSERT INTO upstox_expired_contract_sync_status (
+            underlying_key,
+            expiry,
+            source_type,
+            status,
+            record_count,
+            last_error,
+            synced_at
+        )
+        VALUES (?, TRY_CAST(? AS DATE), ?, ?, ?, ?, CURRENT_TIMESTAMP);
+    """, [
+        underlying_key,
+        expiry_date,
+        source_type,
+        status_value,
+        int(record_count or 0),
+        error_message
+    ])
+
+
+def download_expired_instruments_with_sdk(
+    conn,
+    sync_id: str,
+    access_token: str,
+    config: Optional[dict] = None
+) -> dict:
+    config = normalize_sync_expired_config(config)
+
+    expired_api = create_expired_instrument_api(access_token)
+
+    underlying_keys = config["underlying_keys"]
+
+    if not underlying_keys:
+        underlying_keys = get_configured_expired_underlying_keys(
+            conn,
+            segment=config["underlying_segment"],
+            underlying_types=config["underlying_types"]
+        )
+
+    include_options = config["include_options"]
+    include_futures = config["include_futures"]
+    max_expiries = config["max_expiries_per_underlying"]
+    request_pause_seconds = config["request_pause_seconds"]
+    force_refresh = config["force_refresh"]
+
+    if not include_options and not include_futures:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select at least one expired instrument type: options or futures."
+        )
+
+    records = []
+    failed_items = []
+    group_statuses = []
+    skipped_groups = 0
+    underlying_statuses = []
+    skipped_underlyings = 0
+    persisted_records = 0
+    was_cancelled = False
+
+    def persist_completed_expired_batch():
+        nonlocal records
+        nonlocal group_statuses
+        nonlocal underlying_statuses
+        nonlocal persisted_records
+
+        if not records and not group_statuses and not underlying_statuses:
+            return
+
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            saved_records = import_expired_instruments_records(
+                conn=conn,
+                sync_id=sync_id,
+                records=records,
+                group_statuses=group_statuses,
+                underlying_statuses=underlying_statuses
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+
+        persisted_records += saved_records
+        records = []
+        group_statuses = []
+        underlying_statuses = []
+
+    print("Downloading Upstox expired instruments using Python SDK.")
+    print(f"Underlying keys: {len(underlying_keys)}")
+
+    try:
+        for underlying_index, underlying_key in enumerate(underlying_keys, start=1):
+            check_sync_cancelled(conn, sync_id)
+
+            if has_expired_underlying_been_fully_checked(
+                conn,
+                underlying_key=underlying_key,
+                include_options=include_options,
+                include_futures=include_futures,
+                max_expiries=max_expiries,
+                force_refresh=force_refresh
+            ):
+                skipped_underlyings += 1
+                print(
+                    "Skipping expired instruments for "
+                    f"{underlying_key}: full underlying already checked."
+                )
+                continue
+
+            print(
+                "Fetching expired expiries "
+                f"{underlying_index}/{len(underlying_keys)}: {underlying_key}"
+            )
+
+            try:
+                expiries_response = expired_api.get_expiries(underlying_key)
+                expiries = normalize_expiry_list(expiries_response)
+            except Exception as error:
+                error_text = str(error)
+
+                if is_upstox_expired_permission_error(error_text):
+                    failed_items.append({
+                        "underlying_key": underlying_key,
+                        "expiry": None,
+                        "type": "expiries",
+                        "error": (
+                            "Expired Instruments API access is not permitted "
+                            f"for this underlying: {error_text}"
+                        )
+                    })
+                    print(
+                        "Skipping expired instruments for "
+                        f"{underlying_key}: permission denied by Upstox."
+                    )
+                    continue
+
+                if "401" in error_text or "UDAPI100050" in error_text or "Invalid token" in error_text:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=(
+                            "Upstox token is invalid or expired. "
+                            "Please save a fresh analytics token in Connections, "
+                            "restart the backend, then run Expired Instruments again."
+                        )
+                    )
+
+                failed_items.append({
+                    "underlying_key": underlying_key,
+                    "expiry": None,
+                    "type": "expiries",
+                    "error": error_text
+                })
+                print(f"Unable to fetch expiries for {underlying_key}: {error}")
+                continue
+
+            if max_expiries:
+                expiries = expiries[:max_expiries]
+
+            print(f"Expired expiries found for {underlying_key}: {len(expiries)}")
+            underlying_failed = False
+            underlying_record_count = 0
+
+            for expiry_index, expiry_date in enumerate(expiries, start=1):
+                check_sync_cancelled(conn, sync_id)
+
+                if include_options:
+                    if has_expired_contract_group_been_checked(
+                        conn,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date,
+                        source_type=EXPIRED_SOURCE_OPTION,
+                        force_refresh=force_refresh
+                    ):
+                        skipped_groups += 1
+                        print(
+                            f"Options {underlying_key} {expiry_date}: "
+                            "already available, skipping API call."
+                        )
+                    else:
+                        try:
+                            options_response = expired_api.get_expired_option_contracts(
+                                underlying_key,
+                                expiry_date
+                            )
+
+                            option_rows = normalize_contract_list(
+                                response=options_response,
+                                source_type=EXPIRED_SOURCE_OPTION,
+                                underlying_key=underlying_key,
+                                expiry_date=expiry_date
+                            )
+
+                            records.extend(option_rows)
+                            underlying_record_count += len(option_rows)
+                            group_statuses.append({
+                                "underlying_key": underlying_key,
+                                "expiry": expiry_date,
+                                "source_type": EXPIRED_SOURCE_OPTION,
+                                "status": "success",
+                                "record_count": len(option_rows),
+                                "error": None
+                            })
+
+                            print(
+                                f"Options {underlying_key} {expiry_date} "
+                                f"({expiry_index}/{len(expiries)}): {len(option_rows)}"
+                            )
+
+                        except Exception as error:
+                            error_text = str(error)
+                            underlying_failed = True
+                            failed_items.append({
+                                "underlying_key": underlying_key,
+                                "expiry": expiry_date,
+                                "type": "options",
+                                "error": error_text
+                            })
+                            group_statuses.append({
+                                "underlying_key": underlying_key,
+                                "expiry": expiry_date,
+                                "source_type": EXPIRED_SOURCE_OPTION,
+                                "status": "failed",
+                                "record_count": 0,
+                                "error": error_text
+                            })
+                            print(
+                                f"Unable to fetch expired option contracts for "
+                                f"{underlying_key} {expiry_date}: {error}"
+                            )
+
+                    if request_pause_seconds:
+                        time.sleep(request_pause_seconds)
+
+                check_sync_cancelled(conn, sync_id)
+
+                if include_futures:
+                    if has_expired_contract_group_been_checked(
+                        conn,
+                        underlying_key=underlying_key,
+                        expiry_date=expiry_date,
+                        source_type=EXPIRED_SOURCE_FUTURE,
+                        force_refresh=force_refresh
+                    ):
+                        skipped_groups += 1
+                        print(
+                            f"Futures {underlying_key} {expiry_date}: "
+                            "already available, skipping API call."
+                        )
+                    else:
+                        try:
+                            futures_response = expired_api.get_expired_future_contracts(
+                                underlying_key,
+                                expiry_date
+                            )
+
+                            future_rows = normalize_contract_list(
+                                response=futures_response,
+                                source_type=EXPIRED_SOURCE_FUTURE,
+                                underlying_key=underlying_key,
+                                expiry_date=expiry_date
+                            )
+
+                            records.extend(future_rows)
+                            underlying_record_count += len(future_rows)
+                            group_statuses.append({
+                                "underlying_key": underlying_key,
+                                "expiry": expiry_date,
+                                "source_type": EXPIRED_SOURCE_FUTURE,
+                                "status": "success",
+                                "record_count": len(future_rows),
+                                "error": None
+                            })
+
+                            print(
+                                f"Futures {underlying_key} {expiry_date} "
+                                f"({expiry_index}/{len(expiries)}): {len(future_rows)}"
+                            )
+
+                        except Exception as error:
+                            error_text = str(error)
+                            underlying_failed = True
+                            failed_items.append({
+                                "underlying_key": underlying_key,
+                                "expiry": expiry_date,
+                                "type": "futures",
+                                "error": error_text
+                            })
+                            group_statuses.append({
+                                "underlying_key": underlying_key,
+                                "expiry": expiry_date,
+                                "source_type": EXPIRED_SOURCE_FUTURE,
+                                "status": "failed",
+                                "record_count": 0,
+                                "error": error_text
+                            })
+                            print(
+                                f"Unable to fetch expired future contracts for "
+                                f"{underlying_key} {expiry_date}: {error}"
+                            )
+
+                    if request_pause_seconds:
+                        time.sleep(request_pause_seconds)
+
+            if not max_expiries:
+                underlying_statuses.append({
+                    "underlying_key": underlying_key,
+                    "status": "failed" if underlying_failed else "success",
+                    "expiry_count": len(expiries),
+                    "record_count": underlying_record_count,
+                    "include_options": include_options,
+                    "include_futures": include_futures,
+                    "error": "One or more contract groups failed." if underlying_failed else None
+                })
+
+            persist_completed_expired_batch()
+    except SyncCancelled:
+        was_cancelled = True
+        print("Expired instrument download cancelled; saving completed downloaded records.")
+
+    if failed_items:
+        failed_file = DATA_DIR / "upstox_expired_instruments_failed_items.json"
+
+        with open(failed_file, "w", encoding="utf-8") as output_file:
+            json.dump(failed_items, output_file, ensure_ascii=False, indent=2, default=str)
+
+        print(f"Expired instruments failed items saved: {failed_file}")
+
+    unique_records = {}
+
+    for record in records:
+        instrument_key = record.get("instrument_key")
+        source_type = record.get("source_type")
+        expiry = record.get("expiry")
+        unique_key = f"{source_type}|{expiry}|{instrument_key}"
+
+        if instrument_key:
+            unique_records[unique_key] = record
+
+    final_records = list(unique_records.values())
+
+    print(f"Expired instruments downloaded: {len(final_records)}")
+    print(f"Expired contract API groups skipped as already available: {skipped_groups}")
+    print(f"Expired underlyings skipped as fully checked: {skipped_underlyings}")
+
+    if not final_records and failed_items:
+        first_failure = failed_items[0]
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "No expired instruments were downloaded. First failure: "
+                f"{first_failure.get('underlying_key')} "
+                f"{first_failure.get('type')}: {first_failure.get('error')}"
+            )
+        )
+
+    return {
+        "records": final_records,
+        "group_statuses": group_statuses,
+        "underlying_statuses": underlying_statuses,
+        "persisted_records": persisted_records,
+        "skipped_groups": skipped_groups,
+        "skipped_underlyings": skipped_underlyings,
+        "cancelled": was_cancelled
+    }
+
+
+def import_expired_instruments_records(
+    conn,
+    sync_id: str,
+    records: List[dict],
+    group_statuses: Optional[List[dict]] = None,
+    underlying_statuses: Optional[List[dict]] = None,
+    allow_cancelled_import: bool = False
+) -> int:
+    if not allow_cancelled_import:
+        check_sync_cancelled(conn, sync_id)
+
+    insert_started_at = time.time()
+    unique_records = {}
+
+    for record in records:
+        instrument_key = safe_strip(record.get("instrument_key"))
+        source_type = safe_strip(record.get("source_type"))
+        expiry = normalize_expiry_value(record.get("expiry"))
+
+        if not instrument_key or source_type not in (EXPIRED_SOURCE_OPTION, EXPIRED_SOURCE_FUTURE):
+            continue
+
+        if not expiry:
+            continue
+
+        unique_records[f"{source_type}|{expiry}|{instrument_key}"] = {
+            **record,
+            "instrument_key": instrument_key,
+            "source_type": source_type,
+            "expiry": expiry
+        }
+
+    deduped_records = list(unique_records.values())
+    groups_to_replace = unique_preserve_order([
+        f"{record.get('underlying_key')}|{record.get('expiry')}|{record.get('source_type')}"
+        for record in deduped_records
+    ])
+
+    print(f"Expired rows valid for direct insert after Python de-dupe: {len(deduped_records)}")
+
+    for group_key in groups_to_replace:
+        underlying_key, expiry_date, source_type = group_key.rsplit("|", 2)
+
+        conn.execute("""
+            DELETE FROM upstox_expired_instruments
+            WHERE underlying_key = ?
+              AND expiry = TRY_CAST(? AS DATE)
+              AND source_type = ?;
+        """, [underlying_key, expiry_date, source_type])
+
+    if not allow_cancelled_import:
+        check_sync_cancelled(conn, sync_id)
+
+    if deduped_records:
+        conn.executemany("""
+            INSERT INTO upstox_expired_instruments (
+                instrument_key,
+                segment,
+                name,
+                exchange,
+                instrument_type,
+                trading_symbol,
+                exchange_token,
+                expiry,
+                strike_price,
+                lot_size,
+                minimum_lot,
+                freeze_quantity,
+                tick_size,
+                weekly,
+                underlying_key,
+                underlying_symbol,
+                underlying_type,
+                source_type,
+                raw_json,
+                synced_at
+            )
+            SELECT
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                TRY_CAST(? AS DATE),
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                TRY_CAST(? AS JSON),
+                CURRENT_TIMESTAMP;
+        """, [
+            (
+                record.get("instrument_key"),
+                record.get("segment"),
+                record.get("name"),
+                record.get("exchange"),
+                record.get("instrument_type"),
+                record.get("trading_symbol"),
+                record.get("exchange_token"),
+                record.get("expiry"),
+                record.get("strike_price"),
+                record.get("lot_size"),
+                record.get("minimum_lot"),
+                record.get("freeze_quantity"),
+                record.get("tick_size"),
+                record.get("weekly"),
+                record.get("underlying_key"),
+                record.get("underlying_symbol"),
+                record.get("underlying_type"),
+                record.get("source_type"),
+                record.get("raw_json")
+            )
+            for record in deduped_records
+        ])
+
+    for group_status in group_statuses or []:
+        record_expired_contract_group_status(
+            conn,
+            underlying_key=group_status.get("underlying_key"),
+            expiry_date=group_status.get("expiry"),
+            source_type=group_status.get("source_type"),
+            status_value=group_status.get("status") or "failed",
+            record_count=group_status.get("record_count") or 0,
+            error_message=group_status.get("error")
+        )
+
+    for underlying_status in underlying_statuses or []:
+        record_expired_underlying_status(
+            conn,
+            underlying_key=underlying_status.get("underlying_key"),
+            status_value=underlying_status.get("status") or "failed",
+            expiry_count=underlying_status.get("expiry_count") or 0,
+            record_count=underlying_status.get("record_count") or 0,
+            include_options=bool(underlying_status.get("include_options", True)),
+            include_futures=bool(underlying_status.get("include_futures", True)),
+            error_message=underlying_status.get("error")
+        )
+
+    print(f"DuckDB expired direct insert time: {round(time.time() - insert_started_at, 2)} seconds")
+
+    return len(deduped_records)
+
+
+def import_expired_instruments_from_local_file(conn, sync_id: str, local_file: Path) -> int:
+    check_sync_cancelled(conn, sync_id)
+
+    duckdb_path = normalize_duckdb_file_path(local_file)
+
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_expired")
+
+    read_started_at = time.time()
+
+    print("Reading expired instrument JSON directly with DuckDB...")
+
+    conn.execute(
+        """
+        CREATE TEMP TABLE temp_upstox_expired AS
+        SELECT *
+        FROM read_json(
+            ?,
+            format = 'array',
+            maximum_object_size = 16777216,
+            columns = {
+                instrument_key: 'VARCHAR',
+                segment: 'VARCHAR',
+                name: 'VARCHAR',
+                exchange: 'VARCHAR',
+                instrument_type: 'VARCHAR',
+                trading_symbol: 'VARCHAR',
+                exchange_token: 'VARCHAR',
+                expiry: 'VARCHAR',
+                strike_price: 'DOUBLE',
+                lot_size: 'BIGINT',
+                minimum_lot: 'BIGINT',
+                freeze_quantity: 'DOUBLE',
+                tick_size: 'DOUBLE',
+                weekly: 'BOOLEAN',
+                underlying_key: 'VARCHAR',
+                underlying_symbol: 'VARCHAR',
+                underlying_type: 'VARCHAR',
+                source_type: 'VARCHAR',
+                raw_json: 'VARCHAR'
+            }
+        );
         """,
         [duckdb_path]
     )
+
+    print(f"DuckDB expired JSON read time: {round(time.time() - read_started_at, 2)} seconds")
 
     check_sync_cancelled(conn, sync_id)
 
     total_rows = conn.execute("""
         SELECT COUNT(*)
-        FROM temp_upstox_equity;
+        FROM temp_upstox_expired;
     """).fetchone()[0]
 
+    print(f"Expired rows loaded into temp table: {total_rows}")
+
+    insert_started_at = time.time()
+
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_expired_valid")
+
     conn.execute("""
-        DELETE FROM upstox_equity_instruments;
+        CREATE TEMP TABLE temp_upstox_expired_valid AS
+        SELECT *
+        FROM (
+            SELECT
+                instrument_key,
+                segment,
+                name,
+                exchange,
+                instrument_type,
+                trading_symbol,
+                exchange_token,
+                TRY_CAST(expiry AS DATE) AS expiry_date,
+                strike_price,
+                lot_size,
+                minimum_lot,
+                freeze_quantity,
+                tick_size,
+                weekly,
+                underlying_key,
+                underlying_symbol,
+                underlying_type,
+                source_type,
+                TRY_CAST(raw_json AS JSON) AS raw_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY source_type, TRY_CAST(expiry AS DATE), instrument_key
+                    ORDER BY trading_symbol
+                ) AS duplicate_rank
+            FROM temp_upstox_expired
+            WHERE instrument_key IS NOT NULL
+              AND TRIM(instrument_key) <> ''
+              AND source_type IN (?, ?)
+              AND TRY_CAST(expiry AS DATE) IS NOT NULL
+        )
+        WHERE duplicate_rank = 1;
+    """, [EXPIRED_SOURCE_OPTION, EXPIRED_SOURCE_FUTURE])
+
+    valid_rows = conn.execute("""
+        SELECT COUNT(*)
+        FROM temp_upstox_expired_valid;
+    """).fetchone()[0]
+
+    print(f"Expired rows valid for insert after de-dupe: {valid_rows}")
+
+    conn.execute("""
+        DELETE FROM upstox_expired_instruments
+        WHERE EXISTS (
+            SELECT 1
+            FROM (
+                SELECT DISTINCT
+                    source_type,
+                    underlying_key,
+                    expiry_date
+                FROM temp_upstox_expired_valid
+            ) AS downloaded_groups
+            WHERE downloaded_groups.source_type = upstox_expired_instruments.source_type
+              AND COALESCE(downloaded_groups.underlying_key, '') = COALESCE(upstox_expired_instruments.underlying_key, '')
+              AND downloaded_groups.expiry_date = upstox_expired_instruments.expiry
+        );
     """)
 
     check_sync_cancelled(conn, sync_id)
 
     conn.execute("""
-        INSERT INTO upstox_equity_instruments (
-            instrument_key,
-            trading_symbol,
-            name,
-            isin,
-            exchange,
-            segment,
-            exchange_token,
-            tick_size,
-            lot_size,
-            freeze_quantity,
-            short_name,
-            security_type,
-            downloaded_at
-        )
-        SELECT
-            instrument_key,
-            trading_symbol,
-            name,
-            isin,
-            COALESCE(exchange, 'NSE') AS exchange,
-            COALESCE(segment, 'NSE_EQ') AS segment,
-            exchange_token,
-            tick_size,
-            lot_size,
-            freeze_quantity,
-            short_name,
-            security_type,
-            CURRENT_TIMESTAMP AS downloaded_at
-        FROM temp_upstox_equity;
-    """)
-
-    conn.execute("DROP TABLE IF EXISTS temp_upstox_equity")
-
-    return int(total_rows or 0)
-
-
-def equity_instruments_collected_today(conn) -> bool:
-    row = conn.execute("""
-        SELECT COUNT(*)
-        FROM upstox_equity_instruments
-        WHERE CAST(downloaded_at AS DATE) = CURRENT_DATE;
-    """).fetchone()
-
-    return bool(row and row[0] > 0)
-
-
-def get_equity_instruments_count(conn) -> int:
-    row = conn.execute("""
-        SELECT COUNT(*)
-        FROM upstox_equity_instruments;
-    """).fetchone()
-
-    return int(row[0] or 0) if row else 0
-
-
-def get_ohlcv_daily_count(conn) -> int:
-    row = conn.execute("""
-        SELECT COUNT(*)
-        FROM ohlcv_daily;
-    """).fetchone()
-
-    return int(row[0] or 0) if row else 0
-
-
-def ohlcv_daily_collected_for_date(conn, target_date: str) -> bool:
-    row = conn.execute("""
-        SELECT COUNT(*)
-        FROM ohlcv_daily
-        WHERE date = ?;
-    """, [target_date]).fetchone()
-
-    row_count = int(row[0] or 0) if row else 0
-
-    if row_count <= 0:
-        return False
-
-    success_row = conn.execute("""
-        SELECT 1
-        FROM upstox_sync_runs
-        WHERE sync_type = 'upstox_ohlcv_daily'
-          AND status = 'success'
-          AND message LIKE ?
-        ORDER BY started_at DESC
-        LIMIT 1;
-    """, [f"%{target_date}%"]).fetchone()
-
-    return bool(success_row)
-
-
-def get_equity_ohlcv_instruments(conn) -> List[Dict[str, str]]:
-    rows = conn.execute("""
-        SELECT
-            instrument_key,
-            MIN(trading_symbol) AS trading_symbol
-        FROM upstox_equity_instruments
-        WHERE instrument_key IS NOT NULL
-          AND TRIM(instrument_key) <> ''
-          AND trading_symbol IS NOT NULL
-          AND TRIM(trading_symbol) <> ''
-        GROUP BY instrument_key
-        ORDER BY trading_symbol;
-    """).fetchall()
-
-    return [
-        {
-            "instrument_key": row[0],
-            "trading_symbol": row[1]
-        }
-        for row in rows
-    ]
-
-
-def get_equity_data_collection_instruments(conn) -> List[Dict[str, str]]:
-    rows = conn.execute("""
-        SELECT
-            instrument_key,
-            trading_symbol,
-            isin
-        FROM upstox_equity_instruments
-        WHERE instrument_key IS NOT NULL
-          AND TRIM(instrument_key) <> ''
-          AND trading_symbol IS NOT NULL
-          AND TRIM(trading_symbol) <> ''
-          AND isin IS NOT NULL
-          AND TRIM(isin) <> ''
-        ORDER BY trading_symbol;
-    """).fetchall()
-
-    return [
-        {
-            "instrument_key": row[0],
-            "trading_symbol": row[1],
-            "isin": row[2]
-        }
-        for row in rows
-    ]
-
-
-def get_sync_type_label(value: str) -> str:
-    labels = {
-        "current": "Current Instruments",
-        "expired": "Expired Instruments",
-        "equity": "Equity",
-        "ohlcv_daily": "Equity OHLCV",
-        "equity_news": "Equity News",
-        "fundamentals": "Fundamentals",
-        "corporate_actions": "Corporate Actions",
-        "fii_dii_activity": "FII/DII Activity"
-    }
-
-    return labels.get(value, value or "Data collection")
-
-
-def parse_upstox_error(error_body: str):
-    try:
-        payload = json.loads(error_body)
-    except Exception:
-        return {
-            "raw": error_body,
-            "error_code": None,
-            "message": error_body or "Upstox API request failed."
-        }
-
-    errors = payload.get("errors")
-
-    if isinstance(errors, list) and errors:
-        first_error = errors[0] or {}
-
-        return {
-            "raw": payload,
-            "error_code": (
-                first_error.get("errorCode")
-                or first_error.get("error_code")
-                or first_error.get("code")
-            ),
-            "message": first_error.get("message") or str(payload)
-        }
-
-    return {
-        "raw": payload,
-        "error_code": (
-            payload.get("errorCode")
-            or payload.get("error_code")
-            or payload.get("code")
-        ),
-        "message": payload.get("message") or str(payload)
-    }
-
-
-def raise_clean_upstox_error(upstox_status_code: int, error_body: str):
-    parsed_error = parse_upstox_error(error_body)
-    error_code = parsed_error.get("error_code")
-    message = parsed_error.get("message") or ""
-
-    if upstox_status_code == 401:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Saved Upstox token is invalid, expired, or not authenticated. "
-                "Please save a fresh Upstox OAuth connection in Connections."
-            )
-        )
-
-    if error_code in ("UDAPI100067", "UDAPI1149") or "read only token" in message.lower():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Saved Upstox token is valid, but this Upstox API is not permitted "
-                "for the current account/app. Expired Instruments APIs need Upstox Plus, "
-                "and some market/fundamental/news APIs may need the correct enabled OAuth app."
-            )
-        )
-
-    if not message:
-        message = f"Upstox API request failed with status {upstox_status_code}."
-
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Upstox API error: {message}"
-    )
-
-
-def upstox_api_get(access_token: str, path: str, params: Optional[Dict[str, str]] = None):
-    token = normalize_upstox_token(access_token)
-
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Saved Upstox token is empty. "
-                "Please save a fresh Upstox OAuth connection in Connections."
-            )
-        )
-
-    query_string = ""
-
-    if params:
-        query_string = "?" + urllib.parse.urlencode(params)
-
-    request = urllib.request.Request(
-        f"{UPSTOX_BASE_URL}{path}{query_string}",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "OpenAnalytics/1.0"
-        }
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            content = response.read().decode("utf-8")
-
-            if not content:
-                return {}
-
-            return json.loads(content)
-
-    except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="ignore")
-        raise_clean_upstox_error(
-            upstox_status_code=error.code,
-            error_body=error_body
-        )
-
-    except urllib.error.URLError as error:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach Upstox API: {error}"
-        )
-
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Invalid JSON response received from Upstox API."
-        )
-
-
-def upstox_v3_api_get(
-    access_token: str,
-    path: str,
-    params: Optional[Dict[str, str]] = None
-):
-    token = normalize_upstox_token(access_token)
-
-    query_string = ""
-
-    if params:
-        query_string = "?" + urllib.parse.urlencode(params)
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": "OpenAnalytics/1.0"
-    }
-
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    request = urllib.request.Request(
-        f"{UPSTOX_V3_BASE_URL}{path}{query_string}",
-        headers=headers
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            content = response.read().decode("utf-8")
-
-            if not content:
-                return {}
-
-            return json.loads(content)
-
-    except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="ignore")
-        raise_clean_upstox_error(
-            upstox_status_code=error.code,
-            error_body=error_body
-        )
-
-    except urllib.error.URLError as error:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach Upstox API: {error}"
-        )
-
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Invalid JSON response received from Upstox API."
-        )
-
-
-def upstox_expired_api_get(
-    access_token: str,
-    path: str,
-    underlying_key: str,
-    expiry_date: Optional[str] = None
-):
-    params = {
-        "instrument_key": underlying_key
-    }
-
-    if expiry_date:
-        params["expiry_date"] = expiry_date
-
-    return upstox_api_get(
-        access_token=access_token,
-        path=path,
-        params=params
-    )
-
-
-def get_expiries(access_token: str, underlying_key: str) -> List[str]:
-    response = upstox_expired_api_get(
-        access_token=access_token,
-        path="/expired-instruments/expiries",
-        underlying_key=underlying_key
-    )
-
-    data = response.get("data") if isinstance(response, dict) else []
-
-    if not isinstance(data, list):
-        return []
-
-    return data
-
-
-def get_expired_option_contracts(
-    access_token: str,
-    underlying_key: str,
-    expiry_date: str
-) -> List[Dict[str, Any]]:
-    response = upstox_expired_api_get(
-        access_token=access_token,
-        path="/expired-instruments/option/contract",
-        underlying_key=underlying_key,
-        expiry_date=expiry_date
-    )
-
-    data = response.get("data") if isinstance(response, dict) else []
-
-    if not isinstance(data, list):
-        return []
-
-    return data
-
-
-def get_expired_future_contracts(
-    access_token: str,
-    underlying_key: str,
-    expiry_date: str
-) -> List[Dict[str, Any]]:
-    response = upstox_expired_api_get(
-        access_token=access_token,
-        path="/expired-instruments/future/contract",
-        underlying_key=underlying_key,
-        expiry_date=expiry_date
-    )
-
-    data = response.get("data") if isinstance(response, dict) else []
-
-    if not isinstance(data, list):
-        return []
-
-    return data
-
-
-def get_upstox_daily_candles(
-    access_token: str,
-    instrument_key: str,
-    from_date: str,
-    to_date: str
-) -> List[List[Any]]:
-    encoded_key = urllib.parse.quote(instrument_key, safe="")
-    path = f"/historical-candle/{encoded_key}/days/1/{to_date}/{from_date}"
-
-    response = None
-
-    for attempt in range(1, OHLCV_API_RETRY_ATTEMPTS + 1):
-        try:
-            response = upstox_v3_api_get(
-                access_token=access_token,
-                path=path
-            )
-            break
-        except HTTPException as error:
-            is_transient_error = error.status_code == status.HTTP_502_BAD_GATEWAY
-            is_last_attempt = attempt >= OHLCV_API_RETRY_ATTEMPTS
-
-            if not is_transient_error or is_last_attempt:
-                raise
-
-            sleep_seconds = OHLCV_API_RETRY_BASE_SLEEP_SECONDS * attempt
-            print(
-                "OHLCV candle fetch retry: "
-                f"{instrument_key} attempt {attempt + 1}/{OHLCV_API_RETRY_ATTEMPTS} "
-                f"after transient Upstox error: {error.detail}"
-            )
-            time.sleep(sleep_seconds)
-
-    data = response.get("data") if isinstance(response, dict) else {}
-    candles = data.get("candles") if isinstance(data, dict) else []
-
-    if not isinstance(candles, list):
-        return []
-
-    return candles
-
-
-def validate_ohlcv_date(value: str) -> str:
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OHLCV target date must be in YYYY-MM-DD format."
-        )
-
-    return value
-
-
-def json_text(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, default=str)
-
-
-def deterministic_id(*parts: Any) -> str:
-    text = "|".join(str(part or "") for part in parts)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def milliseconds_to_timestamp(value: Any) -> Optional[datetime]:
-    timestamp = safe_int(value)
-
-    if timestamp is None:
-        return None
-
-    try:
-        return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).replace(
-            tzinfo=None
-        )
-    except Exception:
-        return None
-
-
-def parse_upstox_display_date(value: Any) -> Optional[str]:
-    text = safe_text(value)
-
-    if not text:
-        return None
-
-    for date_format in ("%d %b %Y", "%d %B %Y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text, date_format).date().isoformat()
-        except ValueError:
-            continue
-
-    return None
-
-
-def parse_upstox_period_date(value: Any) -> Optional[str]:
-    text = safe_text(value)
-
-    if not text:
-        return None
-
-    for date_format in ("%b %Y", "%B %Y", "%Y-%m-%d"):
-        try:
-            parsed = datetime.strptime(text, date_format).date()
-            return parsed.isoformat()
-        except ValueError:
-            continue
-
-    return None
-
-
-def parse_percent_number(value: Any) -> Optional[float]:
-    text = safe_text(value)
-
-    if not text:
-        return safe_float(value)
-
-    return safe_float(text.replace("%", "").replace(",", ""))
-
-
-def get_metric_history_value(section: Dict[str, Any], period: str) -> Optional[float]:
-    history = section.get("history") if isinstance(section, dict) else []
-
-    if not isinstance(history, list):
-        return None
-
-    for item in history:
-        if not isinstance(item, dict):
-            continue
-
-        if safe_text(item.get("period")) == period:
-            return safe_float(item.get("value"))
-
-    return None
-
-
-def get_named_metric(metrics: List[Dict[str, Any]], name: str) -> Optional[float]:
-    for item in metrics:
-        if not isinstance(item, dict):
-            continue
-
-        if safe_text(item.get("name")).lower() == name.lower():
-            return parse_percent_number(item.get("company_value"))
-
-    return None
-
-
-def get_category_section(sections: List[Dict[str, Any]], category: str):
-    for section in sections:
-        if not isinstance(section, dict):
-            continue
-
-        if safe_text(section.get("category")).lower() == category.lower():
-            return section
-
-    return None
-
-
-def get_full_statement_section(sections: List[Dict[str, Any]], particular: str):
-    for section in sections:
-        if not isinstance(section, dict):
-            continue
-
-        if safe_text(section.get("particular")).lower() == particular.lower():
-            return section
-
-    return None
-
-
-def update_sync_run_message(conn, sync_id: str, message: str):
-    conn.execute("""
-        UPDATE upstox_sync_runs
-        SET message = ?
-        WHERE sync_id = ?;
-    """, [message, sync_id])
-    conn.commit()
-
-
-def update_sync_run_progress(
-    conn,
-    sync_id: str,
-    message: str,
-    total_records: int
-):
-    conn.execute("""
-        UPDATE upstox_sync_runs
-        SET
-            message = ?,
-            total_records = ?
-        WHERE sync_id = ?;
-    """, [message, total_records, sync_id])
-    conn.commit()
-
-
-def resolve_latest_available_ohlcv_date(
-    access_token: str,
-    instruments: List[Dict[str, str]],
-    target_date: str
-) -> str:
-    target = datetime.strptime(target_date, "%Y-%m-%d").date()
-    from_date = (target - timedelta(days=30)).isoformat()
-
-    for instrument in instruments[:5]:
-        instrument_key = instrument["instrument_key"]
-        trading_symbol = instrument["trading_symbol"]
-
-        try:
-            candles = get_upstox_daily_candles(
-                access_token=access_token,
-                instrument_key=instrument_key,
-                from_date=from_date,
-                to_date=target_date
-            )
-        except HTTPException as error:
-            print(
-                "OHLCV latest-date probe skipped: "
-                f"{trading_symbol} ({instrument_key}) - {error.detail}"
-            )
-            continue
-
-        candle_dates = [
-            candle_date
-            for candle_date in [
-                candle_timestamp_to_date(candle[0])
-                if isinstance(candle, list) and candle
-                else None
-                for candle in candles
-            ]
-            if candle_date and candle_date <= target_date
-        ]
-
-        if candle_dates:
-            return max(candle_dates)
-
-    return target_date
-
-
-def candle_timestamp_to_date(value: Any) -> Optional[str]:
-    if not value:
-        return None
-
-    text = str(value).strip()
-
-    if not text:
-        return None
-
-    if len(text) >= 10:
-        return text[:10]
-
-    return None
-
-
-def map_ohlcv_candle(
-    instrument_key: str,
-    trading_symbol: str,
-    candle: List[Any]
-) -> Optional[List[Any]]:
-    if not isinstance(candle, list) or len(candle) < 6:
-        return None
-
-    candle_date = candle_timestamp_to_date(candle[0])
-
-    if not candle_date:
-        return None
-
-    open_price = safe_float(candle[1])
-    high_price = safe_float(candle[2])
-    low_price = safe_float(candle[3])
-    close_price = safe_float(candle[4])
-    volume = safe_int(candle[5])
-    oi = safe_int(candle[6]) if len(candle) > 6 else 0
-
-    if (
-        open_price is None
-        or high_price is None
-        or low_price is None
-        or close_price is None
-        or volume is None
-    ):
-        return None
-
-    return [
-        instrument_key,
-        trading_symbol,
-        candle_date,
-        open_price,
-        high_price,
-        low_price,
-        close_price,
-        volume,
-        oi or 0
-    ]
-
-
-def insert_ohlcv_daily_rows(conn, rows: List[List[Any]]) -> int:
-    if not rows:
-        return 0
-
-    for row in rows:
-        conn.execute("""
-            DELETE FROM ohlcv_daily
-            WHERE instrument_key = ?
-              AND date = ?;
-        """, [row[0], row[2]])
-
-    conn.executemany("""
-        INSERT INTO ohlcv_daily (
-            instrument_key,
-            trading_symbol,
-            date,
-            open,
-            high,
-            low,
-            close,
-            volume,
-            oi,
-            ingested_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
-    """, rows)
-
-    return len(rows)
-
-
-def map_expired_instrument(row: Dict[str, Any], source_type: str):
-    return [
-        safe_text(row.get("instrument_key")),
-        safe_text(row.get("segment")),
-        safe_text(row.get("name")),
-        safe_text(row.get("exchange")),
-        safe_text(row.get("instrument_type")),
-        safe_text(row.get("trading_symbol")),
-        safe_text(row.get("exchange_token")),
-        normalize_expiry(row.get("expiry")),
-        safe_float(row.get("strike_price")),
-        safe_int(row.get("lot_size")),
-        safe_int(row.get("minimum_lot")),
-        safe_float(row.get("freeze_quantity")),
-        safe_float(row.get("tick_size")),
-        safe_bool(row.get("weekly")),
-        safe_text(row.get("underlying_key")),
-        safe_text(row.get("underlying_symbol")),
-        safe_text(row.get("underlying_type")),
-        source_type,
-        json.dumps(row, ensure_ascii=False),
-        datetime.now()
-    ]
-
-
-def is_valid_expired_row(row: Dict[str, Any]) -> bool:
-    if not isinstance(row, dict):
-        return False
-
-    instrument_key = safe_text(row.get("instrument_key"))
-    trading_symbol = safe_text(row.get("trading_symbol"))
-    expiry = normalize_expiry(row.get("expiry"))
-
-    return bool(instrument_key or trading_symbol or expiry)
-
-
-def insert_expired_instruments(
-    conn,
-    rows: List[Dict[str, Any]],
-    source_type: str,
-    sync_id: str
-) -> int:
-    if not rows:
-        return 0
-
-    check_sync_cancelled(conn, sync_id)
-
-    valid_rows = [row for row in rows if is_valid_expired_row(row)]
-
-    if not valid_rows:
-        return 0
-
-    mapped_rows = [map_expired_instrument(row, source_type) for row in valid_rows]
-
-    check_sync_cancelled(conn, sync_id)
-
-    conn.executemany("""
         INSERT INTO upstox_expired_instruments (
             instrument_key,
             segment,
@@ -1523,43 +1847,83 @@ def insert_expired_instruments(
             raw_json,
             synced_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    """, mapped_rows)
+        SELECT
+            instrument_key,
+            segment,
+            name,
+            exchange,
+            instrument_type,
+            trading_symbol,
+            exchange_token,
+            expiry_date AS expiry,
+            strike_price,
+            lot_size,
+            minimum_lot,
+            freeze_quantity,
+            tick_size,
+            weekly,
+            underlying_key,
+            underlying_symbol,
+            underlying_type,
+            source_type,
+            raw_json,
+            CURRENT_TIMESTAMP AS synced_at
+        FROM temp_upstox_expired_valid;
+    """)
 
-    check_sync_cancelled(conn, sync_id)
+    print(f"DuckDB expired insert time: {round(time.time() - insert_started_at, 2)} seconds")
 
-    return len(mapped_rows)
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_expired_valid")
+    conn.execute("DROP TABLE IF EXISTS temp_upstox_expired")
 
-
-def expired_instruments_exist(
-    conn,
-    underlying_key: str,
-    expiry_date: str,
-    source_type: str
-) -> bool:
-    row = conn.execute("""
-        SELECT COUNT(*)
-        FROM upstox_expired_instruments
-        WHERE underlying_key = ?
-          AND expiry = ?
-          AND source_type = ?;
-    """, [underlying_key, expiry_date, source_type]).fetchone()
-
-    return bool(row and row[0] > 0)
+    return int(valid_rows or 0)
 
 
-def clear_expired_instruments_for_source(
-    conn,
-    underlying_key: str,
-    expiry_date: str,
-    source_type: str
-):
-    conn.execute("""
-        DELETE FROM upstox_expired_instruments
-        WHERE underlying_key = ?
-          AND expiry = ?
-          AND source_type = ?;
-    """, [underlying_key, expiry_date, source_type])
+def safe_table_count(conn, table_name: str) -> int:
+    try:
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table_name};").fetchone()[0] or 0)
+    except Exception:
+        return 0
+
+
+def safe_last_success_run(conn, sync_type: str):
+    try:
+        return conn.execute("""
+            SELECT finished_at, duration_seconds
+            FROM upstox_sync_runs
+            WHERE sync_type = ?
+              AND status = 'success'
+            ORDER BY finished_at DESC
+            LIMIT 1;
+        """, [sync_type]).fetchone()
+    except Exception:
+        return None
+
+
+def table_name_for_sync_type(sync_type: Optional[str]) -> Optional[str]:
+    return {
+        "upstox_current_instruments": "upstox_instruments",
+        "upstox_expired_instruments": "upstox_expired_instruments",
+        "upstox_equity_instruments": "upstox_equity_instruments",
+        "upstox_ohlcv_daily": "ohlcv_daily"
+    }.get(sync_type or "")
+
+
+def safe_active_job_started_count(conn, sync_type: Optional[str], started_at) -> Optional[int]:
+    table_name = table_name_for_sync_type(sync_type)
+
+    if not table_name or not started_at:
+        return None
+
+    try:
+        row = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM {table_name}
+            WHERE synced_at < ?;
+        """, [started_at]).fetchone()
+        return int(row[0] or 0)
+    except Exception:
+        return None
 
 
 def get_data_collection_summary_service():
@@ -1569,49 +1933,24 @@ def get_data_collection_summary_service():
         mark_stale_sync_runs(conn)
         connection_status = get_upstox_connection_status(conn)
 
-        current_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM upstox_instruments;
-        """).fetchone()[0]
-
-        expired_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM upstox_expired_instruments;
-        """).fetchone()[0]
-
-        equity_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM upstox_equity_instruments;
-        """).fetchone()[0]
-
-        ohlcv_daily_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM ohlcv_daily;
-        """).fetchone()[0]
-
-        equity_news_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM equity_news;
-        """).fetchone()[0]
-
-        fundamentals_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM fundamentals;
-        """).fetchone()[0]
-
-        corporate_actions_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM corporate_actions;
-        """).fetchone()[0]
-
-        fii_dii_activity_count = conn.execute("""
-            SELECT COUNT(*)
-            FROM fii_dii_activity;
-        """).fetchone()[0]
+        current_count = safe_table_count(conn, "upstox_instruments")
+        expired_count = safe_table_count(conn, "upstox_expired_instruments")
+        equity_count = safe_table_count(conn, "upstox_equity_instruments")
+        ohlcv_daily_count = safe_table_count(conn, "ohlcv_daily")
+        equity_news_count = safe_table_count(conn, "equity_news")
+        fundamentals_count = safe_table_count(conn, "fundamentals")
+        corporate_actions_count = safe_table_count(conn, "corporate_actions")
+        fii_dii_count = safe_table_count(conn, "fii_dii_activity")
 
         total_runs = conn.execute("""
             SELECT COUNT(*)
-            FROM upstox_sync_runs;
+            FROM upstox_sync_runs
+            WHERE sync_type IN (
+                'upstox_current_instruments',
+                'upstox_expired_instruments',
+                'upstox_equity_instruments',
+                'upstox_ohlcv_daily'
+            );
         """).fetchone()[0]
 
         last_run = conn.execute("""
@@ -1623,45 +1962,20 @@ def get_data_collection_summary_service():
                 duration_seconds,
                 total_records
             FROM upstox_sync_runs
+            WHERE sync_type IN (
+                'upstox_current_instruments',
+                'upstox_expired_instruments',
+                'upstox_equity_instruments',
+                'upstox_ohlcv_daily'
+            )
             ORDER BY started_at DESC
             LIMIT 1;
         """).fetchone()
 
-        current_run = conn.execute("""
-            SELECT finished_at, duration_seconds
-            FROM upstox_sync_runs
-            WHERE sync_type = 'upstox_current_instruments'
-              AND status = 'success'
-            ORDER BY finished_at DESC
-            LIMIT 1;
-        """).fetchone()
-
-        expired_run = conn.execute("""
-            SELECT finished_at, duration_seconds
-            FROM upstox_sync_runs
-            WHERE sync_type = 'upstox_expired_instruments'
-              AND status = 'success'
-            ORDER BY finished_at DESC
-            LIMIT 1;
-        """).fetchone()
-
-        equity_run = conn.execute("""
-            SELECT finished_at, duration_seconds
-            FROM upstox_sync_runs
-            WHERE sync_type = 'upstox_equity_instruments'
-              AND status = 'success'
-            ORDER BY finished_at DESC
-            LIMIT 1;
-        """).fetchone()
-
-        ohlcv_daily_run = conn.execute("""
-            SELECT finished_at, duration_seconds
-            FROM upstox_sync_runs
-            WHERE sync_type = 'upstox_ohlcv_daily'
-              AND status = 'success'
-            ORDER BY finished_at DESC
-            LIMIT 1;
-        """).fetchone()
+        current_run = safe_last_success_run(conn, "upstox_current_instruments")
+        expired_run = safe_last_success_run(conn, "upstox_expired_instruments")
+        equity_run = safe_last_success_run(conn, "upstox_equity_instruments")
+        ohlcv_run = safe_last_success_run(conn, "upstox_ohlcv_daily")
 
         active_run = conn.execute("""
             SELECT sync_type, status, started_at
@@ -1670,6 +1984,19 @@ def get_data_collection_summary_service():
             ORDER BY started_at DESC
             LIMIT 1;
         """).fetchone()
+
+        active_job = active_run[0] if active_run else None
+        active_job_started_at = active_run[2] if active_run and active_run[2] else None
+        active_job_table = table_name_for_sync_type(active_job)
+        active_job_current_records = (
+            safe_table_count(conn, active_job_table)
+            if active_job_table else None
+        )
+        active_job_records_at_start = safe_active_job_started_count(
+            conn,
+            active_job,
+            active_job_started_at
+        )
 
         return {
             "connection_status": connection_status,
@@ -1680,7 +2007,7 @@ def get_data_collection_summary_service():
             "total_equity_news": equity_news_count,
             "total_fundamentals": fundamentals_count,
             "total_corporate_actions": corporate_actions_count,
-            "total_fii_dii_activity": fii_dii_activity_count,
+            "total_fii_dii_activity": fii_dii_count,
             "total_sync_runs": total_runs,
             "last_sync_at": str(last_run[3]) if last_run and last_run[3] else None,
             "last_duration_seconds": last_run[4] if last_run else None,
@@ -1690,11 +2017,19 @@ def get_data_collection_summary_service():
             "expired_duration_seconds": expired_run[1] if expired_run else None,
             "equity_last_sync_at": str(equity_run[0]) if equity_run and equity_run[0] else None,
             "equity_duration_seconds": equity_run[1] if equity_run else None,
-            "ohlcv_daily_last_sync_at": str(ohlcv_daily_run[0]) if ohlcv_daily_run and ohlcv_daily_run[0] else None,
-            "ohlcv_daily_duration_seconds": ohlcv_daily_run[1] if ohlcv_daily_run else None,
-            "active_job": active_run[0] if active_run else None,
+            "ohlcv_daily_last_sync_at": str(ohlcv_run[0]) if ohlcv_run and ohlcv_run[0] else None,
+            "ohlcv_daily_duration_seconds": ohlcv_run[1] if ohlcv_run else None,
+            "active_job": active_job,
             "active_job_status": active_run[1] if active_run else None,
-            "active_job_started_at": str(active_run[2]) if active_run and active_run[2] else None
+            "active_job_started_at": str(active_job_started_at) if active_job_started_at else None,
+            "active_job_current_records": active_job_current_records,
+            "active_job_records_at_start": active_job_records_at_start,
+            "active_job_records_added": (
+                active_job_current_records - active_job_records_at_start
+                if active_job_current_records is not None
+                and active_job_records_at_start is not None
+                else None
+            )
         }
 
     finally:
@@ -1720,6 +2055,12 @@ def get_data_collection_runs_service():
                 triggered_by_name,
                 triggered_by_role
             FROM upstox_sync_runs
+            WHERE sync_type IN (
+                'upstox_current_instruments',
+                'upstox_expired_instruments',
+                'upstox_equity_instruments',
+                'upstox_ohlcv_daily'
+            )
             ORDER BY started_at DESC
             LIMIT 25;
         """).fetchall()
@@ -1770,7 +2111,7 @@ def sync_upstox_current_instruments_service(
             current_user=current_user
         )
 
-        local_file = download_upstox_master_file_once(force_download=True)
+        local_file = download_upstox_master_gz_file_once()
 
         check_sync_cancelled(conn, sync_id)
 
@@ -1850,7 +2191,7 @@ def sync_upstox_current_instruments_service(
 
         raise
 
-    except Exception as e:
+    except Exception as error:
         try:
             conn.rollback()
         except Exception:
@@ -1861,7 +2202,7 @@ def sync_upstox_current_instruments_service(
                 conn,
                 sync_id,
                 "failed",
-                f"Current instrument dump failed: {e}",
+                f"Current instrument dump failed: {error}",
                 total_records,
                 started_at
             )
@@ -1871,1555 +2212,27 @@ def sync_upstox_current_instruments_service(
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to dump current instruments: {e}"
+            detail=f"Unable to dump current instruments: {error}"
         )
 
     finally:
         delete_downloaded_master_file(local_file)
-        conn.close()
-
-
-def sync_upstox_equity_instruments_service(
-    current_user: dict,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    local_file = None
-    total_records = 0
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_equity_instruments",
-            "running",
-            "Equity instrument daily dump started.",
-            current_user=current_user
-        )
-
-        if equity_instruments_collected_today(conn):
-            total_records = get_equity_instruments_count(conn)
-
-            finish_sync_run(
-                conn,
-                sync_id,
-                "success",
-                "Equity instruments already collected today. Daily refresh skipped.",
-                total_records,
-                started_at
-            )
-
-            if clear_cancel_at_start:
-                clear_cancel_signal()
-
-            return {
-                "status": "success",
-                "message": "Equity instruments already collected today. Daily refresh skipped.",
-                "total_records": total_records,
-                "duration_seconds": duration_seconds(started_at),
-                "skipped": True
-            }
-
-        local_file = download_upstox_master_file_once(force_download=True)
-
-        check_sync_cancelled(conn, sync_id)
-
-        conn.execute("BEGIN TRANSACTION")
-
-        total_records = import_equity_instruments_from_local_file(
-            conn=conn,
-            sync_id=sync_id,
-            local_file=local_file
-        )
-
-        conn.execute("COMMIT")
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "NSE equity instruments collected successfully.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": "NSE equity instruments collected successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at),
-            "skipped": False
-        }
-
-    except SyncCancelled:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "Equity instrument dump cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "Equity instrument dump cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except HTTPException:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                "Equity instrument dump failed.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Equity instrument dump failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to dump equity instruments: {e}"
-        )
-
-    finally:
-        delete_downloaded_master_file(local_file)
-        conn.close()
-
-
-def sync_upstox_ohlcv_daily_service(
-    current_user: dict,
-    target_date: Optional[str] = None,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    total_records = 0
-
-    requested_target_date = bool(target_date)
-    clean_target_date = validate_ohlcv_date(
-        target_date or datetime.now().date().isoformat()
-    )
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-        access_token = ""
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_ohlcv_daily",
-            "running",
-            "Equity OHLCV daily collection started.",
-            current_user=current_user
-        )
-
-        instruments = get_equity_ohlcv_instruments(conn)
-
-        if not instruments:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No equity instruments found. Please run Equity collection first."
-            )
-
-        if not requested_target_date:
-            resolved_target_date = resolve_latest_available_ohlcv_date(
-                access_token=access_token,
-                instruments=instruments,
-                target_date=clean_target_date
-            )
-
-            if resolved_target_date != clean_target_date:
-                update_sync_run_message(
-                    conn,
-                    sync_id,
-                    (
-                        "Equity OHLCV daily collection started. "
-                        f"Latest available Upstox date resolved to {resolved_target_date}."
-                    )
-                )
-                clean_target_date = resolved_target_date
-
-        if ohlcv_daily_collected_for_date(conn, clean_target_date):
-            total_records = get_ohlcv_daily_count(conn)
-
-            finish_sync_run(
-                conn,
-                sync_id,
-                "success",
-                f"OHLCV daily data already collected for {clean_target_date}. Daily refresh skipped.",
-                total_records,
-                started_at
-            )
-
-            if clear_cancel_at_start:
-                clear_cancel_signal()
-
-            return {
-                "status": "success",
-                "message": f"OHLCV daily data already collected for {clean_target_date}. Daily refresh skipped.",
-                "total_records": total_records,
-                "duration_seconds": duration_seconds(started_at),
-                "skipped": True,
-                "target_date": clean_target_date
-            }
-
-        from_date = clean_target_date
-        to_date = clean_target_date
-        processed_instruments = 0
-        total_instruments = len(instruments)
-
-        for instrument in instruments:
-            check_sync_cancelled(conn, sync_id)
-            processed_instruments += 1
-
-            instrument_key = instrument["instrument_key"]
-            trading_symbol = instrument["trading_symbol"]
-
-            try:
-                candles = get_upstox_daily_candles(
-                    access_token=access_token,
-                    instrument_key=instrument_key,
-                    from_date=from_date,
-                    to_date=to_date
-                )
-            except HTTPException as error:
-                print(
-                    "OHLCV candle fetch skipped: "
-                    f"{trading_symbol} ({instrument_key}) - {error.detail}"
-                )
-                continue
-
-            mapped_rows = [
-                mapped_row
-                for mapped_row in [
-                    map_ohlcv_candle(
-                        instrument_key=instrument_key,
-                        trading_symbol=trading_symbol,
-                        candle=candle
-                    )
-                    for candle in candles
-                ]
-                if mapped_row
-            ]
-
-            if mapped_rows:
-                total_records += insert_ohlcv_daily_rows(conn, mapped_rows)
-                conn.commit()
-
-            if processed_instruments == 1 or processed_instruments % 50 == 0:
-                update_sync_run_progress(
-                    conn,
-                    sync_id,
-                    (
-                        f"Equity OHLCV daily collection running for {clean_target_date}. "
-                        f"Processed {processed_instruments}/{total_instruments} instruments, "
-                        f"downloaded {total_records} candles."
-                    ),
-                    total_records
-                )
-
-            time.sleep(OHLCV_API_SLEEP_SECONDS)
-
-        if total_records <= 0:
-            message = (
-                "No Equity OHLCV candles were returned by Upstox "
-                f"for {clean_target_date}."
-            )
-
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                message,
-                total_records,
-                started_at
-            )
-
-            if clear_cancel_at_start:
-                clear_cancel_signal()
-
-            return {
-                "status": "failed",
-                "message": message,
-                "total_records": total_records,
-                "duration_seconds": duration_seconds(started_at),
-                "skipped": False,
-                "target_date": clean_target_date
-            }
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            f"Equity OHLCV daily data collected for {clean_target_date}.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": f"Equity OHLCV daily data collected for {clean_target_date}.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at),
-            "skipped": False,
-            "target_date": clean_target_date
-        }
-
-    except SyncCancelled:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "Equity OHLCV daily collection cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "Equity OHLCV daily collection cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at),
-            "target_date": clean_target_date
-        }
-
-    except HTTPException as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                str(e.detail),
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Equity OHLCV daily collection failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to collect Equity OHLCV daily data: {e}"
-        )
-
-    finally:
-        conn.close()
-
-
-def sync_upstox_table_placeholder_service(
-    current_user: dict,
-    sync_type: str,
-    label: str,
-    table_name: str,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    total_records = 0
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-
-        sync_id = create_sync_run(
-            conn,
-            sync_type,
-            "running",
-            f"{label} collection started.",
-            current_user=current_user
-        )
-
-        check_sync_cancelled(conn, sync_id)
-
-        row = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM {table_name};
-        """).fetchone()
-        total_records = int(row[0] or 0) if row else 0
-
-        message = (
-            f"{label} runner completed. External download source is not "
-            "configured yet, so existing preview records were left unchanged."
-        )
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            message,
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": message,
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at),
-            "skipped": True
-        }
-
-    except SyncCancelled:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                f"{label} collection cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": f"{label} collection cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"{label} collection failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to run {label} collection: {e}"
-        )
-
-    finally:
-        conn.close()
-
-
-def get_upstox_news(
-    access_token: str,
-    instrument_keys: List[str],
-    page_number: int = 1,
-    page_size: int = 100
-) -> Dict[str, Any]:
-    return upstox_api_get(
-        access_token,
-        "/news",
-        {
-            "category": "instrument_keys",
-            "instrument_keys": ",".join(instrument_keys),
-            "page_number": str(page_number),
-            "page_size": str(page_size)
-        }
-    )
-
-
-def get_upstox_fundamental_data(
-    access_token: str,
-    isin: str,
-    endpoint: str,
-    params: Optional[Dict[str, str]] = None
-) -> Dict[str, Any]:
-    return upstox_api_get(
-        access_token,
-        f"/fundamentals/{urllib.parse.quote(isin, safe='')}/{endpoint}",
-        params or {}
-    )
-
-
-def get_upstox_market_activity(
-    access_token: str,
-    path: str,
-    data_type: str = "NSE_EQ|CASH",
-    interval: str = "1D"
-) -> Dict[str, Any]:
-    return upstox_api_get(
-        access_token,
-        path,
-        {
-            "data_type": data_type,
-            "interval": interval
-        }
-    )
-
-
-def insert_equity_news_rows(conn, rows: List[List[Any]]) -> int:
-    if not rows:
-        return 0
-
-    for row in rows:
-        conn.execute("""
-            DELETE FROM equity_news
-            WHERE news_id = ?;
-        """, [row[0]])
-
-    conn.executemany("""
-        INSERT INTO equity_news (
-            news_id,
-            instrument_key,
-            trading_symbol,
-            title,
-            summary,
-            source,
-            url,
-            published_at,
-            thumbnail,
-            raw_json,
-            ingested_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
-    """, rows)
-
-    return len(rows)
-
-
-def map_equity_news_rows(
-    instruments_by_key: Dict[str, Dict[str, str]],
-    response: Dict[str, Any]
-) -> List[List[Any]]:
-    data = response.get("data") if isinstance(response, dict) else {}
-
-    if not isinstance(data, dict):
-        return []
-
-    rows = []
-
-    for instrument_key, articles in data.items():
-        instrument = instruments_by_key.get(instrument_key, {})
-        trading_symbol = instrument.get("trading_symbol") or instrument_key
-
-        if not isinstance(articles, list):
-            continue
-
-        for article in articles:
-            if not isinstance(article, dict):
-                continue
-
-            url = safe_text(article.get("article_link"))
-            published_time = article.get("published_time")
-            news_id = deterministic_id(instrument_key, url, published_time)
-
-            rows.append([
-                news_id,
-                instrument_key,
-                trading_symbol,
-                safe_text(article.get("heading")),
-                safe_text(article.get("summary")),
-                "Upstox",
-                url,
-                milliseconds_to_timestamp(published_time),
-                safe_text(article.get("thumbnail")),
-                json_text(article)
-            ])
-
-    return rows
-
-
-def insert_fundamentals_rows(conn, rows: List[List[Any]]) -> int:
-    if not rows:
-        return 0
-
-    for row in rows:
-        conn.execute("""
-            DELETE FROM fundamentals
-            WHERE instrument_key = ?
-              AND report_date = ?
-              AND period_type = ?;
-        """, [row[0], row[3], row[4]])
-
-    conn.executemany("""
-        INSERT INTO fundamentals (
-            instrument_key,
-            isin,
-            trading_symbol,
-            report_date,
-            period_type,
-            revenue,
-            net_profit,
-            eps,
-            pe_ratio,
-            debt_to_equity,
-            roe,
-            cash_from_operations,
-            promoter_holding_pct,
-            fii_holding_pct,
-            dii_holding_pct,
-            raw_json,
-            ingested_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
-    """, rows)
-
-    return len(rows)
-
-
-def map_fundamentals_rows(
-    instrument: Dict[str, str],
-    income_response: Dict[str, Any],
-    ratios_response: Dict[str, Any],
-    holdings_response: Dict[str, Any]
-) -> List[List[Any]]:
-    income_data = income_response.get("data") if isinstance(income_response, dict) else {}
-    ratios = ratios_response.get("data") if isinstance(ratios_response, dict) else []
-    holdings = holdings_response.get("data") if isinstance(holdings_response, dict) else []
-
-    if not isinstance(income_data, dict):
-        return []
-
-    income_statement = income_data.get("income_statement")
-    full_statement = income_data.get("full_statement")
-
-    if not isinstance(income_statement, list):
-        income_statement = []
-
-    if not isinstance(full_statement, list):
-        full_statement = []
-
-    if not isinstance(ratios, list):
-        ratios = []
-
-    if not isinstance(holdings, list):
-        holdings = []
-
-    revenue_section = get_category_section(income_statement, "revenue")
-    net_profit_section = get_category_section(income_statement, "net_profit")
-    eps_section = (
-        get_full_statement_section(full_statement, "EPS - Basic")
-        or get_full_statement_section(full_statement, "EPS - Diluted")
-    )
-    promoter_section = get_category_section(holdings, "promoters")
-    fii_section = get_category_section(holdings, "fii")
-    dii_section = (
-        get_category_section(holdings, "dii")
-        or get_category_section(holdings, "other_dii")
-    )
-
-    period_values = set()
-
-    for section in [revenue_section, net_profit_section, eps_section]:
-        history = section.get("history") if isinstance(section, dict) else []
-        if isinstance(history, list):
-            for item in history:
-                if isinstance(item, dict) and safe_text(item.get("period")):
-                    period_values.add(safe_text(item.get("period")))
-
-    rows = []
-    period_type = safe_text(income_data.get("time_period")) or "yearly"
-    raw_payload = json_text({
-        "income_statement": income_response,
-        "key_ratios": ratios_response,
-        "share_holdings": holdings_response
-    })
-
-    for period in sorted(period_values, reverse=True):
-        report_date = parse_upstox_period_date(period)
-
-        if not report_date:
-            continue
-
-        rows.append([
-            instrument["instrument_key"],
-            instrument["isin"],
-            instrument["trading_symbol"],
-            report_date,
-            period_type,
-            get_metric_history_value(revenue_section, period),
-            get_metric_history_value(net_profit_section, period),
-            get_metric_history_value(eps_section, period),
-            get_named_metric(ratios, "P/E"),
-            None,
-            get_named_metric(ratios, "ROE"),
-            None,
-            get_metric_history_value(promoter_section, period),
-            get_metric_history_value(fii_section, period),
-            get_metric_history_value(dii_section, period),
-            raw_payload
-        ])
-
-    return rows
-
-
-def insert_corporate_action_rows(conn, rows: List[List[Any]]) -> int:
-    if not rows:
-        return 0
-
-    for row in rows:
-        conn.execute("""
-            DELETE FROM corporate_actions
-            WHERE instrument_key = ?
-              AND action_type = ?
-              AND ex_date = ?;
-        """, [row[0], row[3], row[4]])
-
-    conn.executemany("""
-        INSERT INTO corporate_actions (
-            instrument_key,
-            isin,
-            trading_symbol,
-            action_type,
-            ex_date,
-            record_date,
-            amount,
-            ratio,
-            remarks,
-            raw_json,
-            ingested_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
-    """, rows)
-
-    return len(rows)
-
-
-def map_corporate_action_rows(
-    instrument: Dict[str, str],
-    response: Dict[str, Any]
-) -> List[List[Any]]:
-    data = response.get("data") if isinstance(response, dict) else []
-
-    if not isinstance(data, list):
-        return []
-
-    rows = []
-
-    for action in data:
-        if not isinstance(action, dict):
-            continue
-
-        details = action.get("event_details")
-        details_map = {}
-
-        if isinstance(details, list):
-            for detail in details:
-                if isinstance(detail, dict):
-                    details_map[safe_text(detail.get("name"))] = safe_text(
-                        detail.get("value")
-                    )
-
-        ex_date = (
-            parse_upstox_display_date(details_map.get("Ex dividend date"))
-            or parse_upstox_display_date(details_map.get("Ex date"))
-            or parse_upstox_display_date(action.get("expiry_date"))
-        )
-
-        if not ex_date:
-            continue
-
-        remarks = (
-            details_map.get("Details")
-            or details_map.get("Dividend type")
-            or json_text(details_map)
-        )
-
-        rows.append([
-            instrument["instrument_key"],
-            instrument["isin"],
-            instrument["trading_symbol"],
-            safe_text(action.get("name")) or "Corporate Action",
-            ex_date,
-            parse_upstox_display_date(details_map.get("Record date")),
-            safe_float(action.get("amount")),
-            safe_text(action.get("ratio")),
-            remarks,
-            json_text(action)
-        ])
-
-    return rows
-
-
-def insert_fii_dii_activity_rows(conn, rows: List[List[Any]]) -> int:
-    if not rows:
-        return 0
-
-    for row in rows:
-        conn.execute("""
-            DELETE FROM fii_dii_activity
-            WHERE date = ?
-              AND category = ?
-              AND data_type = ?;
-        """, [row[0], row[1], row[2]])
-
-    conn.executemany("""
-        INSERT INTO fii_dii_activity (
-            date,
-            category,
-            data_type,
-            buy_value,
-            sell_value,
-            net_value,
-            buy_contracts,
-            sell_contracts,
-            oi_contracts,
-            oi_amount,
-            raw_json,
-            ingested_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
-    """, rows)
-
-    return len(rows)
-
-
-def map_market_activity_rows(
-    category: str,
-    response: Dict[str, Any],
-    data_type: str = "NSE_EQ|CASH"
-) -> List[List[Any]]:
-    data = response.get("data") if isinstance(response, dict) else {}
-    records = data.get(data_type) if isinstance(data, dict) else []
-
-    if not isinstance(records, list):
-        return []
-
-    rows = []
-
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-
-        activity_date = milliseconds_to_timestamp(record.get("time_stamp"))
-
-        if not activity_date:
-            continue
-
-        buy_value = safe_float(record.get("buy_amount")) or 0
-        sell_value = safe_float(record.get("sell_amount")) or 0
-
-        rows.append([
-            activity_date.date().isoformat(),
-            category,
-            data_type,
-            buy_value,
-            sell_value,
-            buy_value - sell_value,
-            safe_int(record.get("buy_contracts")) or 0,
-            safe_int(record.get("sell_contracts")) or 0,
-            safe_int(record.get("oi_contracts")) or 0,
-            safe_float(record.get("oi_amount")) or 0,
-            json_text({
-                "data_type": data_type,
-                "record": record
-            })
-        ])
-
-    return rows
-
-
-def sync_upstox_equity_news_service(
-    current_user: dict,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    total_records = 0
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-        access_token = get_upstox_access_token(conn)
-        instruments = get_equity_data_collection_instruments(conn)
-
-        if not instruments:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No equity instruments found. Please run Equity collection first."
-            )
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_equity_news",
-            "running",
-            "Equity News collection started.",
-            current_user=current_user
-        )
-
-        instruments_by_key = {
-            instrument["instrument_key"]: instrument
-            for instrument in instruments
-        }
-
-        for start_index in range(0, len(instruments), 30):
-            check_sync_cancelled(conn, sync_id)
-            batch = instruments[start_index:start_index + 30]
-            instrument_keys = [item["instrument_key"] for item in batch]
-
-            page_number = 1
-
-            while True:
-                check_sync_cancelled(conn, sync_id)
-                response = get_upstox_news(
-                    access_token=access_token,
-                    instrument_keys=instrument_keys,
-                    page_number=page_number,
-                    page_size=100
-                )
-                rows = map_equity_news_rows(instruments_by_key, response)
-                total_records += insert_equity_news_rows(conn, rows)
-                conn.commit()
-
-                metadata = response.get("metadata") if isinstance(response, dict) else {}
-                page = metadata.get("page") if isinstance(metadata, dict) else {}
-                total_pages = int(page.get("total_pages") or 0) if isinstance(page, dict) else 0
-
-                if page_number >= max(1, total_pages):
-                    break
-
-                page_number += 1
-                time.sleep(API_SLEEP_SECONDS)
-
-            processed = min(start_index + 30, len(instruments))
-            update_sync_run_progress(
-                conn,
-                sync_id,
-                (
-                    f"Equity News collection running. "
-                    f"Processed {processed}/{len(instruments)} instruments, "
-                    f"saved {total_records} articles."
-                ),
-                total_records
-            )
-            time.sleep(API_SLEEP_SECONDS)
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "Equity News collected from Upstox successfully.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": "Equity News collected from Upstox successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except SyncCancelled:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "Equity News collection cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "Equity News collection cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except HTTPException:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                "Equity News collection failed.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as e:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Equity News collection failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to run Equity News collection: {e}"
-        )
-
-    finally:
-        conn.close()
-
-
-def sync_upstox_fundamentals_service(
-    current_user: dict,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    total_records = 0
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-        access_token = get_upstox_access_token(conn)
-        instruments = get_equity_data_collection_instruments(conn)
-
-        if not instruments:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No equity instruments found. Please run Equity collection first."
-            )
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_fundamentals",
-            "running",
-            "Fundamentals collection started.",
-            current_user=current_user
-        )
-
-        for index, instrument in enumerate(instruments, start=1):
-            check_sync_cancelled(conn, sync_id)
-            isin = instrument["isin"]
-
-            try:
-                income_response = get_upstox_fundamental_data(
-                    access_token,
-                    isin,
-                    "income-statement",
-                    {
-                        "type": "consolidated",
-                        "time_period": "yearly",
-                        "fs": "true"
-                    }
-                )
-                ratios_response = get_upstox_fundamental_data(
-                    access_token,
-                    isin,
-                    "key-ratios"
-                )
-                holdings_response = get_upstox_fundamental_data(
-                    access_token,
-                    isin,
-                    "share-holdings"
-                )
-            except HTTPException as error:
-                print(
-                    "Fundamentals fetch skipped: "
-                    f"{instrument['trading_symbol']} ({isin}) - {error.detail}"
-                )
-                continue
-
-            rows = map_fundamentals_rows(
-                instrument=instrument,
-                income_response=income_response,
-                ratios_response=ratios_response,
-                holdings_response=holdings_response
-            )
-            total_records += insert_fundamentals_rows(conn, rows)
-            conn.commit()
-
-            if index == 1 or index % 25 == 0:
-                update_sync_run_progress(
-                    conn,
-                    sync_id,
-                    (
-                        f"Fundamentals collection running. "
-                        f"Processed {index}/{len(instruments)} instruments, "
-                        f"saved {total_records} rows."
-                    ),
-                    total_records
-                )
-
-            time.sleep(API_SLEEP_SECONDS)
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "Fundamentals collected from Upstox successfully.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": "Fundamentals collected from Upstox successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except SyncCancelled:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "Fundamentals collection cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "Fundamentals collection cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except HTTPException:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                "Fundamentals collection failed.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as e:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Fundamentals collection failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to run Fundamentals collection: {e}"
-        )
-
-    finally:
-        conn.close()
-
-
-def sync_upstox_corporate_actions_service(
-    current_user: dict,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    total_records = 0
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-        access_token = get_upstox_access_token(conn)
-        instruments = get_equity_data_collection_instruments(conn)
-
-        if not instruments:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No equity instruments found. Please run Equity collection first."
-            )
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_corporate_actions",
-            "running",
-            "Corporate Actions collection started.",
-            current_user=current_user
-        )
-
-        for index, instrument in enumerate(instruments, start=1):
-            check_sync_cancelled(conn, sync_id)
-
-            try:
-                response = get_upstox_fundamental_data(
-                    access_token,
-                    instrument["isin"],
-                    "corporate-actions"
-                )
-            except HTTPException as error:
-                print(
-                    "Corporate Actions fetch skipped: "
-                    f"{instrument['trading_symbol']} ({instrument['isin']}) - {error.detail}"
-                )
-                continue
-
-            rows = map_corporate_action_rows(instrument, response)
-            total_records += insert_corporate_action_rows(conn, rows)
-            conn.commit()
-
-            if index == 1 or index % 25 == 0:
-                update_sync_run_progress(
-                    conn,
-                    sync_id,
-                    (
-                        f"Corporate Actions collection running. "
-                        f"Processed {index}/{len(instruments)} instruments, "
-                        f"saved {total_records} actions."
-                    ),
-                    total_records
-                )
-
-            time.sleep(API_SLEEP_SECONDS)
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "Corporate Actions collected from Upstox successfully.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": "Corporate Actions collected from Upstox successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except SyncCancelled:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "Corporate Actions collection cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "Corporate Actions collection cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except HTTPException:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                "Corporate Actions collection failed.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as e:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Corporate Actions collection failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to run Corporate Actions collection: {e}"
-        )
-
-    finally:
-        conn.close()
-
-
-def sync_upstox_fii_dii_activity_service(
-    current_user: dict,
-    clear_cancel_at_start: bool = True
-):
-    conn = get_connection()
-    started_at = datetime.now()
-    sync_id = None
-    total_records = 0
-
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-        access_token = get_upstox_access_token(conn)
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_fii_dii_activity",
-            "running",
-            "FII/DII Activity collection started.",
-            current_user=current_user
-        )
-
-        rows = []
-
-        for data_type in UPSTOX_FII_DATA_TYPES:
-            check_sync_cancelled(conn, sync_id)
-            response = get_upstox_market_activity(
-                access_token,
-                "/market/fii",
-                data_type,
-                "1D"
-            )
-            rows.extend(map_market_activity_rows("FII", response, data_type))
-
-        for data_type in UPSTOX_DII_DATA_TYPES:
-            check_sync_cancelled(conn, sync_id)
-            response = get_upstox_market_activity(
-                access_token,
-                "/market/dii",
-                data_type,
-                "1D"
-            )
-            rows.extend(map_market_activity_rows("DII", response, data_type))
-
-        total_records = insert_fii_dii_activity_rows(conn, rows)
-        conn.commit()
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "FII/DII Activity collected from Upstox successfully.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": "FII/DII Activity collected from Upstox successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except SyncCancelled:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "FII/DII Activity collection cancelled.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "FII/DII Activity collection cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except HTTPException:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                "FII/DII Activity collection failed.",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as e:
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"FII/DII Activity collection failed: {e}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to run FII/DII Activity collection: {e}"
-        )
-
-    finally:
         conn.close()
 
 
 def sync_upstox_expired_instruments_service(
     current_user: dict,
+    config: Optional[dict] = None,
     clear_cancel_at_start: bool = True
 ):
     conn = get_connection()
     started_at = datetime.now()
     sync_id = None
+    expired_download = {
+        "records": [],
+        "group_statuses": [],
+        "skipped_groups": 0
+    }
     total_records = 0
 
     try:
@@ -3427,93 +2240,69 @@ def sync_upstox_expired_instruments_service(
             clear_cancel_signal()
 
         ensure_no_active_sync_run(conn)
-        access_token = get_upstox_access_token(conn)
+
+        access_token = get_saved_upstox_access_token(conn)
 
         sync_id = create_sync_run(
             conn,
             "upstox_expired_instruments",
             "running",
-            "Expired instrument dump started.",
+            "Expired instrument SDK download started.",
             current_user=current_user
         )
 
-        for underlying_key in DEFAULT_UNDERLYING_KEYS:
+        expired_download = download_expired_instruments_with_sdk(
+            conn=conn,
+            sync_id=sync_id,
+            access_token=access_token,
+            config=config
+        )
+
+        was_cancelled = bool(expired_download.get("cancelled"))
+
+        if not was_cancelled:
             check_sync_cancelled(conn, sync_id)
 
-            expiries = get_expiries(access_token, underlying_key)
+        conn.execute("BEGIN TRANSACTION")
 
-            check_sync_cancelled(conn, sync_id)
+        total_records = int(expired_download.get("persisted_records") or 0)
 
-            for expiry_date in expiries:
-                check_sync_cancelled(conn, sync_id)
+        total_records += import_expired_instruments_records(
+            conn=conn,
+            sync_id=sync_id,
+            records=expired_download.get("records", []),
+            group_statuses=expired_download.get("group_statuses", []),
+            underlying_statuses=expired_download.get("underlying_statuses", []),
+            allow_cancelled_import=was_cancelled
+        )
 
-                if not expired_instruments_exist(
-                    conn=conn,
-                    underlying_key=underlying_key,
-                    expiry_date=expiry_date,
-                    source_type="expired_option"
-                ):
-                    option_rows = get_expired_option_contracts(
-                        access_token=access_token,
-                        underlying_key=underlying_key,
-                        expiry_date=expiry_date
-                    )
+        conn.execute("COMMIT")
 
-                    clear_expired_instruments_for_source(
-                        conn=conn,
-                        underlying_key=underlying_key,
-                        expiry_date=expiry_date,
-                        source_type="expired_option"
-                    )
+        if was_cancelled:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                "Expired instrument SDK download cancelled. Completed records were saved.",
+                total_records,
+                started_at
+            )
 
-                    total_records += insert_expired_instruments(
-                        conn=conn,
-                        rows=option_rows,
-                        source_type="expired_option",
-                        sync_id=sync_id
-                    )
+            if clear_cancel_at_start:
+                clear_cancel_signal()
 
-                    conn.commit()
-                    time.sleep(API_SLEEP_SECONDS)
-
-                check_sync_cancelled(conn, sync_id)
-
-                if not expired_instruments_exist(
-                    conn=conn,
-                    underlying_key=underlying_key,
-                    expiry_date=expiry_date,
-                    source_type="expired_future"
-                ):
-                    future_rows = get_expired_future_contracts(
-                        access_token=access_token,
-                        underlying_key=underlying_key,
-                        expiry_date=expiry_date
-                    )
-
-                    clear_expired_instruments_for_source(
-                        conn=conn,
-                        underlying_key=underlying_key,
-                        expiry_date=expiry_date,
-                        source_type="expired_future"
-                    )
-
-                    total_records += insert_expired_instruments(
-                        conn=conn,
-                        rows=future_rows,
-                        source_type="expired_future",
-                        sync_id=sync_id
-                    )
-
-                    conn.commit()
-                    time.sleep(API_SLEEP_SECONDS)
-
-                check_sync_cancelled(conn, sync_id)
+            return {
+                "status": "cancelled",
+                "message": "Expired instrument SDK download cancelled. Completed records were saved.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at)
+            }
 
         finish_sync_run(
             conn,
             sync_id,
             "success",
-            "Expired instruments dumped successfully.",
+            "Expired instruments downloaded through Upstox SDK and imported successfully.",
             total_records,
             started_at
         )
@@ -3523,7 +2312,7 @@ def sync_upstox_expired_instruments_service(
 
         return {
             "status": "success",
-            "message": "Expired instruments dumped successfully.",
+            "message": "Expired instruments downloaded through Upstox SDK and imported successfully.",
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at)
         }
@@ -3539,7 +2328,7 @@ def sync_upstox_expired_instruments_service(
                 conn,
                 sync_id,
                 "cancelled",
-                "Expired instrument dump cancelled.",
+                "Expired instrument SDK download cancelled.",
                 total_records,
                 started_at
             )
@@ -3549,23 +2338,28 @@ def sync_upstox_expired_instruments_service(
 
         return {
             "status": "cancelled",
-            "message": "Expired instrument dump cancelled.",
+            "message": "Expired instrument SDK download cancelled.",
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at)
         }
 
-    except HTTPException as e:
+    except HTTPException as error:
         try:
             conn.rollback()
         except Exception:
             pass
+
+        error_message = error.detail
+
+        if isinstance(error_message, dict):
+            error_message = error_message.get("message") or str(error_message)
 
         if sync_id:
             finish_sync_run(
                 conn,
                 sync_id,
                 "failed",
-                str(e.detail),
+                f"Expired instrument SDK download failed: {error_message}",
                 total_records,
                 started_at
             )
@@ -3573,9 +2367,14 @@ def sync_upstox_expired_instruments_service(
         if clear_cancel_at_start:
             clear_cancel_signal()
 
-        raise
+        return {
+            "status": "failed",
+            "message": str(error_message),
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
 
-    except Exception as e:
+    except Exception as error:
         try:
             conn.rollback()
         except Exception:
@@ -3586,7 +2385,7 @@ def sync_upstox_expired_instruments_service(
                 conn,
                 sync_id,
                 "failed",
-                f"Expired instrument dump failed: {e}",
+                f"Expired instrument SDK download failed: {error}",
                 total_records,
                 started_at
             )
@@ -3596,112 +2395,11 @@ def sync_upstox_expired_instruments_service(
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to dump expired instruments: {e}"
+            detail=f"Unable to dump expired instruments through Upstox SDK: {error}"
         )
 
     finally:
         conn.close()
-
-
-def sync_upstox_all_instruments_service(current_user: dict):
-    started_at = datetime.now()
-    total_records = 0
-    jobs = {}
-
-    job_steps = [
-        (
-            "current",
-            sync_upstox_current_instruments_service,
-            {"clear_cancel_at_start": True}
-        ),
-        (
-            "expired",
-            sync_upstox_expired_instruments_service,
-            {"clear_cancel_at_start": False}
-        ),
-        (
-            "equity",
-            sync_upstox_equity_instruments_service,
-            {"clear_cancel_at_start": False}
-        ),
-        (
-            "ohlcv_daily",
-            sync_upstox_ohlcv_daily_service,
-            {"target_date": None, "clear_cancel_at_start": False}
-        ),
-        (
-            "equity_news",
-            sync_upstox_equity_news_service,
-            {"clear_cancel_at_start": False}
-        ),
-        (
-            "fundamentals",
-            sync_upstox_fundamentals_service,
-            {"clear_cancel_at_start": False}
-        ),
-        (
-            "corporate_actions",
-            sync_upstox_corporate_actions_service,
-            {"clear_cancel_at_start": False}
-        ),
-        (
-            "fii_dii_activity",
-            sync_upstox_fii_dii_activity_service,
-            {"clear_cancel_at_start": False}
-        )
-    ]
-
-    try:
-        for job_key, job_function, kwargs in job_steps:
-            try:
-                result = job_function(current_user, **kwargs)
-            except HTTPException as error:
-                result = {
-                    "status": "failed",
-                    "message": str(error.detail),
-                    "total_records": 0,
-                    "duration_seconds": 0
-                }
-            except Exception as error:
-                result = {
-                    "status": "failed",
-                    "message": str(error),
-                    "total_records": 0,
-                    "duration_seconds": 0
-                }
-
-            jobs[job_key] = result
-            total_records += int(result.get("total_records") or 0)
-
-            if result.get("status") == "cancelled":
-                return {
-                    "status": "cancelled",
-                    "message": f"{get_sync_type_label(job_key)} collection cancelled.",
-                    "total_records": total_records,
-                    "duration_seconds": duration_seconds(started_at),
-                    "jobs": jobs
-                }
-
-    finally:
-        clear_cancel_signal()
-
-    failed_jobs = [
-        job_key
-        for job_key, result in jobs.items()
-        if result.get("status") == "failed"
-    ]
-
-    return {
-        "status": "partial_success" if failed_jobs else "success",
-        "message": (
-            "All configured data collection runners completed with some failures."
-            if failed_jobs
-            else "All configured data collection runners completed."
-        ),
-        "total_records": total_records,
-        "duration_seconds": duration_seconds(started_at),
-        "jobs": jobs
-    }
 
 
 def normalize_page(value: int) -> int:
@@ -3788,86 +2486,6 @@ def build_preview_filters(
     return where_sql, params
 
 
-def build_equity_preview_filters(search: str, security_type: str):
-    where_clauses = []
-    params = []
-
-    clean_search = search.strip() if search else ""
-    clean_security_type = security_type.strip() if security_type else "all"
-
-    if clean_search:
-        where_clauses.append("""
-            (
-                LOWER(COALESCE(instrument_key, '')) LIKE ?
-                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
-                OR LOWER(COALESCE(name, '')) LIKE ?
-                OR LOWER(COALESCE(isin, '')) LIKE ?
-                OR LOWER(COALESCE(exchange, '')) LIKE ?
-                OR LOWER(COALESCE(segment, '')) LIKE ?
-                OR LOWER(COALESCE(short_name, '')) LIKE ?
-                OR LOWER(COALESCE(security_type, '')) LIKE ?
-            )
-        """)
-
-        search_value = f"%{clean_search.lower()}%"
-        params.extend([
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value
-        ])
-
-    if clean_security_type != "all":
-        where_clauses.append("security_type = ?")
-        params.append(clean_security_type)
-
-    where_sql = ""
-
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    return where_sql, params
-
-
-def build_ohlcv_daily_preview_filters(search: str, from_date: str, to_date: str):
-    where_clauses = []
-    params = []
-
-    clean_search = search.strip() if search else ""
-    clean_from_date = from_date.strip() if from_date else ""
-    clean_to_date = to_date.strip() if to_date else ""
-
-    if clean_search:
-        where_clauses.append("""
-            (
-                LOWER(COALESCE(instrument_key, '')) LIKE ?
-                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
-            )
-        """)
-
-        search_value = f"%{clean_search.lower()}%"
-        params.extend([search_value, search_value])
-
-    if clean_from_date:
-        where_clauses.append("date >= ?")
-        params.append(clean_from_date)
-
-    if clean_to_date:
-        where_clauses.append("date <= ?")
-        params.append(clean_to_date)
-
-    where_sql = ""
-
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    return where_sql, params
-
-
 def row_to_instrument_preview(row):
     return {
         "instrument_key": row[0],
@@ -3883,39 +2501,6 @@ def row_to_instrument_preview(row):
         "underlying_key": row[10],
         "underlying_symbol": row[11],
         "synced_at": str(row[12]) if row[12] else None
-    }
-
-
-def row_to_equity_preview(row):
-    return {
-        "instrument_key": row[0],
-        "trading_symbol": row[1],
-        "name": row[2],
-        "isin": row[3],
-        "exchange": row[4],
-        "segment": row[5],
-        "exchange_token": row[6],
-        "tick_size": row[7],
-        "lot_size": row[8],
-        "freeze_quantity": row[9],
-        "short_name": row[10],
-        "security_type": row[11],
-        "downloaded_at": str(row[12]) if row[12] else None
-    }
-
-
-def row_to_ohlcv_daily_preview(row):
-    return {
-        "instrument_key": row[0],
-        "trading_symbol": row[1],
-        "date": str(row[2]) if row[2] else None,
-        "open": row[3],
-        "high": row[4],
-        "low": row[5],
-        "close": row[6],
-        "volume": row[7],
-        "oi": row[8],
-        "ingested_at": str(row[9]) if row[9] else None
     }
 
 
@@ -4051,639 +2636,3 @@ def get_upstox_expired_instruments_preview_service(
 
     finally:
         conn.close()
-
-
-def get_upstox_equity_instruments_preview_service(
-    search: str = "",
-    security_type: str = "all",
-    page: int = 1,
-    page_size: int = 50
-):
-    conn = get_connection()
-
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
-
-        where_sql, params = build_equity_preview_filters(
-            search=search,
-            security_type=security_type
-        )
-
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM upstox_equity_instruments
-            {where_sql};
-        """, params).fetchone()[0]
-
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                trading_symbol,
-                name,
-                isin,
-                exchange,
-                segment,
-                exchange_token,
-                tick_size,
-                lot_size,
-                freeze_quantity,
-                short_name,
-                security_type,
-                downloaded_at
-            FROM upstox_equity_instruments
-            {where_sql}
-            ORDER BY downloaded_at DESC, trading_symbol, name
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_equity_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
-
-
-def get_ohlcv_daily_preview_service(
-    search: str = "",
-    from_date: str = "",
-    to_date: str = "",
-    page: int = 1,
-    page_size: int = 50
-):
-    conn = get_connection()
-
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
-
-        where_sql, params = build_ohlcv_daily_preview_filters(
-            search=search,
-            from_date=from_date,
-            to_date=to_date
-        )
-
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM ohlcv_daily
-            {where_sql};
-        """, params).fetchone()[0]
-
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                trading_symbol,
-                date,
-                open,
-                high,
-                low,
-                close,
-                volume,
-                oi,
-                ingested_at
-            FROM ohlcv_daily
-            {where_sql}
-            ORDER BY date DESC, trading_symbol
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_ohlcv_daily_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
-
-
-def build_equity_news_preview_filters(
-    search: str,
-    from_date: str,
-    to_date: str,
-    source: str
-):
-    where_clauses = []
-    params = []
-
-    clean_search = search.strip() if search else ""
-    clean_from_date = from_date.strip() if from_date else ""
-    clean_to_date = to_date.strip() if to_date else ""
-    clean_source = source.strip() if source else "all"
-
-    if clean_search:
-        where_clauses.append("""
-            (
-                LOWER(COALESCE(instrument_key, '')) LIKE ?
-                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
-                OR LOWER(COALESCE(title, '')) LIKE ?
-                OR LOWER(COALESCE(summary, '')) LIKE ?
-                OR LOWER(COALESCE(source, '')) LIKE ?
-                OR LOWER(COALESCE(url, '')) LIKE ?
-            )
-        """)
-
-        search_value = f"%{clean_search.lower()}%"
-        params.extend([
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value
-        ])
-
-    if clean_source != "all":
-        where_clauses.append("source = ?")
-        params.append(clean_source)
-
-    if clean_from_date:
-        where_clauses.append("CAST(published_at AS DATE) >= ?")
-        params.append(clean_from_date)
-
-    if clean_to_date:
-        where_clauses.append("CAST(published_at AS DATE) <= ?")
-        params.append(clean_to_date)
-
-    where_sql = ""
-
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    return where_sql, params
-
-
-def build_fundamentals_preview_filters(
-    search: str,
-    period_type: str,
-    from_date: str,
-    to_date: str
-):
-    where_clauses = []
-    params = []
-
-    clean_search = search.strip() if search else ""
-    clean_period_type = period_type.strip() if period_type else "all"
-    clean_from_date = from_date.strip() if from_date else ""
-    clean_to_date = to_date.strip() if to_date else ""
-
-    if clean_search:
-        where_clauses.append("""
-            (
-                LOWER(COALESCE(instrument_key, '')) LIKE ?
-                OR LOWER(COALESCE(isin, '')) LIKE ?
-                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
-                OR LOWER(COALESCE(period_type, '')) LIKE ?
-            )
-        """)
-
-        search_value = f"%{clean_search.lower()}%"
-        params.extend([
-            search_value,
-            search_value,
-            search_value,
-            search_value
-        ])
-
-    if clean_period_type != "all":
-        where_clauses.append("period_type = ?")
-        params.append(clean_period_type)
-
-    if clean_from_date:
-        where_clauses.append("report_date >= ?")
-        params.append(clean_from_date)
-
-    if clean_to_date:
-        where_clauses.append("report_date <= ?")
-        params.append(clean_to_date)
-
-    where_sql = ""
-
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    return where_sql, params
-
-
-def build_corporate_actions_preview_filters(
-    search: str,
-    action_type: str,
-    from_date: str,
-    to_date: str
-):
-    where_clauses = []
-    params = []
-
-    clean_search = search.strip() if search else ""
-    clean_action_type = action_type.strip() if action_type else "all"
-    clean_from_date = from_date.strip() if from_date else ""
-    clean_to_date = to_date.strip() if to_date else ""
-
-    if clean_search:
-        where_clauses.append("""
-            (
-                LOWER(COALESCE(instrument_key, '')) LIKE ?
-                OR LOWER(COALESCE(isin, '')) LIKE ?
-                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
-                OR LOWER(COALESCE(action_type, '')) LIKE ?
-                OR LOWER(COALESCE(remarks, '')) LIKE ?
-            )
-        """)
-
-        search_value = f"%{clean_search.lower()}%"
-        params.extend([
-            search_value,
-            search_value,
-            search_value,
-            search_value,
-            search_value
-        ])
-
-    if clean_action_type != "all":
-        where_clauses.append("action_type = ?")
-        params.append(clean_action_type)
-
-    if clean_from_date:
-        where_clauses.append("ex_date >= ?")
-        params.append(clean_from_date)
-
-    if clean_to_date:
-        where_clauses.append("ex_date <= ?")
-        params.append(clean_to_date)
-
-    where_sql = ""
-
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    return where_sql, params
-
-
-def build_fii_dii_activity_preview_filters(
-    category: str,
-    from_date: str,
-    to_date: str
-):
-    where_clauses = []
-    params = []
-
-    clean_category = category.strip() if category else "all"
-    clean_from_date = from_date.strip() if from_date else ""
-    clean_to_date = to_date.strip() if to_date else ""
-
-    if clean_category != "all":
-        where_clauses.append("category = ?")
-        params.append(clean_category)
-
-    if clean_from_date:
-        where_clauses.append("date >= ?")
-        params.append(clean_from_date)
-
-    if clean_to_date:
-        where_clauses.append("date <= ?")
-        params.append(clean_to_date)
-
-    where_sql = ""
-
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
-
-    return where_sql, params
-
-
-def row_to_equity_news_preview(row):
-    return {
-        "news_id": row[0],
-        "instrument_key": row[1],
-        "trading_symbol": row[2],
-        "title": row[3],
-        "summary": row[4],
-        "source": row[5],
-        "url": row[6],
-        "published_at": str(row[7]) if row[7] else None,
-        "ingested_at": str(row[8]) if row[8] else None
-    }
-
-
-def row_to_fundamentals_preview(row):
-    return {
-        "instrument_key": row[0],
-        "isin": row[1],
-        "trading_symbol": row[2],
-        "report_date": str(row[3]) if row[3] else None,
-        "period_type": row[4],
-        "revenue": row[5],
-        "net_profit": row[6],
-        "eps": row[7],
-        "pe_ratio": row[8],
-        "debt_to_equity": row[9],
-        "roe": row[10],
-        "cash_from_operations": row[11],
-        "promoter_holding_pct": row[12],
-        "fii_holding_pct": row[13],
-        "dii_holding_pct": row[14],
-        "ingested_at": str(row[15]) if row[15] else None
-    }
-
-
-def row_to_corporate_actions_preview(row):
-    return {
-        "instrument_key": row[0],
-        "isin": row[1],
-        "trading_symbol": row[2],
-        "action_type": row[3],
-        "ex_date": str(row[4]) if row[4] else None,
-        "record_date": str(row[5]) if row[5] else None,
-        "amount": row[6],
-        "remarks": row[7],
-        "ingested_at": str(row[8]) if row[8] else None
-    }
-
-
-def row_to_fii_dii_activity_preview(row):
-    return {
-        "date": str(row[0]) if row[0] else None,
-        "category": row[1],
-        "data_type": row[2],
-        "buy_value": row[3],
-        "sell_value": row[4],
-        "net_value": row[5],
-        "ingested_at": str(row[6]) if row[6] else None
-    }
-
-
-def get_equity_news_preview_service(
-    search: str = "",
-    from_date: str = "",
-    to_date: str = "",
-    source: str = "all",
-    page: int = 1,
-    page_size: int = 50
-):
-    conn = get_connection()
-
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
-
-        where_sql, params = build_equity_news_preview_filters(
-            search=search,
-            from_date=from_date,
-            to_date=to_date,
-            source=source
-        )
-
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM equity_news
-            {where_sql};
-        """, params).fetchone()[0]
-
-        rows = conn.execute(f"""
-            SELECT
-                news_id,
-                instrument_key,
-                trading_symbol,
-                title,
-                summary,
-                source,
-                url,
-                published_at,
-                ingested_at
-            FROM equity_news
-            {where_sql}
-            ORDER BY published_at DESC, ingested_at DESC, trading_symbol
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_equity_news_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
-
-
-def get_fundamentals_preview_service(
-    search: str = "",
-    period_type: str = "all",
-    from_date: str = "",
-    to_date: str = "",
-    page: int = 1,
-    page_size: int = 50
-):
-    conn = get_connection()
-
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
-
-        where_sql, params = build_fundamentals_preview_filters(
-            search=search,
-            period_type=period_type,
-            from_date=from_date,
-            to_date=to_date
-        )
-
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM fundamentals
-            {where_sql};
-        """, params).fetchone()[0]
-
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                isin,
-                trading_symbol,
-                report_date,
-                period_type,
-                revenue,
-                net_profit,
-                eps,
-                pe_ratio,
-                debt_to_equity,
-                roe,
-                cash_from_operations,
-                promoter_holding_pct,
-                fii_holding_pct,
-                dii_holding_pct,
-                ingested_at
-            FROM fundamentals
-            {where_sql}
-            ORDER BY report_date DESC, trading_symbol, period_type
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_fundamentals_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
-
-
-def get_corporate_actions_preview_service(
-    search: str = "",
-    action_type: str = "all",
-    from_date: str = "",
-    to_date: str = "",
-    page: int = 1,
-    page_size: int = 50
-):
-    conn = get_connection()
-
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
-
-        where_sql, params = build_corporate_actions_preview_filters(
-            search=search,
-            action_type=action_type,
-            from_date=from_date,
-            to_date=to_date
-        )
-
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM corporate_actions
-            {where_sql};
-        """, params).fetchone()[0]
-
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                isin,
-                trading_symbol,
-                action_type,
-                ex_date,
-                record_date,
-                amount,
-                remarks,
-                ingested_at
-            FROM corporate_actions
-            {where_sql}
-            ORDER BY ex_date DESC, trading_symbol, action_type
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_corporate_actions_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
-
-
-def get_fii_dii_activity_preview_service(
-    category: str = "all",
-    from_date: str = "",
-    to_date: str = "",
-    page: int = 1,
-    page_size: int = 50
-):
-    conn = get_connection()
-
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
-
-        where_sql, params = build_fii_dii_activity_preview_filters(
-            category=category,
-            from_date=from_date,
-            to_date=to_date
-        )
-
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM fii_dii_activity
-            {where_sql};
-        """, params).fetchone()[0]
-
-        rows = conn.execute(f"""
-            SELECT
-                date,
-                category,
-                data_type,
-                buy_value,
-                sell_value,
-                net_value,
-                ingested_at
-            FROM fii_dii_activity
-            {where_sql}
-            ORDER BY date DESC, category, data_type
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_fii_dii_activity_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
-

@@ -6,15 +6,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException, status
 
 from app.database import get_connection
+from app.services.connection_service import (
+    notify_admin_super_admins_upstox_token_expiry_service
+)
 from app.services.data_collection_service import (
-    sync_upstox_corporate_actions_service,
     sync_upstox_current_instruments_service,
-    sync_upstox_equity_instruments_service,
-    sync_upstox_equity_news_service,
-    sync_upstox_expired_instruments_service,
-    sync_upstox_fii_dii_activity_service,
-    sync_upstox_fundamentals_service,
-    sync_upstox_ohlcv_daily_service
+    sync_upstox_expired_instruments_service
 )
 
 
@@ -30,30 +27,6 @@ VALID_JOB_TYPES = {
     "expired_instruments": {
         "label": "Expired Instruments",
         "sync_type": "upstox_expired_instruments"
-    },
-    "equity_instruments": {
-        "label": "Equity",
-        "sync_type": "upstox_equity_instruments"
-    },
-    "ohlcv_daily": {
-        "label": "Equity OHLCV",
-        "sync_type": "upstox_ohlcv_daily"
-    },
-    "equity_news": {
-        "label": "Equity News",
-        "sync_type": "upstox_equity_news"
-    },
-    "fundamentals": {
-        "label": "Fundamentals",
-        "sync_type": "upstox_fundamentals"
-    },
-    "corporate_actions": {
-        "label": "Corporate Actions",
-        "sync_type": "upstox_corporate_actions"
-    },
-    "fii_dii_activity": {
-        "label": "FII/DII Activity",
-        "sync_type": "upstox_fii_dii_activity"
     }
 }
 
@@ -146,11 +119,7 @@ def validate_job_type(job_type: str) -> str:
     if clean_job_type not in VALID_JOB_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Invalid job type. Use current_instruments, expired_instruments, "
-                "equity_instruments, ohlcv_daily, equity_news, fundamentals, "
-                "corporate_actions, or fii_dii_activity."
-            )
+            detail="Invalid job type. Use current_instruments or expired_instruments."
         )
 
     return clean_job_type
@@ -241,6 +210,7 @@ def get_data_collection_schedules_service():
                 updated_by
             FROM upstox_data_collection_schedules
             WHERE record_status = 'S'
+              AND job_type IN ('current_instruments', 'expired_instruments')
             ORDER BY job_type, schedule_time;
         """).fetchall()
 
@@ -341,6 +311,7 @@ def update_data_collection_schedule_service(
             SELECT schedule_id
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
+              AND job_type IN ('current_instruments', 'expired_instruments')
               AND record_status = 'S'
             LIMIT 1;
         """, [schedule_id]).fetchone()
@@ -381,6 +352,7 @@ def update_data_collection_schedule_service(
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
+              AND job_type IN ('current_instruments', 'expired_instruments')
               AND record_status = 'S';
         """, [
             job_type,
@@ -414,6 +386,7 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
             SELECT schedule_time, is_active
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
+              AND job_type IN ('current_instruments', 'expired_instruments')
               AND record_status = 'S'
             LIMIT 1;
         """, [schedule_id]).fetchone()
@@ -437,6 +410,7 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
+              AND job_type IN ('current_instruments', 'expired_instruments')
               AND record_status = 'S';
         """, [
             next_is_active,
@@ -466,6 +440,7 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
             SELECT schedule_id
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
+              AND job_type IN ('current_instruments', 'expired_instruments')
               AND record_status = 'S'
             LIMIT 1;
         """, [schedule_id]).fetchone()
@@ -485,7 +460,8 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
                 version_no = version_no + 1,
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
-            WHERE schedule_id = ?;
+            WHERE schedule_id = ?
+              AND job_type IN ('current_instruments', 'expired_instruments');
         """, [user_id, schedule_id])
 
         conn.commit()
@@ -515,6 +491,7 @@ def get_due_schedules(conn):
             next_run_at
         FROM upstox_data_collection_schedules
         WHERE record_status = 'S'
+          AND job_type IN ('current_instruments', 'expired_instruments')
           AND is_active = TRUE
           AND (
               last_run_date IS NULL
@@ -527,7 +504,7 @@ def get_due_schedules(conn):
                   AND schedule_time <= ?
               )
           )
-        ORDER BY job_type, schedule_time;
+        ORDER BY schedule_time;
     """, [today, current_run_at, current_time]).fetchall()
 
 
@@ -546,6 +523,7 @@ def mark_schedule_started(
             updated_at = CURRENT_TIMESTAMP,
             updated_by = 'system_scheduler'
         WHERE schedule_id = ?
+          AND job_type IN ('current_instruments', 'expired_instruments')
           AND record_status = 'S';
     """, [
         run_date,
@@ -569,6 +547,7 @@ def update_schedule_next_run(
             updated_at = CURRENT_TIMESTAMP,
             updated_by = 'system_scheduler'
         WHERE schedule_id = ?
+          AND job_type IN ('current_instruments', 'expired_instruments')
           AND record_status = 'S';
     """, [
         calculate_next_run_at(schedule_time, is_active),
@@ -592,43 +571,7 @@ def run_schedule_job(schedule_id: str, job_type: str):
     if job_type == "expired_instruments":
         return sync_upstox_expired_instruments_service(
             current_user=system_user,
-            clear_cancel_at_start=True
-        )
-
-    if job_type == "equity_instruments":
-        return sync_upstox_equity_instruments_service(
-            current_user=system_user,
-            clear_cancel_at_start=True
-        )
-
-    if job_type == "ohlcv_daily":
-        return sync_upstox_ohlcv_daily_service(
-            current_user=system_user,
-            target_date=None,
-            clear_cancel_at_start=True
-        )
-
-    if job_type == "equity_news":
-        return sync_upstox_equity_news_service(
-            current_user=system_user,
-            clear_cancel_at_start=True
-        )
-
-    if job_type == "fundamentals":
-        return sync_upstox_fundamentals_service(
-            current_user=system_user,
-            clear_cancel_at_start=True
-        )
-
-    if job_type == "corporate_actions":
-        return sync_upstox_corporate_actions_service(
-            current_user=system_user,
-            clear_cancel_at_start=True
-        )
-
-    if job_type == "fii_dii_activity":
-        return sync_upstox_fii_dii_activity_service(
-            current_user=system_user,
+            config={},
             clear_cancel_at_start=True
         )
 
@@ -638,6 +581,13 @@ def run_schedule_job(schedule_id: str, job_type: str):
     )
 
 
+def run_token_expiry_notification_check():
+    try:
+        notify_admin_super_admins_upstox_token_expiry_service()
+    except Exception as error:
+        print(f"Upstox analytics token expiry notification check failed: {error}")
+
+
 def execute_due_schedules_once():
     if not _scheduler_lock.acquire(blocking=False):
         return
@@ -645,6 +595,8 @@ def execute_due_schedules_once():
     conn = get_connection()
 
     try:
+        run_token_expiry_notification_check()
+
         rows = get_due_schedules(conn)
 
         if not rows:

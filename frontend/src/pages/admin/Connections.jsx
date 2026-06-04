@@ -3,9 +3,7 @@ import {
   AlertTriangle,
   Bot,
   Check,
-  Copy,
   Edit3,
-  ExternalLink,
   Plus,
   PlugZap,
   RefreshCcw,
@@ -40,10 +38,6 @@ import {
 
 const emptyFormData = {
   provider: "",
-  api_key: "",
-  api_secret: "",
-  redirect_url: "",
-  authorization_code: "",
   access_token: "",
   bot_token: ""
 };
@@ -52,14 +46,14 @@ const brokers = [
   {
     id: "upstox",
     name: "Upstox",
-    description: "OAuth based broker connection.",
+    description: "Analytics token based broker connection.",
     apiSupported: true,
     icon: PlugZap
   },
   {
     id: "telegram",
     name: "Telegram",
-    description: "Bot based alert and notification connection.",
+    description: "Bot based alert connection.",
     apiSupported: true,
     icon: Send
   }
@@ -179,21 +173,6 @@ function formatDateTime(value) {
   });
 }
 
-function addOneYear(value) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  date.setFullYear(date.getFullYear() + 1);
-  return date;
-}
-
 function getLastUpdated(connection) {
   return (
     connection?.updated_at ||
@@ -214,39 +193,19 @@ function getTokenExpiry(connection, provider) {
   }
 
   const explicitExpiry =
-    connection?.token_expires_at ||
     connection?.access_token_expires_at ||
+    connection?.token_expires_at ||
     connection?.expires_at;
 
   if (explicitExpiry) {
     return formatDateTime(explicitExpiry);
   }
 
-  const lastUpdated = getLastUpdated(connection);
-  const calculatedExpiry = addOneYear(lastUpdated);
-
-  if (calculatedExpiry) {
-    return formatDateTime(calculatedExpiry);
+  if (connection?.has_access_token) {
+    return "Expiry calculating";
   }
 
-  return "Valid for 1 year";
-}
-
-function buildUpstoxAuthorizationUrl(apiKey, redirectUrl) {
-  const cleanApiKey = apiKey.trim();
-  const cleanRedirectUrl = redirectUrl.trim();
-
-  if (!cleanApiKey || !cleanRedirectUrl) {
-    return "";
-  }
-
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: cleanApiKey,
-    redirect_uri: cleanRedirectUrl
-  });
-
-  return `https://api.upstox.com/v2/login/authorization/dialog?${params.toString()}`;
+  return "--";
 }
 
 function getErrorMessage(error, fallback) {
@@ -298,8 +257,7 @@ function ConnectionFormModal({
   onClose,
   onSave,
   onInputChange,
-  onClearField,
-  onCopyAuthUrl
+  onClearField
 }) {
   const selectedBroker =
     brokers.find((broker) => broker.id === formData.provider) || null;
@@ -310,33 +268,13 @@ function ConnectionFormModal({
 
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
 
-  const subtitle = !hasProviderSelected
-    ? "Select a provider to show connection information."
-    : isTelegram
-      ? "Enter Telegram bot token. Open the bot in Telegram and send /start before saving."
-      : mode === "edit"
-        ? "Replace the saved Upstox OAuth token."
-        : "Enter Upstox app details, generate login URL, then paste the authorization code.";
-
-  const authorizationUrl = buildUpstoxAuthorizationUrl(
-    formData.api_key,
-    formData.redirect_url
-  );
-
-  const hasAuthorizationCode = formData.authorization_code.trim();
   const hasAccessToken = formData.access_token.trim();
   const hasTelegramBotToken = formData.bot_token.trim();
 
   const canSave =
     isAdminControlAllowed &&
     hasProviderSelected &&
-    ((isUpstox &&
-      (hasAccessToken ||
-        (formData.api_key.trim() &&
-          formData.api_secret.trim() &&
-          formData.redirect_url.trim() &&
-          hasAuthorizationCode))) ||
-      (isTelegram && hasTelegramBotToken));
+    ((isUpstox && hasAccessToken) || (isTelegram && hasTelegramBotToken));
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -347,9 +285,9 @@ function ConnectionFormModal({
     <Modal
       open={open}
       title={title}
-      subtitle={subtitle}
+      subtitle=""
       onClose={onClose}
-      width="max-w-2xl"
+      width="max-w-lg"
       footer={
         <div className="flex items-center justify-end gap-2">
           <IconButton
@@ -396,230 +334,66 @@ function ConnectionFormModal({
 
         {!hasProviderSelected ? (
           <div className="rounded border border-oa-border bg-black p-3">
-            <p className="text-[12px] text-oa-muted">
-              Select a provider from the dropdown to show connection fields.
-            </p>
+            <p className="text-[12px] text-oa-muted">Select provider.</p>
           </div>
         ) : null}
 
         {isUpstox ? (
-          <>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <label className={oaFormTextStyles.label}>API Key</label>
-                <div className="relative mt-1">
-                  <Input
-                    name="api_key"
-                    type="text"
-                    value={formData.api_key}
-                    onChange={onInputChange}
-                    placeholder={
-                      selectedConnection?.api_key
-                        ? "Saved - enter to replace"
-                        : "Enter Upstox API key"
-                    }
-                    className="pr-9"
-                  />
+          <div>
+            <label className={oaFormTextStyles.label}>
+              Analytics Access Token
+            </label>
+            <div className="relative mt-1">
+              <Input
+                name="access_token"
+                type="password"
+                value={formData.access_token}
+                onChange={onInputChange}
+                placeholder={
+                  selectedConnection?.has_access_token
+                    ? "Saved - enter to replace"
+                    : "Enter Upstox analytics token"
+                }
+                className="pr-9"
+                autoFocus
+              />
 
-                  {formData.api_key ? (
-                    <ClearInputButton
-                      label="Clear API key"
-                      onClick={() => onClearField("api_key")}
-                    />
-                  ) : null}
-                </div>
-              </div>
-
-              <div>
-                <label className={oaFormTextStyles.label}>API Secret</label>
-                <div className="relative mt-1">
-                  <Input
-                    name="api_secret"
-                    type="password"
-                    value={formData.api_secret}
-                    onChange={onInputChange}
-                    placeholder={
-                      selectedConnection?.has_api_secret
-                        ? "Saved - enter to replace"
-                        : "Enter Upstox API secret"
-                    }
-                    className="pr-9"
-                  />
-
-                  {formData.api_secret ? (
-                    <ClearInputButton
-                      label="Clear API secret"
-                      onClick={() => onClearField("api_secret")}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className={oaFormTextStyles.label}>Redirect URL</label>
-              <div className="relative mt-1">
-                <Input
-                  name="redirect_url"
-                  type="text"
-                  value={formData.redirect_url}
-                  onChange={onInputChange}
-                  placeholder={
-                    selectedConnection?.redirect_url
-                      ? selectedConnection.redirect_url
-                      : "Enter the same redirect URL added in Upstox app"
-                  }
-                  className="pr-9"
+              {formData.access_token ? (
+                <ClearInputButton
+                  label="Clear analytics token"
+                  onClick={() => onClearField("access_token")}
                 />
-
-                {formData.redirect_url ? (
-                  <ClearInputButton
-                    label="Clear redirect URL"
-                    onClick={() => onClearField("redirect_url")}
-                  />
-                ) : null}
-              </div>
+              ) : null}
             </div>
-
-            <div className="rounded border border-oa-border bg-black p-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-oa-muted">
-                  Upstox Login URL
-                </p>
-
-                <div className="flex items-center gap-2">
-                  <IconButton
-                    icon={Copy}
-                    label="Copy login URL"
-                    variant="default"
-                    disabled={!authorizationUrl}
-                    onClick={() => onCopyAuthUrl(authorizationUrl)}
-                    tooltipSide="top"
-                  />
-
-                  <a
-                    href={authorizationUrl || undefined}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white ${
-                      authorizationUrl
-                        ? ""
-                        : "pointer-events-none cursor-not-allowed opacity-50"
-                    }`}
-                    aria-label="Open Upstox login URL"
-                    title="Open Upstox login URL"
-                  >
-                    <ExternalLink size={14} />
-                  </a>
-                </div>
-              </div>
-
-              <p className="mt-2 break-all text-[11px] text-oa-muted">
-                {authorizationUrl ||
-                  "Enter API key and redirect URL to generate login URL."}
-              </p>
-            </div>
-
-            <div>
-              <label className={oaFormTextStyles.label}>
-                Authorization Code
-              </label>
-              <div className="relative mt-1">
-                <Input
-                  name="authorization_code"
-                  type="password"
-                  value={formData.authorization_code}
-                  onChange={onInputChange}
-                  placeholder="Paste code from Upstox redirect URL"
-                  className="pr-9"
-                  autoFocus
-                />
-
-                {formData.authorization_code ? (
-                  <ClearInputButton
-                    label="Clear authorization code"
-                    onClick={() => onClearField("authorization_code")}
-                  />
-                ) : null}
-              </div>
-            </div>
-
-            <div className="border-t border-oa-border pt-3">
-              <label className={oaFormTextStyles.label}>
-                Access Token Override
-              </label>
-              <div className="relative mt-1">
-                <Input
-                  name="access_token"
-                  type="password"
-                  value={formData.access_token}
-                  onChange={onInputChange}
-                  placeholder={
-                    selectedConnection
-                      ? "Optional - paste token directly to replace"
-                      : "Optional - paste token directly instead of OAuth code"
-                  }
-                  className="pr-9"
-                />
-
-                {formData.access_token ? (
-                  <ClearInputButton
-                    label="Clear access token"
-                    onClick={() => onClearField("access_token")}
-                  />
-                ) : null}
-              </div>
-            </div>
-          </>
+          </div>
         ) : null}
 
         {isTelegram ? (
-          <>
-            <div className="rounded border border-oa-border bg-black p-2">
-              <div className="flex items-start gap-2">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300">
-                  <Bot size={15} />
-                </div>
+          <div>
+            <label className={oaFormTextStyles.label}>Bot Token</label>
+            <div className="relative mt-1">
+              <Input
+                name="bot_token"
+                type="password"
+                value={formData.bot_token}
+                onChange={onInputChange}
+                placeholder={
+                  selectedConnection?.has_access_token
+                    ? "Saved - enter to replace"
+                    : "Enter Telegram bot token"
+                }
+                className="pr-9"
+                autoFocus
+              />
 
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-oa-muted">
-                    Telegram Bot Setup
-                  </p>
-                  <p className="mt-1 text-[11px] leading-5 text-oa-muted">
-                    Paste your Telegram bot token. Before saving, open this bot
-                    in Telegram and send /start. Open Analytics will collect the
-                    latest chat ID automatically.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className={oaFormTextStyles.label}>Bot Token</label>
-              <div className="relative mt-1">
-                <Input
-                  name="bot_token"
-                  type="password"
-                  value={formData.bot_token}
-                  onChange={onInputChange}
-                  placeholder={
-                    selectedConnection?.has_access_token
-                      ? "Saved - enter to replace"
-                      : "Enter Telegram bot token"
-                  }
-                  className="pr-9"
-                  autoFocus
+              {formData.bot_token ? (
+                <ClearInputButton
+                  label="Clear bot token"
+                  onClick={() => onClearField("bot_token")}
                 />
-
-                {formData.bot_token ? (
-                  <ClearInputButton
-                    label="Clear bot token"
-                    onClick={() => onClearField("bot_token")}
-                  />
-                ) : null}
-              </div>
+              ) : null}
             </div>
-          </>
+          </div>
         ) : null}
 
         <button type="submit" className="hidden" aria-hidden="true">
@@ -743,23 +517,10 @@ function Connections() {
   }
 
   function openEditForm(provider) {
-    const connection = connectionsByProvider[provider] || null;
-
-    if (provider === "telegram") {
-      setFormMode("edit");
-      setFormData({
-        ...emptyFormData,
-        provider
-      });
-      return;
-    }
-
     setFormMode("edit");
     setFormData({
       ...emptyFormData,
-      provider,
-      api_key: connection?.api_key || "",
-      redirect_url: connection?.redirect_url || ""
+      provider
     });
   }
 
@@ -806,20 +567,6 @@ function Connections() {
     setAppliedSearchValue("");
   }
 
-  async function handleCopyAuthUrl(url) {
-    if (!url) {
-      showToast("Enter API key and redirect URL first.", "warning");
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(url);
-      showToast("Upstox login URL copied.", "success");
-    } catch {
-      showToast("Unable to copy login URL.", "error");
-    }
-  }
-
   async function handleSave() {
     if (!formBroker) {
       showToast("Select a provider before saving connection.", "warning");
@@ -836,37 +583,14 @@ function Connections() {
       return;
     }
 
-    if (formBroker.id === "upstox") {
-      const hasAuthorizationCode = formData.authorization_code.trim();
-      const hasAccessToken = formData.access_token.trim();
-
-      if (!hasAuthorizationCode && !hasAccessToken) {
-        showToast(
-          "Enter authorization code or paste access token before saving.",
-          "warning"
-        );
-        return;
-      }
-
-      if (
-        hasAuthorizationCode &&
-        (!formData.api_key.trim() ||
-          !formData.api_secret.trim() ||
-          !formData.redirect_url.trim())
-      ) {
-        showToast(
-          "API key, API secret, and redirect URL are required with authorization code.",
-          "warning"
-        );
-        return;
-      }
+    if (formBroker.id === "upstox" && !formData.access_token.trim()) {
+      showToast("Upstox analytics token is required.", "warning");
+      return;
     }
 
-    if (formBroker.id === "telegram") {
-      if (!formData.bot_token.trim()) {
-        showToast("Telegram bot token is required.", "warning");
-        return;
-      }
+    if (formBroker.id === "telegram" && !formData.bot_token.trim()) {
+      showToast("Telegram bot token is required.", "warning");
+      return;
     }
 
     setSaving(true);
@@ -874,10 +598,6 @@ function Connections() {
     try {
       if (formBroker.id === "upstox") {
         await saveUpstoxConnection({
-          api_key: formData.api_key.trim(),
-          api_secret: formData.api_secret.trim(),
-          redirect_url: formData.redirect_url.trim(),
-          authorization_code: formData.authorization_code.trim(),
           access_token: formData.access_token.trim()
         });
       }
@@ -1208,7 +928,6 @@ function Connections() {
           onSave={handleSave}
           onInputChange={handleInputChange}
           onClearField={handleClearField}
-          onCopyAuthUrl={handleCopyAuthUrl}
         />
       </section>
     </MainLayout>
