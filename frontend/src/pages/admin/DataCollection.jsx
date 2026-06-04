@@ -37,8 +37,10 @@ import {
   getUpstoxDataCollectionRuns,
   getUpstoxDataCollectionSchedules,
   getUpstoxDataCollectionSummary,
+  getUpstoxExpiredInstrumentsPreview,
   getUpstoxInstrumentsPreview,
   syncUpstoxCurrentInstruments,
+  syncUpstoxExpiredInstruments,
   toggleUpstoxDataCollectionSchedule,
   updateUpstoxDataCollectionSchedule
 } from "../../api/dataCollectionApi";
@@ -46,14 +48,20 @@ import {
 const emptySummary = {
   connection_status: "not_connected",
   total_current_instruments: 0,
+  total_expired_instruments: 0,
   total_sync_runs: 0,
   last_sync_at: "",
   last_duration_seconds: null,
   current_last_sync_at: "",
   current_duration_seconds: null,
+  expired_last_sync_at: "",
+  expired_duration_seconds: null,
   active_job: null,
   active_job_status: null,
-  active_job_started_at: null
+  active_job_started_at: null,
+  active_job_current_records: null,
+  active_job_records_at_start: null,
+  active_job_records_added: null
 };
 
 const emptyPreviewData = {
@@ -74,7 +82,8 @@ const emptyScheduleForm = {
 
 const viewOptions = [
   { key: "monitor", label: "Collection Monitor" },
-  { key: "current_preview", label: "Current Instruments" }
+  { key: "current_preview", label: "Current Instruments" },
+  { key: "expired_preview", label: "Expired Instruments" }
 ];
 
 const timeFormatOptions = [
@@ -87,9 +96,15 @@ const timePeriodOptions = [
   { value: "PM", label: "PM" }
 ];
 
-const sourceTypeOptions = [
+const currentSourceTypeOptions = [
   { value: "all", label: "All Sources" },
   { value: "bod_complete", label: "BOD Complete" }
+];
+
+const expiredSourceTypeOptions = [
+  { value: "all", label: "All Sources" },
+  { value: "expired_option_contract", label: "Expired Options" },
+  { value: "expired_future_contract", label: "Expired Futures" }
 ];
 
 const segmentOptions = [
@@ -123,7 +138,7 @@ const dumpJobColumns = [
 ];
 
 const dumpJobGridTemplateColumns =
-  "1.25fr 0.55fr 0.75fr 0.8fr 0.5fr 0.7fr 152px";
+  "1.2fr 0.85fr 0.75fr 0.75fr 0.45fr 0.7fr 152px";
 
 const scheduleColumns = [
   { key: "schedule_time", label: "Time", filterable: false },
@@ -171,6 +186,29 @@ function formatNumber(value) {
   }
 
   return Number(value).toLocaleString("en-IN");
+}
+
+function formatCompactNumber(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "0";
+  }
+
+  const numericValue = Number(value);
+  const absoluteValue = Math.abs(numericValue);
+
+  if (absoluteValue >= 1000000) {
+    return `${Number((numericValue / 1000000).toFixed(1)).toLocaleString(
+      "en-IN"
+    )}M`;
+  }
+
+  if (absoluteValue >= 1000) {
+    return `${Number((numericValue / 1000).toFixed(1)).toLocaleString(
+      "en-IN"
+    )}K`;
+  }
+
+  return formatNumber(numericValue);
 }
 
 function formatDuration(seconds) {
@@ -246,6 +284,10 @@ function getApiErrorMessage(error, fallbackMessage) {
       .join(", ");
   }
 
+  if (detail?.message) {
+    return detail.message;
+  }
+
   if (error?.response?.status) {
     return `${fallbackMessage} (HTTP ${error.response.status})`;
   }
@@ -256,8 +298,12 @@ function getApiErrorMessage(error, fallbackMessage) {
 function getSyncTypeLabel(value) {
   const labels = {
     upstox_current_instruments: "Current Instruments",
+    upstox_expired_instruments: "Expired Instruments",
     current_instruments: "Current Instruments",
-    bod_complete: "BOD Complete"
+    expired_instruments: "Expired Instruments",
+    bod_complete: "BOD Complete",
+    expired_option_contract: "Expired Options",
+    expired_future_contract: "Expired Futures"
   };
 
   return labels[value] || value || "--";
@@ -301,6 +347,14 @@ function getLatestRunByTypes(runs, syncTypes = []) {
 
 function isPreviewView(activeView) {
   return activeView !== "monitor";
+}
+
+function getPreviewMode(activeView) {
+  if (activeView === "expired_preview") {
+    return "expired";
+  }
+
+  return "current";
 }
 
 function getPaginationItems(currentPage, totalPages) {
@@ -900,6 +954,7 @@ function MonitorContent({
 }
 
 function DbPreviewContent({
+  previewMode,
   searchValue,
   onSearchChange,
   onSearchSubmit,
@@ -919,6 +974,12 @@ function DbPreviewContent({
   onNextPage,
   onPageChange
 }) {
+  const isExpired = previewMode === "expired";
+  const title = isExpired ? "Expired Instruments" : "Current Instruments";
+  const sourceOptions = isExpired
+    ? expiredSourceTypeOptions
+    : currentSourceTypeOptions;
+
   function renderPreviewCell(row, column) {
     if (column.key === "synced_at") {
       return (
@@ -976,7 +1037,7 @@ function DbPreviewContent({
             <Input
               value={searchValue}
               onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Search current instruments"
+              placeholder={`Search ${title.toLowerCase()}`}
               className="pr-9"
             />
 
@@ -995,7 +1056,7 @@ function DbPreviewContent({
           <Select
             value={sourceType}
             onChange={(event) => onSourceTypeChange(event.target.value)}
-            options={sourceTypeOptions}
+            options={sourceOptions}
             ariaLabel="Source type"
             minWidth="w-40"
           />
@@ -1035,13 +1096,13 @@ function DbPreviewContent({
             tooltipSide="top"
           />
 
-          <Tooltip text="Run Current Instruments" side="top">
+          <Tooltip text={`Run ${title}`} side="top">
             <button
               type="button"
               disabled={runPreviewDisabled}
               onClick={onRunPreview}
               className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label="Run Current Instruments"
+              aria-label={`Run ${title}`}
             >
               <Play size={14} />
             </button>
@@ -1055,7 +1116,7 @@ function DbPreviewContent({
             <div className="flex flex-col items-center gap-3 text-oa-muted">
               <Spinner size="md" color="light" />
               <span className="oa-code-font text-[12px]">
-                Loading current instruments
+                Loading {title.toLowerCase()}
               </span>
             </div>
           </div>
@@ -1065,7 +1126,7 @@ function DbPreviewContent({
           columns={previewColumns}
           rows={previewData.rows}
           loading={false}
-          loadingMessage="Loading current instruments"
+          loadingMessage={`Loading ${title.toLowerCase()}`}
           emptyMessage="No records found."
           gridTemplateColumns={previewGridTemplateColumns}
           minWidth="min-w-[2020px]"
@@ -1191,15 +1252,29 @@ function DataCollection() {
     (runningJob === "current" ||
       summary.active_job === "upstox_current_instruments");
 
+  const isExpiredJobRunning =
+    !isCancelRequested &&
+    (runningJob === "expired" ||
+      summary.active_job === "upstox_expired_instruments");
+
   const currentCancelRequested =
     isCancelRequested &&
     (runningJob === "current" ||
       summary.active_job === "upstox_current_instruments");
 
+  const expiredCancelRequested =
+    isCancelRequested &&
+    (runningJob === "expired" ||
+      summary.active_job === "upstox_expired_instruments");
+
   const shouldShowCancelButton = hasActiveJob && !isCancelRequested;
 
   const currentLastRun = useMemo(() => {
     return getLatestRunByTypes(runs, ["upstox_current_instruments"]);
+  }, [runs]);
+
+  const expiredLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_expired_instruments"]);
   }, [runs]);
 
   const selectedSchedules = useMemo(() => {
@@ -1215,15 +1290,37 @@ function DataCollection() {
   const selectedScheduleTitle = getSyncTypeLabel(selectedScheduleJob);
 
   const dumpJobRows = useMemo(() => {
+    const currentRecords =
+      isCurrentJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_current_instruments ?? 0;
+
+    const expiredRecords =
+      isExpiredJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_expired_instruments ?? 0;
+
+    const currentRecordsAdded =
+      isCurrentJobRunning &&
+      summary.active_job === "upstox_current_instruments" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const expiredRecordsAdded =
+      isExpiredJobRunning &&
+      summary.active_job === "upstox_expired_instruments" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
     return [
       {
         id: "current",
         title: "Current Instruments",
         scheduleJobType: "current_instruments",
-        records:
-          currentLastRun?.total_records ??
-          summary.total_current_instruments ??
-          0,
+        records: currentRecords,
+        recordsAdded: currentRecordsAdded,
         lastSyncedAt: summary.current_last_sync_at || summary.last_sync_at,
         triggeredBy: currentLastRun?.triggered_by_name,
         triggerSource: currentLastRun?.trigger_source,
@@ -1237,13 +1334,36 @@ function DataCollection() {
         disabled: hasActiveJob && !isCurrentJobRunning,
         canCancel: isCurrentJobRunning && shouldShowCancelButton,
         onRun: handleCurrentSync
+      },
+      {
+        id: "expired",
+        title: "Expired Instruments",
+        scheduleJobType: "expired_instruments",
+        records: expiredRecords,
+        recordsAdded: expiredRecordsAdded,
+        lastSyncedAt: summary.expired_last_sync_at,
+        triggeredBy: expiredLastRun?.triggered_by_name,
+        triggerSource: expiredLastRun?.trigger_source,
+        duration: summary.expired_duration_seconds,
+        lastStatus: expiredCancelRequested
+          ? "cancel_requested"
+          : isExpiredJobRunning
+            ? "running"
+            : expiredLastRun?.status,
+        loading: isExpiredJobRunning,
+        disabled: hasActiveJob && !isExpiredJobRunning,
+        canCancel: isExpiredJobRunning && shouldShowCancelButton,
+        onRun: handleExpiredSync
       }
     ];
   }, [
     summary,
     currentCancelRequested,
+    expiredCancelRequested,
     isCurrentJobRunning,
+    isExpiredJobRunning,
     currentLastRun,
+    expiredLastRun,
     hasActiveJob,
     shouldShowCancelButton
   ]);
@@ -1270,17 +1390,23 @@ function DataCollection() {
   }, [dumpJobRows, appliedMonitorSearch]);
 
   async function loadPreview(customPage = previewPage) {
+    const previewMode = getPreviewMode(activeView);
     setPreviewLoading(true);
 
     try {
-      const response = await getUpstoxInstrumentsPreview({
+      const params = {
         search: appliedPreviewSearch,
         source_type: previewSourceType,
         segment: previewSegment,
         instrument_type: previewInstrumentType,
         page: customPage,
         page_size: previewPageSize
-      });
+      };
+
+      const response =
+        previewMode === "expired"
+          ? await getUpstoxExpiredInstrumentsPreview(params)
+          : await getUpstoxInstrumentsPreview(params);
 
       const nextData = response.data.data || response.data || emptyPreviewData;
 
@@ -1289,7 +1415,12 @@ function DataCollection() {
     } catch (error) {
       setPreviewData(emptyPreviewData);
       showToast(
-        error.response?.data?.detail || "Unable to load current instruments.",
+        getApiErrorMessage(
+          error,
+          previewMode === "expired"
+            ? "Unable to load expired instruments."
+            : "Unable to load current instruments."
+        ),
         "error"
       );
     } finally {
@@ -1407,7 +1538,7 @@ function DataCollection() {
       await loadData(false, { showLoading: false });
     } catch (error) {
       showToast(
-        error.response?.data?.detail || "Unable to cancel data collection.",
+        getApiErrorMessage(error, "Unable to cancel data collection."),
         "error"
       );
     } finally {
@@ -1460,8 +1591,66 @@ function DataCollection() {
       }
 
       showToast(
-        error.response?.data?.detail ||
-          "Unable to run current instruments dump.",
+        getApiErrorMessage(error, "Unable to run current instruments dump."),
+        "error"
+      );
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+      activeSyncControllerRef.current = null;
+    }
+  }
+
+  async function handleExpiredSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    setRunningJob("expired");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxExpiredInstruments(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Expired Instruments collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "Expired instruments dump cancelled.",
+          "warning"
+        );
+      } else {
+        showToast(
+          response.data?.message || "Expired instruments dump completed.",
+          "success"
+        );
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        getApiErrorMessage(error, "Unable to run expired instruments dump."),
         "error"
       );
     } finally {
@@ -1482,7 +1671,7 @@ function DataCollection() {
     setScheduleFormMode("add");
     setScheduleFormData({
       ...emptyScheduleForm,
-      job_type: "current_instruments"
+      job_type: jobType
     });
 
     await loadSchedules(false);
@@ -1537,7 +1726,7 @@ function DataCollection() {
     setScheduleFormMode("edit");
     setScheduleFormData({
       schedule_id: schedule.schedule_id,
-      job_type: "current_instruments",
+      job_type: schedule.job_type || selectedScheduleJob || "current_instruments",
       schedule_time: schedule.schedule_time || "",
       time_format: schedule.time_format || "24",
       is_active: Boolean(schedule.is_active)
@@ -1548,7 +1737,7 @@ function DataCollection() {
     setScheduleFormMode("add");
     setScheduleFormData({
       ...emptyScheduleForm,
-      job_type: "current_instruments"
+      job_type: selectedScheduleJob || "current_instruments"
     });
   }
 
@@ -1566,7 +1755,7 @@ function DataCollection() {
     setSavingSchedule(true);
 
     const payload = {
-      job_type: "current_instruments",
+      job_type: scheduleFormData.job_type || selectedScheduleJob,
       schedule_time: scheduleFormData.schedule_time,
       time_format: scheduleFormData.time_format,
       is_active: Boolean(scheduleFormData.is_active)
@@ -1588,7 +1777,7 @@ function DataCollection() {
       setScheduleFormMode("add");
       setScheduleFormData({
         ...emptyScheduleForm,
-        job_type: "current_instruments"
+        job_type: selectedScheduleJob || "current_instruments"
       });
     } catch (error) {
       showToast(getApiErrorMessage(error, "Unable to save schedule."), "error");
@@ -1680,6 +1869,7 @@ function DataCollection() {
       setPreviewSegment("all");
       setPreviewInstrumentType("all");
       setPreviewPage(1);
+      setPreviewData(emptyPreviewData);
     }
   }
 
@@ -1693,9 +1883,29 @@ function DataCollection() {
     }
 
     if (column.key === "saved") {
+      const recordsAdded = Number(row.recordsAdded || 0);
+      const savedLabel = formatCompactNumber(row.records);
+      const addedLabel = formatCompactNumber(recordsAdded);
+
       return (
-        <span className="truncate oa-code-font text-white">
-          {formatNumber(row.records)}
+        <span
+          className="inline-flex w-full min-w-[92px] items-center gap-1 overflow-visible whitespace-nowrap oa-code-font"
+          title={
+            recordsAdded > 0
+              ? `${formatNumber(row.records)} saved (+${formatNumber(
+                  recordsAdded
+                )})`
+              : `${formatNumber(row.records)} saved`
+          }
+        >
+          <span className="inline-block min-w-[42px] text-right text-white">
+            {savedLabel}
+          </span>
+          {row.loading && recordsAdded > 0 ? (
+            <span className="inline-block shrink-0 text-emerald-300">
+              (+{addedLabel})
+            </span>
+          ) : null}
         </span>
       );
     }
@@ -1857,6 +2067,7 @@ function DataCollection() {
 
               {isPreviewView(activeView) ? (
                 <DbPreviewContent
+                  previewMode={getPreviewMode(activeView)}
                   searchValue={previewSearch}
                   onSearchChange={setPreviewSearch}
                   onSearchSubmit={handlePreviewSearchSubmit}
@@ -1885,7 +2096,11 @@ function DataCollection() {
                     hasActiveJob
                   }
                   onRefresh={() => loadPreview(previewPage)}
-                  onRunPreview={handleCurrentSync}
+                  onRunPreview={
+                    getPreviewMode(activeView) === "expired"
+                      ? handleExpiredSync
+                      : handleCurrentSync
+                  }
                   onPreviousPage={() =>
                     setPreviewPage((value) => Math.max(1, value - 1))
                   }

@@ -14,8 +14,22 @@ export function getUpstoxInstrumentsPreview(params = {}) {
   });
 }
 
+export function getUpstoxExpiredInstrumentsPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/expired-instruments", {
+    params
+  });
+}
+
 export function syncUpstoxCurrentInstruments(config = {}) {
   return axiosClient.post("/data-collection/upstox/sync-current", null, config);
+}
+
+export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/sync-expired",
+    payload,
+    config
+  );
 }
 
 export function cancelUpstoxDataCollection() {

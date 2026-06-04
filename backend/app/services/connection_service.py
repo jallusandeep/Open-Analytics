@@ -618,6 +618,19 @@ def test_upstox_connection_service(current_user):
             else:
                 message = str(detail)
 
+            if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(error_code, message):
+                update_connection_test_status(
+                    conn=conn,
+                    connection_id=connection_id,
+                    current_user=current_user,
+                    connection_status="connected"
+                )
+
+                return {
+                    "status": "success",
+                    "message": "Upstox analytics token verified successfully."
+                }
+
             if e.status_code == status.HTTP_401_UNAUTHORIZED:
                 update_connection_test_status(
                     conn=conn,
@@ -630,19 +643,6 @@ def test_upstox_connection_service(current_user):
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Upstox token is invalid or expired. Please save a fresh analytics token."
                 )
-
-            if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(error_code, message):
-                update_connection_test_status(
-                    conn=conn,
-                    connection_id=connection_id,
-                    current_user=current_user,
-                    connection_status="limited"
-                )
-
-                return {
-                    "status": "limited",
-                    "message": "Upstox token is valid, but Expired Instruments permission is not enabled."
-                }
 
             update_connection_test_status(
                 conn=conn,
