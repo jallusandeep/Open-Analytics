@@ -3,6 +3,7 @@ import threading
 from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import require_admin_or_super_admin
+
 from app.services.data_collection_service import (
     get_data_collection_runs_service,
     get_data_collection_summary_service,
@@ -10,7 +11,10 @@ from app.services.data_collection_service import (
     get_upstox_instruments_preview_service,
     request_cancel_active_sync_runs_service,
     sync_upstox_current_instruments_service,
-    sync_upstox_expired_instruments_service
+    sync_upstox_expired_instruments_service,
+    sync_upstox_ohlcv_daily_service,
+    get_upstox_ohlcv_preview_service,
+
 )
 from app.services.data_collection_scheduler_service import (
     create_data_collection_schedule_service,
@@ -106,6 +110,21 @@ def get_upstox_expired_instruments_preview(
         )
     }
 
+@router.get("/upstox/ohlcv")
+def get_upstox_ohlcv_preview(
+    search: str = "",
+    page: int = 1,
+    page_size: int = 2000,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ohlcv_preview_service(
+            search=search,
+            page=page,
+            page_size=page_size
+        )
+    }
 
 @router.post("/upstox/sync-current")
 def sync_upstox_current_instruments(
@@ -136,6 +155,20 @@ def sync_upstox_expired_instruments(
     return {
         "status": "started",
         "message": "Expired Instruments collection started. Monitor will update while it runs."
+    }
+
+@router.post("/upstox/sync-ohlcv")
+def sync_upstox_ohlcv(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_ohlcv_daily_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "OHLCV collection started."
     }
 
 
@@ -191,3 +224,4 @@ def delete_upstox_data_collection_schedule(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return delete_data_collection_schedule_service(schedule_id, current_user)
+

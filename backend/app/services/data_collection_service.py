@@ -7,6 +7,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import requests
+from datetime import date
 
 from fastapi import HTTPException, status
 
@@ -108,6 +110,28 @@ def normalize_upstox_token(access_token: Any) -> str:
 
 def get_upstox_connection_status(conn) -> str:
     return data_collection_repo.get_upstox_connection_status(conn)
+
+def create_market_quote_v3_api(access_token: str):
+    upstox_client = import_upstox_client()
+
+    configuration = upstox_client.Configuration()
+    configuration.access_token = normalize_upstox_token(access_token)
+
+    return upstox_client.MarketQuoteV3Api(
+        upstox_client.ApiClient(configuration)
+    )
+
+def fetch_upstox_ohlcv(
+    market_api,
+    instrument_key: str,
+    interval: str = "1d"
+):
+    response = market_api.get_market_quote_ohlc(
+        interval,
+        instrument_key=instrument_key
+    )
+
+    return extract_api_data(response)
 
 
 def get_saved_upstox_access_token(conn) -> str:
@@ -490,7 +514,6 @@ def create_expired_instrument_api(access_token: str):
     return upstox_client.ExpiredInstrumentApi(
         upstox_client.ApiClient(configuration)
     )
-
 
 def model_to_dict(value: Any):
     if value is None:
@@ -2033,6 +2056,10 @@ def sync_upstox_expired_instruments_service(
             ensure_no_active_sync_run(conn)
             access_token = get_saved_upstox_access_token(conn)
 
+            market_api = create_market_quote_v3_api(
+                access_token
+            )
+
             sync_id = create_sync_run(
                 conn,
                 "upstox_expired_instruments",
@@ -2194,6 +2221,156 @@ def sync_upstox_expired_instruments_service(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Unable to dump expired instruments through Upstox SDK: {error}",
             )
+
+def sync_upstox_ohlcv_daily_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    started_at = datetime.now()
+    sync_id = None
+    total_records = 0
+
+    with db_connection() as conn:
+        try:
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            ensure_no_active_sync_run(conn)
+
+            access_token = get_saved_upstox_access_token(conn)
+
+            market_api = create_market_quote_v3_api(
+                access_token
+            )
+
+            sync_id = create_sync_run(
+                conn,
+                "upstox_ohlcv_daily",
+                "running",
+                "OHLCV daily collection started.",
+                current_user=current_user
+            )
+
+            instruments = conn.execute("""
+                SELECT
+                    instrument_key,
+                    trading_symbol
+                FROM upstox_equity_instruments
+            """).fetchall()
+
+            conn.execute("BEGIN TRANSACTION")
+
+            for instrument_key, trading_symbol in instruments:
+
+                check_sync_cancelled(conn, sync_id)
+
+                try:
+
+                    result = fetch_upstox_ohlcv(
+                        market_api,
+                        instrument_key,
+                        "1d"
+                    )
+
+                    for _, quote in result.items():
+
+                        candle = quote.get("live_ohlc") or {}
+
+                        if not candle:
+                            continue
+
+                        conn.execute("""
+                            INSERT OR REPLACE INTO ohlcv_daily (
+                                instrument_key,
+                                trading_symbol,
+                                date,
+                                open,
+                                high,
+                                low,
+                                close,
+                                volume,
+                                oi,
+                                ingested_at
+                            )
+                            VALUES (
+                                ?, ?, CURRENT_DATE,
+                                ?, ?, ?, ?, ?, 0,
+                                CURRENT_TIMESTAMP
+                            )
+                        """, [
+                            instrument_key,
+                            trading_symbol,
+                            candle.get("open"),
+                            candle.get("high"),
+                            candle.get("low"),
+                            candle.get("close"),
+                            candle.get("volume")
+                        ])
+
+                        total_records += 1
+
+                except Exception as error:
+                    print(
+                        f"OHLCV failed for "
+                        f"{instrument_key}: {error}"
+                    )
+
+            conn.execute("COMMIT")
+
+            finish_sync_run(
+                conn,
+                sync_id,
+                "success",
+                "OHLCV collection completed.",
+                total_records,
+                started_at
+            )
+
+            return {
+                "status": "success",
+                "total_records": total_records
+            }
+
+        except SyncCancelled:
+
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "cancelled",
+                    "OHLCV collection cancelled.",
+                    total_records,
+                    started_at
+                )
+
+            return {
+                "status": "cancelled"
+            }
+
+        except Exception as error:
+
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "failed",
+                    str(error),
+                    total_records,
+                    started_at
+                )
+
+            raise
 
 
 def normalize_page(value: int) -> int:
@@ -2389,4 +2566,82 @@ def get_upstox_expired_instruments_preview_service(
         "page_size": current_page_size,
         "total_pages": total_pages,
         "total_records": total_records,
+    }
+
+def get_upstox_ohlcv_preview_service(
+    search="",
+    page=1,
+    page_size=50
+):
+    page = normalize_page(page)
+    page_size = normalize_page_size(page_size)
+
+    offset = (page - 1) * page_size
+
+    with db_connection() as conn:
+
+        total_records = conn.execute("""
+            SELECT COUNT(*)
+            FROM ohlcv_daily
+            WHERE
+                ? = ''
+                OR LOWER(trading_symbol) LIKE ?
+                OR LOWER(instrument_key) LIKE ?
+        """, [
+            search,
+            f"%{search.lower()}%",
+            f"%{search.lower()}%"
+        ]).fetchone()[0]
+
+        rows = conn.execute("""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                date,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                oi,
+                ingested_at
+            FROM ohlcv_daily
+            WHERE
+                ? = ''
+                OR LOWER(trading_symbol) LIKE ?
+                OR LOWER(instrument_key) LIKE ?
+            ORDER BY date DESC
+            LIMIT ?
+            OFFSET ?
+        """, [
+            search,
+            f"%{search.lower()}%",
+            f"%{search.lower()}%",
+            page_size,
+            offset
+        ]).fetchall()
+
+    return {
+        "rows": [
+            {
+                "instrument_key": r[0],
+                "trading_symbol": r[1],
+                "date": str(r[2]),
+                "open": r[3],
+                "high": r[4],
+                "low": r[5],
+                "close": r[6],
+                "volume": r[7],
+                "oi": r[8],
+                "ingested_at": str(r[9])
+            }
+            for r in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total_records": total_records,
+        "total_pages": max(
+            1,
+            (total_records + page_size - 1) // page_size
+        )
     }
