@@ -9,7 +9,8 @@ from app.schemas.connection_schema import (
     TelegramUserLinkStatusResponse,
     UpstoxAuthorizeUrlResponse,
     UpstoxCodeExchangeRequest,
-    UpstoxConnectionRequest
+    UpstoxConnectionRequest,
+    UpstoxNotifierWebhookRequest
 )
 from app.services.connection_service import (
     disconnect_telegram_connection_service,
@@ -17,6 +18,7 @@ from app.services.connection_service import (
     exchange_upstox_auth_code_service,
     get_my_telegram_connection_status_service,
     get_upstox_authorize_url_service,
+    handle_upstox_notifier_webhook_service,
     list_connections_service,
     save_telegram_connection_service,
     save_upstox_connection_service,
@@ -59,6 +61,13 @@ def exchange_upstox_auth_code(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return exchange_upstox_auth_code_service(request, current_user)
+
+
+@router.post("/upstox/notifier", response_model=ConnectionActionResponse)
+def handle_upstox_notifier_webhook(
+    request: UpstoxNotifierWebhookRequest
+):
+    return handle_upstox_notifier_webhook_service(request)
 
 
 @router.post("/upstox/test", response_model=ConnectionActionResponse)

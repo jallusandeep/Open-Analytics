@@ -581,11 +581,11 @@ def run_schedule_job(schedule_id: str, job_type: str):
     )
 
 
-def run_token_expiry_notification_check():
+def run_upstox_access_token_reminder_check():
     try:
         notify_admin_super_admins_upstox_token_expiry_service()
     except Exception as error:
-        print(f"Upstox analytics token expiry notification check failed: {error}")
+        print(f"Upstox access token reminder check failed: {error}")
 
 
 def execute_due_schedules_once():
@@ -595,7 +595,7 @@ def execute_due_schedules_once():
     conn = get_connection()
 
     try:
-        run_token_expiry_notification_check()
+        run_upstox_access_token_reminder_check()
 
         rows = get_due_schedules(conn)
 

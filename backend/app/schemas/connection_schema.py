@@ -15,6 +15,16 @@ class UpstoxCodeExchangeRequest(BaseModel):
     code: str
 
 
+class UpstoxNotifierWebhookRequest(BaseModel):
+    client_id: Optional[str] = None
+    user_id: Optional[str] = None
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    expires_at: Optional[str] = None
+    issued_at: Optional[str] = None
+    message_type: Optional[str] = None
+
+
 class TelegramConnectionRequest(BaseModel):
     bot_token: Optional[str] = None
 

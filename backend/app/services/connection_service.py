@@ -17,6 +17,9 @@ TELEGRAM_PROVIDER = "telegram"
 UPSTOX_BASE_URL = "https://api.upstox.com/v2"
 UPSTOX_AUTHORIZE_URL = f"{UPSTOX_BASE_URL}/login/authorization/dialog"
 UPSTOX_TOKEN_URL = f"{UPSTOX_BASE_URL}/login/authorization/token"
+UPSTOX_ACCESS_TOKEN_REQUEST_BASE_URL = (
+    "https://api.upstox.com/v3/login/auth/token/request"
+)
 
 UPSTOX_EXPIRED_PERMISSION_TEST_PATH = "/expired-instruments/expiries"
 UPSTOX_EXPIRED_PERMISSION_TEST_KEY = "NSE_INDEX|Nifty 50"
@@ -118,6 +121,27 @@ def parse_db_datetime(value):
             parsed_date = parsed_date.replace(tzinfo=None)
 
         return parsed_date
+    except Exception:
+        return None
+
+
+def parse_upstox_epoch_millis(value):
+    clean_value = safe_strip(value)
+
+    if not clean_value:
+        return None
+
+    try:
+        timestamp_millis = int(clean_value)
+    except ValueError:
+        return parse_db_datetime(clean_value)
+
+    try:
+        parsed_date = datetime.fromtimestamp(
+            timestamp_millis / 1000,
+            ZoneInfo(IST_TIMEZONE)
+        )
+        return parsed_date.replace(tzinfo=None)
     except Exception:
         return None
 
@@ -421,6 +445,216 @@ def upstox_token_post(payload: dict):
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Invalid JSON response received from Upstox token API."
         )
+
+
+def upstox_access_token_request_post(client_id: str, client_secret: str):
+    clean_client_id = safe_strip(client_id)
+    clean_client_secret = safe_strip(client_secret)
+
+    if not clean_client_id or not clean_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox API key and API secret are required to request access token approval."
+        )
+
+    request_url = (
+        f"{UPSTOX_ACCESS_TOKEN_REQUEST_BASE_URL}/"
+        f"{urllib.parse.quote(clean_client_id, safe='')}"
+    )
+
+    encoded_payload = json.dumps({
+        "client_secret": clean_client_secret
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        request_url,
+        data=encoded_payload,
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "OpenAnalytics/1.0"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            content = response.read().decode("utf-8")
+
+            if not content:
+                return {}
+
+            return json.loads(content)
+
+    except urllib.error.HTTPError as error:
+        error_body = error.read().decode("utf-8", errors="ignore")
+        parsed_error = parse_upstox_error(error_body)
+
+        raise HTTPException(
+            status_code=error.code,
+            detail={
+                "message": parsed_error["message"],
+                "error_code": parsed_error["error_code"],
+                "raw": parsed_error["raw"]
+            }
+        )
+
+    except urllib.error.URLError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to reach Upstox access token request API: {error}"
+        )
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid JSON response received from Upstox access token request API."
+        )
+
+
+def handle_upstox_notifier_webhook_service(request):
+    client_id = safe_strip(getattr(request, "client_id", None))
+    access_token = normalize_upstox_token(getattr(request, "access_token", None))
+    token_type = safe_strip(getattr(request, "token_type", None)) or "Bearer"
+    message_type = safe_strip(getattr(request, "message_type", None))
+    expires_at = safe_strip(getattr(request, "expires_at", None))
+    issued_at = safe_strip(getattr(request, "issued_at", None))
+
+    if message_type and message_type != "access_token":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Upstox notifier message type."
+        )
+
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox notifier client_id is required."
+        )
+
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox notifier access_token is required."
+        )
+
+    conn = get_connection()
+
+    try:
+        existing = get_upstox_connection_raw(conn)
+
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Upstox connection is not configured."
+            )
+
+        connection_id = existing[0]
+        saved_api_key = safe_strip(existing[2])
+        api_secret = safe_strip(existing[3])
+        redirect_url = safe_strip(existing[4])
+        analytical_token = normalize_upstox_token(existing[5])
+
+        if saved_api_key and saved_api_key != client_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upstox notifier client_id does not match saved API key."
+            )
+
+        expiry_date = parse_upstox_epoch_millis(expires_at)
+
+        if not expiry_date:
+            expiry_date = get_next_upstox_access_token_expiry(get_ist_now())
+
+        issued_date = parse_upstox_epoch_millis(issued_at)
+        token_updated_at = issued_date or get_ist_now()
+
+        next_status = get_upstox_save_status(
+            api_key=saved_api_key,
+            api_secret=api_secret,
+            redirect_url=redirect_url,
+            analytical_token=analytical_token,
+            access_token=access_token
+        )
+
+        conn.execute("""
+            UPDATE external_connections
+            SET
+                access_token = ?,
+                token_type = ?,
+                access_token_expires_at = ?,
+                token_updated_at = ?,
+                connection_status = ?,
+                record_status = 'S',
+                last_tested_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = 'upstox_notifier'
+            WHERE connection_id = ?;
+        """, [
+            access_token,
+            token_type,
+            expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
+            token_updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+            next_status,
+            connection_id
+        ])
+
+        clear_upstox_expiry_notification_marker(conn)
+
+        try:
+            bot_token = get_telegram_bot_token(conn)
+            chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
+
+            notify_message = (
+                "Open Analytics update\n\n"
+                "Upstox access token was received from the Upstox notifier webhook "
+                "and saved successfully.\n\n"
+                f"Token expiry: {expiry_date.strftime('%d %b %Y, %I:%M %p')} IST"
+            )
+
+            for chat_id in chat_ids:
+                try:
+                    send_telegram_message(
+                        bot_token=bot_token,
+                        chat_id=chat_id,
+                        message=notify_message
+                    )
+                except Exception as error:
+                    print(f"Unable to send Upstox token saved Telegram alert: {error}")
+
+        except Exception as notify_error:
+            print(f"Unable to notify Telegram after Upstox webhook save: {notify_error}")
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Upstox access token received from notifier and saved successfully."
+        }
+
+    except HTTPException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to process Upstox notifier webhook: {e}"
+        )
+
+    finally:
+        conn.close()
 
 
 def download_upstox_active_instruments(exchange: str = "complete"):
@@ -1337,7 +1571,9 @@ def clear_upstox_expiry_notification_marker(conn):
         DELETE FROM app_metadata
         WHERE key IN (
             'upstox_analytics_token_expiry_notified_date',
-            'upstox_analytics_token_expiry_notified_expiry'
+            'upstox_analytics_token_expiry_notified_expiry',
+            'upstox_access_token_reminder_last_sent_at',
+            'upstox_access_token_request_last_triggered_at'
         );
     """)
 
@@ -1354,63 +1590,135 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 "message": "Upstox connection is not configured."
             }
 
+        api_key = safe_strip(upstox_connection[2])
+        api_secret = safe_strip(upstox_connection[3])
         access_token = safe_strip(upstox_connection[6])
         expiry_value = upstox_connection[7]
 
-        if not access_token or not expiry_value:
+        now = get_ist_now()
+
+        if now.hour < 6:
             return {
                 "status": "skipped",
-                "message": "Upstox access token or expiry date is missing."
+                "message": "Upstox token reminder starts after 6:00 AM IST."
             }
 
         expiry_date = parse_db_datetime(expiry_value)
 
-        if not expiry_date:
-            return {
-                "status": "skipped",
-                "message": "Upstox access token expiry date is invalid."
-            }
+        token_is_missing = not access_token
+        token_expiry_missing = bool(access_token and not expiry_date)
+        token_is_expired = expiry_date is not None and expiry_date <= now
 
-        now = get_ist_now()
-        today = now.date()
-        expiry_day = expiry_date.date()
-
-        if expiry_date > now:
+        if not token_is_missing and not token_expiry_missing and not token_is_expired:
             return {
                 "status": "skipped",
                 "message": "Upstox access token is still valid."
             }
 
-        notified_date = get_app_metadata_value(
+        last_sent_value = get_app_metadata_value(
             conn,
-            "upstox_analytics_token_expiry_notified_date"
+            "upstox_access_token_reminder_last_sent_at"
         )
-        notified_expiry = get_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_expiry"
-        )
+        last_sent_at = parse_db_datetime(last_sent_value)
 
-        today_key = today.isoformat()
-        expiry_key = expiry_day.isoformat()
-
-        if notified_date == today_key and notified_expiry == expiry_key:
+        if last_sent_at and now - last_sent_at < timedelta(hours=1):
             return {
                 "status": "skipped",
-                "message": "Upstox access token expiry notification already sent today."
+                "message": "Upstox access token reminder already sent within the last hour."
             }
 
-        bot_token = get_telegram_bot_token(conn)
+        auto_request_status = "skipped"
+        auto_request_message = "Upstox API key or API secret is missing."
+
+        if api_key and api_secret:
+            try:
+                token_request_response = upstox_access_token_request_post(
+                    client_id=api_key,
+                    client_secret=api_secret
+                )
+
+                auto_request_status = "success"
+                auto_request_message = (
+                    token_request_response.get("message")
+                    or "Upstox access token approval request triggered."
+                )
+
+                set_app_metadata_value(
+                    conn,
+                    "upstox_access_token_request_last_triggered_at",
+                    now.strftime("%Y-%m-%d %H:%M:%S")
+                )
+
+            except HTTPException as request_error:
+                request_detail = request_error.detail
+
+                if isinstance(request_detail, dict):
+                    auto_request_message = (
+                        request_detail.get("message")
+                        or str(request_detail)
+                    )
+                else:
+                    auto_request_message = str(request_detail)
+
+                auto_request_status = "failed"
+
+            except Exception as request_error:
+                auto_request_status = "failed"
+                auto_request_message = str(request_error)
+
+        set_app_metadata_value(
+            conn,
+            "upstox_access_token_reminder_last_sent_at",
+            now.strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        try:
+            bot_token = get_telegram_bot_token(conn)
+        except HTTPException:
+            conn.commit()
+
+            return {
+                "status": "skipped",
+                "message": "Telegram bot is not configured. Upstox auto request check was still processed."
+            }
+
         chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
 
         if not chat_ids:
+            conn.commit()
+
             return {
                 "status": "skipped",
                 "message": "No connected admin/super admin Telegram users found."
             }
 
+        if token_is_missing:
+            token_status_text = "missing"
+        elif token_expiry_missing:
+            token_status_text = "saved, but expiry time is missing"
+        else:
+            token_status_text = (
+                f"expired at {expiry_date.strftime('%d %b %Y, %I:%M %p')} IST"
+            )
+
+        if auto_request_status == "success":
+            approval_text = (
+                "Backend has triggered the Upstox access token approval request. "
+                "Please approve it from Upstox app/web or WhatsApp."
+            )
+        else:
+            approval_text = (
+                "Backend could not trigger the Upstox approval request automatically. "
+                "Please open Open Analytics > Connections and generate the Upstox access token."
+            )
+
         message = (
-            "Open Analytics alert: Upstox access token has expired. "
-            "Please generate a fresh token in Connections."
+            "Open Analytics reminder\n\n"
+            f"Upstox access token is {token_status_text}.\n\n"
+            f"{approval_text}\n\n"
+            f"Auto request status: {auto_request_status}\n"
+            f"Details: {auto_request_message}\n\n"
+            "This reminder repeats every 1 hour after 6:00 AM IST until a valid token is saved."
         )
 
         sent_count = 0
@@ -1424,24 +1732,13 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 )
                 sent_count += 1
             except Exception as error:
-                print(f"Unable to send Upstox token expiry Telegram alert: {error}")
-
-        set_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_date",
-            today_key
-        )
-        set_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_expiry",
-            expiry_key
-        )
+                print(f"Unable to send Upstox token Telegram reminder: {error}")
 
         conn.commit()
 
         return {
             "status": "success",
-            "message": f"Upstox access token expiry notification sent to {sent_count} admin user(s)."
+            "message": f"Upstox access token reminder sent to {sent_count} admin/super admin user(s)."
         }
 
     except HTTPException:
