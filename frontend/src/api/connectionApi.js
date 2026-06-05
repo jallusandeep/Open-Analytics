@@ -8,6 +8,14 @@ export function saveUpstoxConnection(payload) {
   return axiosClient.post("/connections/upstox", payload);
 }
 
+export function getUpstoxAuthorizeUrl() {
+  return axiosClient.get("/connections/upstox/authorize-url");
+}
+
+export function exchangeUpstoxAuthCode(payload) {
+  return axiosClient.post("/connections/upstox/exchange-code", payload);
+}
+
 export function testUpstoxConnection() {
   return axiosClient.post("/connections/upstox/test");
 }

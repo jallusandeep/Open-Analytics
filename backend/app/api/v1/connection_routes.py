@@ -7,12 +7,16 @@ from app.schemas.connection_schema import (
     TelegramConnectionRequest,
     TelegramUserLinkStartResponse,
     TelegramUserLinkStatusResponse,
+    UpstoxAuthorizeUrlResponse,
+    UpstoxCodeExchangeRequest,
     UpstoxConnectionRequest
 )
 from app.services.connection_service import (
     disconnect_telegram_connection_service,
     disconnect_upstox_connection_service,
+    exchange_upstox_auth_code_service,
     get_my_telegram_connection_status_service,
+    get_upstox_authorize_url_service,
     list_connections_service,
     save_telegram_connection_service,
     save_upstox_connection_service,
@@ -40,6 +44,21 @@ def save_upstox_connection(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return save_upstox_connection_service(request, current_user)
+
+
+@router.get("/upstox/authorize-url", response_model=UpstoxAuthorizeUrlResponse)
+def get_upstox_authorize_url(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return get_upstox_authorize_url_service(current_user)
+
+
+@router.post("/upstox/exchange-code", response_model=ConnectionActionResponse)
+def exchange_upstox_auth_code(
+    request: UpstoxCodeExchangeRequest,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return exchange_upstox_auth_code_service(request, current_user)
 
 
 @router.post("/upstox/test", response_model=ConnectionActionResponse)
