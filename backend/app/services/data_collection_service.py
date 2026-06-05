@@ -7,7 +7,6 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import requests
 from datetime import date
 
 from fastapi import HTTPException, status
