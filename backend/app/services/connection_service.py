@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 import urllib.error
 import urllib.parse
@@ -8,7 +9,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 
-from app.database import get_connection
+from app.repositories.app_metadata_repository import AppMetadataRepository
+from app.repositories.base_repository import db_connection
+from app.repositories.connection_repository import ConnectionRepository
+from app.repositories.user_telegram_repository import UserTelegramRepository
+
+logger = logging.getLogger(__name__)
+
+connection_repo = ConnectionRepository()
+user_telegram_repo = UserTelegramRepository()
+app_metadata_repo = AppMetadataRepository()
 
 
 UPSTOX_PROVIDER = "upstox"
@@ -134,62 +144,26 @@ def connection_to_response(row):
 
 
 def get_connection_raw_by_provider(conn, provider: str):
-    return conn.execute("""
-        SELECT
-            connection_id,
-            provider,
-            api_key,
-            api_secret,
-            redirect_url,
-            access_token,
-            access_token_expires_at,
-            connection_status,
-            last_tested_at,
-            created_at,
-            updated_at
-        FROM external_connections
-        WHERE provider = ?
-          AND record_status = 'S'
-        LIMIT 1;
-    """, [provider]).fetchone()
+    return connection_repo.get_by_provider(conn, provider)
 
 
 def get_upstox_connection_raw(conn):
-    return get_connection_raw_by_provider(conn, UPSTOX_PROVIDER)
+    return connection_repo.get_upstox(conn)
 
 
 def get_telegram_connection_raw(conn):
-    return get_connection_raw_by_provider(conn, TELEGRAM_PROVIDER)
+    return connection_repo.get_telegram(conn)
 
 
 def list_connections_service():
-    conn = get_connection()
+    logger.info("Listing external connections")
 
-    try:
-        rows = conn.execute("""
-            SELECT
-                connection_id,
-                provider,
-                api_key,
-                api_secret,
-                redirect_url,
-                access_token,
-                access_token_expires_at,
-                connection_status,
-                last_tested_at,
-                created_at,
-                updated_at
-            FROM external_connections
-            WHERE record_status = 'S'
-            ORDER BY provider;
-        """).fetchall()
+    with db_connection() as conn:
+        rows = connection_repo.list_active(conn)
 
-        return {
-            "connections": [connection_to_response(row) for row in rows]
-        }
-
-    finally:
-        conn.close()
+    return {
+        "connections": [connection_to_response(row) for row in rows]
+    }
 
 
 def parse_upstox_error(error_body: str):
@@ -364,101 +338,61 @@ def save_upstox_connection_service(request, current_user):
 
     saved_at = get_ist_now()
     access_token_expires_at = add_one_year(saved_at).strftime("%Y-%m-%d %H:%M:%S")
+    user_id = current_user["user_id"]
 
-    conn = get_connection()
+    logger.info("Saving Upstox connection: user_id=%s", user_id)
 
-    try:
-        existing = get_upstox_connection_raw(conn)
+    with db_connection() as conn:
+        try:
+            existing = connection_repo.get_upstox(conn)
 
-        if existing:
-            connection_id = existing[0]
-
-            conn.execute("""
-                UPDATE external_connections
-                SET
-                    api_key = NULL,
-                    api_secret = NULL,
-                    redirect_url = NULL,
-                    access_token = ?,
-                    access_token_expires_at = ?,
-                    token_updated_at = CURRENT_TIMESTAMP,
-                    connection_status = 'connected',
-                    record_status = 'S',
-                    last_tested_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE connection_id = ?;
-            """, [
-                access_token,
-                access_token_expires_at,
-                current_user["user_id"],
-                connection_id
-            ])
-
-        else:
-            connection_id = str(uuid.uuid4())
-
-            conn.execute("""
-                INSERT INTO external_connections (
-                    connection_id,
-                    provider,
-                    api_key,
-                    api_secret,
-                    redirect_url,
-                    access_token,
-                    access_token_expires_at,
-                    token_updated_at,
-                    connection_status,
-                    record_status,
-                    version_no,
-                    last_tested_at,
-                    created_by,
-                    updated_by
+            if existing:
+                connection_id = existing[0]
+                connection_repo.update_upstox_token(
+                    conn,
+                    connection_id=connection_id,
+                    access_token=access_token,
+                    access_token_expires_at=access_token_expires_at,
+                    updated_by=user_id,
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
-            """, [
-                connection_id,
-                UPSTOX_PROVIDER,
-                None,
-                None,
-                None,
-                access_token,
-                access_token_expires_at,
-                "connected",
-                "S",
-                1,
-                current_user["user_id"],
-                current_user["user_id"]
-            ])
+            else:
+                connection_id = str(uuid.uuid4())
+                connection_repo.insert_upstox(
+                    conn,
+                    connection_id=connection_id,
+                    access_token=access_token,
+                    access_token_expires_at=access_token_expires_at,
+                    created_by=user_id,
+                )
 
-        clear_upstox_expiry_notification_marker(conn)
-        conn.commit()
+            app_metadata_repo.clear_upstox_expiry_notification_markers(conn)
+            conn.commit()
 
-        return {
-            "status": "success",
-            "message": "Upstox analytics token saved successfully."
-        }
+            logger.info("Upstox connection saved: connection_id=%s", connection_id)
 
-    except HTTPException:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        raise
+            return {
+                "status": "success",
+                "message": "Upstox analytics token saved successfully."
+            }
 
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        except HTTPException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to save Upstox analytics token: {e}"
-        )
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-    finally:
-        conn.close()
+            logger.exception("Unable to save Upstox analytics token: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to save Upstox analytics token: {e}"
+            )
 
 
 def validate_upstox_expired_permission(access_token: str):
@@ -566,170 +500,156 @@ def update_connection_test_status(
     current_user: dict,
     connection_status: str
 ):
-    conn.execute("""
-        UPDATE external_connections
-        SET
-            connection_status = ?,
-            last_tested_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP,
-            updated_by = ?
-        WHERE connection_id = ?;
-    """, [
-        connection_status,
-        current_user["user_id"],
-        connection_id
-    ])
-
+    connection_repo.update_test_status(
+        conn,
+        connection_id=connection_id,
+        connection_status=connection_status,
+        updated_by=current_user["user_id"],
+    )
     conn.commit()
 
 
 def test_upstox_connection_service(current_user):
-    conn = get_connection()
+    logger.info("Testing Upstox connection: user_id=%s", current_user.get("user_id"))
 
-    try:
-        existing = get_upstox_connection_raw(conn)
-
-        if not existing or existing[7] == "disconnected":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Upstox connection is not configured."
-            )
-
-        connection_id = existing[0]
-        access_token = normalize_upstox_token(existing[5])
-
-        if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Access token is required before testing Upstox connection."
-            )
-
+    with db_connection() as conn:
         try:
-            validate_upstox_expired_permission(access_token)
+            existing = connection_repo.get_upstox(conn)
 
-        except HTTPException as e:
-            detail = e.detail
-            error_code = None
-            message = ""
-
-            if isinstance(detail, dict):
-                error_code = detail.get("error_code")
-                message = detail.get("message") or ""
-            else:
-                message = str(detail)
-
-            if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(error_code, message):
-                update_connection_test_status(
-                    conn=conn,
-                    connection_id=connection_id,
-                    current_user=current_user,
-                    connection_status="connected"
-                )
-
-                return {
-                    "status": "success",
-                    "message": "Upstox analytics token verified successfully."
-                }
-
-            if e.status_code == status.HTTP_401_UNAUTHORIZED:
-                update_connection_test_status(
-                    conn=conn,
-                    connection_id=connection_id,
-                    current_user=current_user,
-                    connection_status="failed"
-                )
-
+            if not existing or existing[7] == "disconnected":
                 raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Upstox token is invalid or expired. Please save a fresh analytics token."
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Upstox connection is not configured.",
                 )
+
+            connection_id = existing[0]
+            access_token = normalize_upstox_token(existing[5])
+
+            if not access_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Access token is required before testing Upstox connection.",
+                )
+
+            try:
+                validate_upstox_expired_permission(access_token)
+
+            except HTTPException as e:
+                detail = e.detail
+                error_code = None
+                message = ""
+
+                if isinstance(detail, dict):
+                    error_code = detail.get("error_code")
+                    message = detail.get("message") or ""
+                else:
+                    message = str(detail)
+
+                if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(
+                    error_code, message
+                ):
+                    update_connection_test_status(
+                        conn=conn,
+                        connection_id=connection_id,
+                        current_user=current_user,
+                        connection_status="connected",
+                    )
+                    return {
+                        "status": "success",
+                        "message": "Upstox analytics token verified successfully.",
+                    }
+
+                if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                    update_connection_test_status(
+                        conn=conn,
+                        connection_id=connection_id,
+                        current_user=current_user,
+                        connection_status="failed",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=(
+                            "Upstox token is invalid or expired. "
+                            "Please save a fresh analytics token."
+                        ),
+                    )
+
+                update_connection_test_status(
+                    conn=conn,
+                    connection_id=connection_id,
+                    current_user=current_user,
+                    connection_status="limited",
+                )
+                return {
+                    "status": "limited",
+                    "message": f"Upstox token check returned: {message or detail}",
+                }
 
             update_connection_test_status(
                 conn=conn,
                 connection_id=connection_id,
                 current_user=current_user,
-                connection_status="limited"
+                connection_status="connected",
             )
 
+            logger.info("Upstox connection test succeeded: connection_id=%s", connection_id)
+
             return {
-                "status": "limited",
-                "message": f"Upstox token check returned: {message or detail}"
+                "status": "success",
+                "message": "Upstox analytics token verified successfully.",
             }
 
-        update_connection_test_status(
-            conn=conn,
-            connection_id=connection_id,
-            current_user=current_user,
-            connection_status="connected"
-        )
+        except HTTPException:
+            raise
 
-        return {
-            "status": "success",
-            "message": "Upstox analytics token verified successfully."
-        }
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to test Upstox connection: {e}"
-        )
-
-    finally:
-        conn.close()
+            logger.exception("Unable to test Upstox connection: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to test Upstox connection: {e}",
+            )
 
 
 def disconnect_upstox_connection_service(current_user):
-    conn = get_connection()
+    logger.info("Disconnecting Upstox: user_id=%s", current_user.get("user_id"))
 
-    try:
-        existing = get_upstox_connection_raw(conn)
+    with db_connection() as conn:
+        try:
+            existing = connection_repo.get_upstox(conn)
 
-        if not existing or existing[7] == "disconnected":
+            if not existing or existing[7] == "disconnected":
+                return {
+                    "status": "success",
+                    "message": "Upstox connection is already disconnected."
+                }
+
+            connection_id = existing[0]
+            connection_repo.disconnect(conn, connection_id, current_user["user_id"])
+            conn.commit()
+
+            logger.info("Upstox disconnected: connection_id=%s", connection_id)
+
             return {
                 "status": "success",
-                "message": "Upstox connection is already disconnected."
+                "message": "Upstox disconnected successfully."
             }
 
-        connection_id = existing[0]
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-        conn.execute("""
-            UPDATE external_connections
-            SET
-                record_status = 'D',
-                connection_status = 'disconnected',
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE connection_id = ?;
-        """, [current_user["user_id"], connection_id])
-
-        conn.commit()
-
-        return {
-            "status": "success",
-            "message": "Upstox disconnected successfully."
-        }
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to disconnect Upstox: {e}"
-        )
-
-    finally:
-        conn.close()
+            logger.exception("Unable to disconnect Upstox: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to disconnect Upstox: {e}"
+            )
 
 
 def telegram_api_request(bot_token: str, method_name: str, payload=None, query_params=None):
@@ -907,212 +827,154 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
 
 
 def get_admin_super_admin_telegram_chat_ids(conn):
-    rows = conn.execute("""
-        SELECT DISTINCT utc.telegram_chat_id
-        FROM user_telegram_connections utc
-        INNER JOIN users u
-            ON u.user_id = utc.user_id
-        WHERE utc.record_status = 'S'
-          AND utc.connection_status = 'connected'
-          AND utc.telegram_chat_id IS NOT NULL
-          AND TRIM(utc.telegram_chat_id) <> ''
-          AND u.record_status = 'S'
-          AND u.is_active = TRUE
-          AND u.role IN ('admin', 'super_admin');
-    """).fetchall()
-
-    return [row[0] for row in rows if row and row[0]]
-
-
-def ensure_app_metadata_table(conn):
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS app_metadata (
-            key VARCHAR PRIMARY KEY,
-            value VARCHAR,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
+    return connection_repo.get_admin_super_admin_telegram_chat_ids(conn)
 
 
 def get_app_metadata_value(conn, key: str):
-    ensure_app_metadata_table(conn)
-
-    row = conn.execute("""
-        SELECT value
-        FROM app_metadata
-        WHERE key = ?
-        LIMIT 1;
-    """, [key]).fetchone()
-
-    return row[0] if row else None
+    return app_metadata_repo.get_value(conn, key)
 
 
 def set_app_metadata_value(conn, key: str, value: str):
-    ensure_app_metadata_table(conn)
-
-    existing = conn.execute("""
-        SELECT key
-        FROM app_metadata
-        WHERE key = ?
-        LIMIT 1;
-    """, [key]).fetchone()
-
-    if existing:
-        conn.execute("""
-            UPDATE app_metadata
-            SET value = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE key = ?;
-        """, [value, key])
-        return
-
-    conn.execute("""
-        INSERT INTO app_metadata (key, value, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP);
-    """, [key, value])
+    app_metadata_repo.set_value(conn, key, value)
 
 
 def clear_upstox_expiry_notification_marker(conn):
-    ensure_app_metadata_table(conn)
-
-    conn.execute("""
-        DELETE FROM app_metadata
-        WHERE key IN (
-            'upstox_analytics_token_expiry_notified_date',
-            'upstox_analytics_token_expiry_notified_expiry'
-        );
-    """)
+    app_metadata_repo.clear_upstox_expiry_notification_markers(conn)
 
 
 def notify_admin_super_admins_upstox_token_expiry_service():
-    conn = get_connection()
+    logger.debug("Checking Upstox token expiry notifications")
 
-    try:
-        upstox_connection = get_upstox_connection_raw(conn)
-
-        if not upstox_connection:
-            return {
-                "status": "skipped",
-                "message": "Upstox connection is not configured."
-            }
-
-        access_token = safe_strip(upstox_connection[5])
-        expiry_value = upstox_connection[6]
-
-        if not access_token or not expiry_value:
-            return {
-                "status": "skipped",
-                "message": "Upstox analytics token or expiry date is missing."
-            }
-
-        expiry_date = parse_db_datetime(expiry_value)
-
-        if not expiry_date:
-            return {
-                "status": "skipped",
-                "message": "Upstox analytics token expiry date is invalid."
-            }
-
-        now = get_ist_now()
-        today = now.date()
-        expiry_day = expiry_date.date()
-        days_left = (expiry_day - today).days
-
-        if days_left > 1:
-            return {
-                "status": "skipped",
-                "message": "Upstox analytics token is not near expiry."
-            }
-
-        notified_date = get_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_date"
-        )
-        notified_expiry = get_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_expiry"
-        )
-
-        today_key = today.isoformat()
-        expiry_key = expiry_day.isoformat()
-
-        if notified_date == today_key and notified_expiry == expiry_key:
-            return {
-                "status": "skipped",
-                "message": "Upstox analytics token expiry notification already sent today."
-            }
-
-        bot_token = get_telegram_bot_token(conn)
-        chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
-
-        if not chat_ids:
-            return {
-                "status": "skipped",
-                "message": "No connected admin/super admin Telegram users found."
-            }
-
-        if days_left < 0:
-            message = (
-                "Open Analytics alert: Upstox analytics token has expired. "
-                "Please update the token in Connections."
-            )
-        elif days_left == 0:
-            message = (
-                "Open Analytics alert: Upstox analytics token expires today. "
-                "Please update the token in Connections."
-            )
-        else:
-            message = (
-                "Open Analytics alert: Upstox analytics token expires tomorrow. "
-                "Please update the token in Connections."
-            )
-
-        sent_count = 0
-
-        for chat_id in chat_ids:
-            try:
-                send_telegram_message(
-                    bot_token=bot_token,
-                    chat_id=chat_id,
-                    message=message
-                )
-                sent_count += 1
-            except Exception as error:
-                print(f"Unable to send Upstox token expiry Telegram alert: {error}")
-
-        set_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_date",
-            today_key
-        )
-        set_app_metadata_value(
-            conn,
-            "upstox_analytics_token_expiry_notified_expiry",
-            expiry_key
-        )
-
-        conn.commit()
-
-        return {
-            "status": "success",
-            "message": f"Upstox analytics token expiry notification sent to {sent_count} admin user(s)."
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
+    with db_connection() as conn:
         try:
-            conn.rollback()
-        except Exception:
-            pass
+            upstox_connection = connection_repo.get_upstox(conn)
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to notify Upstox analytics token expiry: {e}"
-        )
+            if not upstox_connection:
+                return {
+                    "status": "skipped",
+                    "message": "Upstox connection is not configured.",
+                }
 
-    finally:
-        conn.close()
+            access_token = safe_strip(upstox_connection[5])
+            expiry_value = upstox_connection[6]
+
+            if not access_token or not expiry_value:
+                return {
+                    "status": "skipped",
+                    "message": "Upstox analytics token or expiry date is missing.",
+                }
+
+            expiry_date = parse_db_datetime(expiry_value)
+
+            if not expiry_date:
+                return {
+                    "status": "skipped",
+                    "message": "Upstox analytics token expiry date is invalid.",
+                }
+
+            now = get_ist_now()
+            today = now.date()
+            expiry_day = expiry_date.date()
+            days_left = (expiry_day - today).days
+
+            if days_left > 1:
+                return {
+                    "status": "skipped",
+                    "message": "Upstox analytics token is not near expiry.",
+                }
+
+            notified_date = app_metadata_repo.get_value(
+                conn, "upstox_analytics_token_expiry_notified_date"
+            )
+            notified_expiry = app_metadata_repo.get_value(
+                conn, "upstox_analytics_token_expiry_notified_expiry"
+            )
+
+            today_key = today.isoformat()
+            expiry_key = expiry_day.isoformat()
+
+            if notified_date == today_key and notified_expiry == expiry_key:
+                return {
+                    "status": "skipped",
+                    "message": "Upstox analytics token expiry notification already sent today.",
+                }
+
+            bot_token = get_telegram_bot_token(conn)
+            chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
+
+            if not chat_ids:
+                return {
+                    "status": "skipped",
+                    "message": "No connected admin/super admin Telegram users found.",
+                }
+
+            if days_left < 0:
+                message = (
+                    "Open Analytics alert: Upstox analytics token has expired. "
+                    "Please update the token in Connections."
+                )
+            elif days_left == 0:
+                message = (
+                    "Open Analytics alert: Upstox analytics token expires today. "
+                    "Please update the token in Connections."
+                )
+            else:
+                message = (
+                    "Open Analytics alert: Upstox analytics token expires tomorrow. "
+                    "Please update the token in Connections."
+                )
+
+            sent_count = 0
+
+            for chat_id in chat_ids:
+                try:
+                    send_telegram_message(
+                        bot_token=bot_token,
+                        chat_id=chat_id,
+                        message=message,
+                    )
+                    sent_count += 1
+                except Exception as error:
+                    logger.warning(
+                        "Unable to send Upstox token expiry Telegram alert: %s",
+                        error,
+                    )
+
+            app_metadata_repo.set_value(
+                conn, "upstox_analytics_token_expiry_notified_date", today_key
+            )
+            app_metadata_repo.set_value(
+                conn, "upstox_analytics_token_expiry_notified_expiry", expiry_key
+            )
+            conn.commit()
+
+            logger.info(
+                "Upstox token expiry notification sent to %s admin user(s)",
+                sent_count,
+            )
+
+            return {
+                "status": "success",
+                "message": (
+                    f"Upstox analytics token expiry notification sent to "
+                    f"{sent_count} admin user(s)."
+                ),
+            }
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            logger.exception("Unable to notify Upstox analytics token expiry: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to notify Upstox analytics token expiry: {e}",
+            )
 
 
 def save_telegram_connection_service(request, current_user):
@@ -1121,163 +983,114 @@ def save_telegram_connection_service(request, current_user):
     if not bot_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram bot token is required."
+            detail="Telegram bot token is required.",
         )
 
     bot_data = validate_telegram_bot_token(bot_token)
     bot_username = safe_strip(bot_data.get("username"))
     bot_label = bot_username or bot_data.get("first_name") or "Telegram bot"
 
-    conn = get_connection()
+    logger.info("Saving Telegram connection: user_id=%s", current_user.get("user_id"))
 
-    try:
-        existing = get_telegram_connection_raw(conn)
+    with db_connection() as conn:
+        try:
+            existing = connection_repo.get_telegram(conn)
 
-        if existing:
-            connection_id = existing[0]
-
-            conn.execute("""
-                UPDATE external_connections
-                SET
-                    api_key = ?,
-                    api_secret = NULL,
-                    redirect_url = ?,
-                    access_token = ?,
-                    connection_status = 'connected',
-                    record_status = 'S',
-                    last_tested_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE connection_id = ?;
-            """, [
-                bot_token,
-                bot_username,
-                bot_token,
-                current_user["user_id"],
-                connection_id
-            ])
-
-        else:
-            connection_id = str(uuid.uuid4())
-
-            conn.execute("""
-                INSERT INTO external_connections (
-                    connection_id,
-                    provider,
-                    api_key,
-                    api_secret,
-                    redirect_url,
-                    access_token,
-                    connection_status,
-                    record_status,
-                    version_no,
-                    last_tested_at,
-                    created_by,
-                    updated_by
+            if existing:
+                connection_id = existing[0]
+                connection_repo.update_telegram(
+                    conn,
+                    connection_id=connection_id,
+                    bot_token=bot_token,
+                    bot_username=bot_username,
+                    updated_by=current_user["user_id"],
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
-            """, [
-                connection_id,
-                TELEGRAM_PROVIDER,
-                bot_token,
-                None,
-                bot_username,
-                bot_token,
-                "connected",
-                "S",
-                1,
-                current_user["user_id"],
-                current_user["user_id"]
-            ])
+            else:
+                connection_id = str(uuid.uuid4())
+                connection_repo.insert_telegram(
+                    conn,
+                    connection_id=connection_id,
+                    bot_token=bot_token,
+                    bot_username=bot_username,
+                    created_by=current_user["user_id"],
+                )
 
-        conn.commit()
+            conn.commit()
 
-        return {
-            "status": "success",
-            "message": f"Telegram bot verified and saved successfully for {bot_label}."
-        }
+            logger.info("Telegram connection saved: connection_id=%s", connection_id)
 
-    except HTTPException:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        raise
+            return {
+                "status": "success",
+                "message": f"Telegram bot verified and saved successfully for {bot_label}.",
+            }
 
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        except HTTPException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to save Telegram connection: {e}"
-        )
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-    finally:
-        conn.close()
+            logger.exception("Unable to save Telegram connection: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to save Telegram connection: {e}",
+            )
 
 
 def test_telegram_connection_service(current_user):
-    conn = get_connection()
+    logger.info("Testing Telegram connection: user_id=%s", current_user.get("user_id"))
 
-    try:
+    with db_connection() as conn:
         bot_info = get_telegram_bot_info(conn)
 
-        return {
-            "status": "success",
-            "message": f"Telegram bot token verified successfully for @{bot_info['bot_username']}."
-        }
-
-    finally:
-        conn.close()
+    return {
+        "status": "success",
+        "message": (
+            f"Telegram bot token verified successfully for @{bot_info['bot_username']}."
+        ),
+    }
 
 
 def disconnect_telegram_connection_service(current_user):
-    conn = get_connection()
+    logger.info("Disconnecting Telegram: user_id=%s", current_user.get("user_id"))
 
-    try:
-        existing = get_telegram_connection_raw(conn)
+    with db_connection() as conn:
+        try:
+            existing = connection_repo.get_telegram(conn)
 
-        if not existing or existing[7] == "disconnected":
+            if not existing or existing[7] == "disconnected":
+                return {
+                    "status": "success",
+                    "message": "Telegram connection is already disconnected.",
+                }
+
+            connection_id = existing[0]
+            connection_repo.disconnect(conn, connection_id, current_user["user_id"])
+            conn.commit()
+
             return {
                 "status": "success",
-                "message": "Telegram connection is already disconnected."
+                "message": "Telegram disconnected successfully.",
             }
 
-        connection_id = existing[0]
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-        conn.execute("""
-            UPDATE external_connections
-            SET
-                record_status = 'D',
-                connection_status = 'disconnected',
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE connection_id = ?;
-        """, [current_user["user_id"], connection_id])
-
-        conn.commit()
-
-        return {
-            "status": "success",
-            "message": "Telegram disconnected successfully."
-        }
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to disconnect Telegram: {e}"
-        )
-
-    finally:
-        conn.close()
+            logger.exception("Unable to disconnect Telegram: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to disconnect Telegram: {e}",
+            )
 
 
 def telegram_user_connection_to_response(row):
@@ -1316,134 +1129,77 @@ def telegram_user_connection_to_response(row):
 
 
 def get_user_telegram_connection_raw(conn, user_id: str):
-    return conn.execute("""
-        SELECT
-            telegram_connection_id,
-            user_id,
-            telegram_chat_id,
-            telegram_username,
-            telegram_first_name,
-            telegram_last_name,
-            link_token,
-            connection_status,
-            updated_at
-        FROM user_telegram_connections
-        WHERE user_id = ?
-          AND record_status = 'S'
-        LIMIT 1;
-    """, [user_id]).fetchone()
+    return user_telegram_repo.get_by_user_id(conn, user_id)
 
 
 def get_my_telegram_connection_status_service(current_user):
-    conn = get_connection()
+    with db_connection() as conn:
+        row = user_telegram_repo.get_by_user_id(conn, current_user["user_id"])
 
-    try:
-        row = get_user_telegram_connection_raw(conn, current_user["user_id"])
-        return telegram_user_connection_to_response(row)
-
-    finally:
-        conn.close()
+    return telegram_user_connection_to_response(row)
 
 
 def start_my_telegram_connection_service(current_user):
-    conn = get_connection()
+    user_id = current_user["user_id"]
+    logger.info("Starting Telegram user link: user_id=%s", user_id)
 
-    try:
-        bot_info = get_telegram_bot_info(conn)
-        user_id = current_user["user_id"]
+    with db_connection() as conn:
+        try:
+            bot_info = get_telegram_bot_info(conn)
+            existing = user_telegram_repo.get_by_user_id(conn, user_id)
 
-        existing = get_user_telegram_connection_raw(conn, user_id)
-
-        if existing:
-            telegram_connection_id = existing[0]
-            link_token = str(uuid.uuid4())
-
-            conn.execute("""
-                UPDATE user_telegram_connections
-                SET
-                    telegram_chat_id = NULL,
-                    telegram_username = NULL,
-                    telegram_first_name = NULL,
-                    telegram_last_name = NULL,
-                    link_token = ?,
-                    connection_status = 'pending',
-                    record_status = 'S',
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE telegram_connection_id = ?;
-            """, [
-                link_token,
-                user_id,
-                telegram_connection_id
-            ])
-
-        else:
-            telegram_connection_id = str(uuid.uuid4())
-            link_token = str(uuid.uuid4())
-
-            conn.execute("""
-                INSERT INTO user_telegram_connections (
-                    telegram_connection_id,
-                    user_id,
-                    telegram_chat_id,
-                    telegram_username,
-                    telegram_first_name,
-                    telegram_last_name,
-                    link_token,
-                    connection_status,
-                    record_status,
-                    version_no,
-                    created_by,
-                    updated_by
+            if existing:
+                telegram_connection_id = existing[0]
+                link_token = str(uuid.uuid4())
+                user_telegram_repo.reset_pending_link(
+                    conn,
+                    telegram_connection_id=telegram_connection_id,
+                    link_token=link_token,
+                    user_id=user_id,
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, [
-                telegram_connection_id,
-                user_id,
-                None,
-                None,
-                None,
-                None,
-                link_token,
-                "pending",
-                "S",
-                1,
-                user_id,
-                user_id
-            ])
+            else:
+                telegram_connection_id = str(uuid.uuid4())
+                link_token = str(uuid.uuid4())
+                user_telegram_repo.insert_pending(
+                    conn,
+                    telegram_connection_id=telegram_connection_id,
+                    user_id=user_id,
+                    link_token=link_token,
+                )
 
-        conn.commit()
+            conn.commit()
 
-        telegram_url = f"https://t.me/{bot_info['bot_username']}?start={link_token}"
+            telegram_url = f"https://t.me/{bot_info['bot_username']}?start={link_token}"
 
-        return {
-            "status": "success",
-            "message": "Telegram link generated. Open it, tap Start, then click Verify Telegram.",
-            "telegram_url": telegram_url,
-            "bot_username": bot_info["bot_username"],
-            "connection_status": "pending"
-        }
+            return {
+                "status": "success",
+                "message": (
+                    "Telegram link generated. Open it, tap Start, "
+                    "then click Verify Telegram."
+                ),
+                "telegram_url": telegram_url,
+                "bot_username": bot_info["bot_username"],
+                "connection_status": "pending",
+            }
 
-    except HTTPException:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        raise
+        except HTTPException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to start Telegram connection: {e}"
-        )
-
-    finally:
-        conn.close()
+            logger.exception("Unable to start Telegram connection: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to start Telegram connection: {e}",
+            )
 
 
 def get_message_from_telegram_update(update):
@@ -1500,111 +1256,97 @@ def find_telegram_start_for_token(updates_response, link_token: str):
 
 
 def verify_my_telegram_connection_service(current_user):
-    conn = get_connection()
+    user_id = current_user["user_id"]
+    logger.info("Verifying Telegram user link: user_id=%s", user_id)
 
-    try:
-        bot_token = get_telegram_bot_token(conn)
-        user_id = current_user["user_id"]
+    with db_connection() as conn:
+        try:
+            bot_token = get_telegram_bot_token(conn)
+            existing = user_telegram_repo.get_by_user_id(conn, user_id)
 
-        existing = get_user_telegram_connection_raw(conn, user_id)
-
-        if not existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Click Connect Telegram first to generate your Telegram link."
-            )
-
-        telegram_connection_id = existing[0]
-        link_token = safe_strip(existing[6])
-
-        if not link_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Telegram link token is missing. Click Connect Telegram again."
-            )
-
-        updates_response = get_telegram_updates(bot_token)
-        matched = find_telegram_start_for_token(updates_response, link_token)
-
-        if not matched:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Telegram start message was not found. Open the generated Telegram link, "
-                    "tap Start, then click Verify Telegram again."
+            if not existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Click Connect Telegram first to generate your Telegram link.",
                 )
+
+            telegram_connection_id = existing[0]
+            link_token = safe_strip(existing[6])
+
+            if not link_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Telegram link token is missing. Click Connect Telegram again.",
+                )
+
+            updates_response = get_telegram_updates(bot_token)
+            matched = find_telegram_start_for_token(updates_response, link_token)
+
+            if not matched:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Telegram start message was not found. Open the generated "
+                        "Telegram link, tap Start, then click Verify Telegram again."
+                    ),
+                )
+
+            user_telegram_repo.connect_user(
+                conn,
+                telegram_connection_id=telegram_connection_id,
+                telegram_chat_id=matched["telegram_chat_id"],
+                telegram_username=matched["telegram_username"],
+                telegram_first_name=matched["telegram_first_name"],
+                telegram_last_name=matched["telegram_last_name"],
+                user_id=user_id,
+            )
+            conn.commit()
+
+            send_telegram_message(
+                bot_token=bot_token,
+                chat_id=matched["telegram_chat_id"],
+                message="Open Analytics Telegram connected successfully.",
             )
 
-        conn.execute("""
-            UPDATE user_telegram_connections
-            SET
-                telegram_chat_id = ?,
-                telegram_username = ?,
-                telegram_first_name = ?,
-                telegram_last_name = ?,
-                connection_status = 'connected',
-                record_status = 'S',
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE telegram_connection_id = ?;
-        """, [
-            matched["telegram_chat_id"],
-            matched["telegram_username"],
-            matched["telegram_first_name"],
-            matched["telegram_last_name"],
-            user_id,
-            telegram_connection_id
-        ])
+            row = user_telegram_repo.get_by_user_id(conn, user_id)
+            response = telegram_user_connection_to_response(row)
+            response["message"] = "Telegram connected successfully."
 
-        conn.commit()
+            logger.info("Telegram user link verified: user_id=%s", user_id)
+            return response
 
-        send_telegram_message(
-            bot_token=bot_token,
-            chat_id=matched["telegram_chat_id"],
-            message="Open Analytics Telegram connected successfully."
-        )
+        except HTTPException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
-        row = get_user_telegram_connection_raw(conn, user_id)
-        response = telegram_user_connection_to_response(row)
-        response["message"] = "Telegram connected successfully."
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-        return response
-
-    except HTTPException:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        raise
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to verify Telegram connection: {e}"
-        )
-
-    finally:
-        conn.close()
+            logger.exception("Unable to verify Telegram connection: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to verify Telegram connection: {e}",
+            )
 
 
 def test_my_telegram_connection_service(current_user):
-    conn = get_connection()
+    user_id = current_user["user_id"]
+    logger.info("Testing Telegram user link: user_id=%s", user_id)
 
-    try:
+    with db_connection() as conn:
         bot_token = get_telegram_bot_token(conn)
-        user_id = current_user["user_id"]
-
-        row = get_user_telegram_connection_raw(conn, user_id)
+        row = user_telegram_repo.get_by_user_id(conn, user_id)
 
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Telegram is not connected. Click Connect Telegram first."
+                detail="Telegram is not connected. Click Connect Telegram first.",
             )
 
         telegram_chat_id = safe_strip(row[2])
@@ -1613,19 +1355,16 @@ def test_my_telegram_connection_service(current_user):
         if connection_status != "connected" or not telegram_chat_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Telegram is not verified yet. Click Verify Telegram first."
+                detail="Telegram is not verified yet. Click Verify Telegram first.",
             )
 
         send_telegram_message(
             bot_token=bot_token,
             chat_id=telegram_chat_id,
-            message="Open Analytics Telegram test message."
+            message="Open Analytics Telegram test message.",
         )
 
-        return {
-            "status": "success",
-            "message": "Telegram test message sent successfully."
-        }
-
-    finally:
-        conn.close()
+    return {
+        "status": "success",
+        "message": "Telegram test message sent successfully.",
+    }

@@ -1,3 +1,4 @@
+import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -5,7 +6,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 
-from app.database import get_connection
+from app.repositories.base_repository import db_connection
+from app.repositories.schedule_repository import ScheduleRepository
+
+logger = logging.getLogger(__name__)
+schedule_repo = ScheduleRepository()
 from app.services.connection_service import (
     notify_admin_super_admins_upstox_token_expiry_service
 )
@@ -190,34 +195,12 @@ def row_to_schedule(row) -> Dict[str, Any]:
 
 
 def get_data_collection_schedules_service():
-    conn = get_connection()
+    logger.info("Listing data collection schedules")
 
-    try:
-        rows = conn.execute("""
-            SELECT
-                schedule_id,
-                job_type,
-                schedule_time,
-                schedule_label,
-                time_format,
-                timezone,
-                is_active,
-                last_run_date,
-                last_run_at,
-                next_run_at,
-                created_at,
-                updated_at,
-                updated_by
-            FROM upstox_data_collection_schedules
-            WHERE record_status = 'S'
-              AND job_type IN ('current_instruments', 'expired_instruments')
-            ORDER BY job_type, schedule_time;
-        """).fetchall()
+    with db_connection() as conn:
+        rows = schedule_repo.list_active(conn)
 
-        return [row_to_schedule(row) for row in rows]
-
-    finally:
-        conn.close()
+    return [row_to_schedule(row) for row in rows]
 
 
 def create_data_collection_schedule_service(payload: dict, current_user: dict):
@@ -230,65 +213,34 @@ def create_data_collection_schedule_service(payload: dict, current_user: dict):
     user_id = get_user_id(current_user)
     next_run_at = calculate_next_run_at(schedule_time, is_active)
 
-    conn = get_connection()
+    logger.info("Creating data collection schedule: job_type=%s time=%s", job_type, schedule_time)
 
-    try:
-        existing = conn.execute("""
-            SELECT schedule_id
-            FROM upstox_data_collection_schedules
-            WHERE job_type = ?
-              AND schedule_time = ?
-              AND record_status = 'S'
-            LIMIT 1;
-        """, [job_type, schedule_time]).fetchone()
-
-        if existing:
+    with db_connection() as conn:
+        if schedule_repo.find_duplicate(conn, job_type, schedule_time):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="This schedule already exists for the selected job."
+                detail="This schedule already exists for the selected job.",
             )
 
-        conn.execute("""
-            INSERT INTO upstox_data_collection_schedules (
-                schedule_id,
-                job_type,
-                schedule_time,
-                schedule_label,
-                time_format,
-                timezone,
-                is_active,
-                last_run_date,
-                last_run_at,
-                next_run_at,
-                record_status,
-                version_no,
-                created_by,
-                updated_by
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'S', 1, ?, ?);
-        """, [
-            schedule_id,
-            job_type,
-            schedule_time,
-            schedule_label,
-            time_format,
-            IST_TIMEZONE,
-            is_active,
-            next_run_at,
-            user_id,
-            user_id
-        ])
-
+        schedule_repo.insert(
+            conn,
+            schedule_id=schedule_id,
+            job_type=job_type,
+            schedule_time=schedule_time,
+            schedule_label=schedule_label,
+            time_format=time_format,
+            timezone=IST_TIMEZONE,
+            is_active=is_active,
+            next_run_at=next_run_at,
+            user_id=user_id,
+        )
         conn.commit()
 
-        return {
-            "status": "success",
-            "message": "Schedule created successfully.",
-            "schedule_id": schedule_id
-        }
-
-    finally:
-        conn.close()
+    return {
+        "status": "success",
+        "message": "Schedule created successfully.",
+        "schedule_id": schedule_id,
+    }
 
 
 def update_data_collection_schedule_service(
@@ -304,175 +256,86 @@ def update_data_collection_schedule_service(
     user_id = get_user_id(current_user)
     next_run_at = calculate_next_run_at(schedule_time, is_active)
 
-    conn = get_connection()
+    logger.info("Updating data collection schedule: schedule_id=%s", schedule_id)
 
-    try:
-        current = conn.execute("""
-            SELECT schedule_id
-            FROM upstox_data_collection_schedules
-            WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
-              AND record_status = 'S'
-            LIMIT 1;
-        """, [schedule_id]).fetchone()
-
-        if not current:
+    with db_connection() as conn:
+        if not schedule_repo.get_by_id(conn, schedule_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Schedule not found."
+                detail="Schedule not found.",
             )
 
-        existing = conn.execute("""
-            SELECT schedule_id
-            FROM upstox_data_collection_schedules
-            WHERE job_type = ?
-              AND schedule_time = ?
-              AND schedule_id <> ?
-              AND record_status = 'S'
-            LIMIT 1;
-        """, [job_type, schedule_time, schedule_id]).fetchone()
-
-        if existing:
+        if schedule_repo.find_duplicate(conn, job_type, schedule_time, schedule_id):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="This schedule already exists for the selected job."
+                detail="This schedule already exists for the selected job.",
             )
 
-        conn.execute("""
-            UPDATE upstox_data_collection_schedules
-            SET
-                job_type = ?,
-                schedule_time = ?,
-                schedule_label = ?,
-                time_format = ?,
-                timezone = ?,
-                is_active = ?,
-                next_run_at = ?,
-                version_no = version_no + 1,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
-              AND record_status = 'S';
-        """, [
-            job_type,
-            schedule_time,
-            schedule_label,
-            time_format,
-            IST_TIMEZONE,
-            is_active,
-            next_run_at,
-            user_id,
-            schedule_id
-        ])
-
+        schedule_repo.update(
+            conn,
+            schedule_id=schedule_id,
+            job_type=job_type,
+            schedule_time=schedule_time,
+            schedule_label=schedule_label,
+            time_format=time_format,
+            timezone=IST_TIMEZONE,
+            is_active=is_active,
+            next_run_at=next_run_at,
+            user_id=user_id,
+        )
         conn.commit()
 
-        return {
-            "status": "success",
-            "message": "Schedule updated successfully."
-        }
-
-    finally:
-        conn.close()
+    return {
+        "status": "success",
+        "message": "Schedule updated successfully.",
+    }
 
 
 def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict):
     user_id = get_user_id(current_user)
-    conn = get_connection()
+    logger.info("Toggling data collection schedule: schedule_id=%s", schedule_id)
 
-    try:
-        row = conn.execute("""
-            SELECT schedule_time, is_active
-            FROM upstox_data_collection_schedules
-            WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
-              AND record_status = 'S'
-            LIMIT 1;
-        """, [schedule_id]).fetchone()
+    with db_connection() as conn:
+        row = schedule_repo.get_toggle_state(conn, schedule_id)
 
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Schedule not found."
+                detail="Schedule not found.",
             )
 
         schedule_time = row[0]
         next_is_active = not bool(row[1])
         next_run_at = calculate_next_run_at(schedule_time, next_is_active)
 
-        conn.execute("""
-            UPDATE upstox_data_collection_schedules
-            SET
-                is_active = ?,
-                next_run_at = ?,
-                version_no = version_no + 1,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
-              AND record_status = 'S';
-        """, [
-            next_is_active,
-            next_run_at,
-            user_id,
-            schedule_id
-        ])
-
+        schedule_repo.toggle(conn, schedule_id, next_is_active, next_run_at, user_id)
         conn.commit()
 
-        return {
-            "status": "success",
-            "message": "Schedule status updated successfully.",
-            "is_active": next_is_active
-        }
-
-    finally:
-        conn.close()
+    return {
+        "status": "success",
+        "message": "Schedule status updated successfully.",
+        "is_active": next_is_active,
+    }
 
 
 def delete_data_collection_schedule_service(schedule_id: str, current_user: dict):
     user_id = get_user_id(current_user)
-    conn = get_connection()
+    logger.info("Deleting data collection schedule: schedule_id=%s", schedule_id)
 
-    try:
-        row = conn.execute("""
-            SELECT schedule_id
-            FROM upstox_data_collection_schedules
-            WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
-              AND record_status = 'S'
-            LIMIT 1;
-        """, [schedule_id]).fetchone()
-
-        if not row:
+    with db_connection() as conn:
+        if not schedule_repo.get_by_id(conn, schedule_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Schedule not found."
+                detail="Schedule not found.",
             )
 
-        conn.execute("""
-            UPDATE upstox_data_collection_schedules
-            SET
-                record_status = 'D',
-                is_active = FALSE,
-                next_run_at = NULL,
-                version_no = version_no + 1,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments');
-        """, [user_id, schedule_id])
-
+        schedule_repo.soft_delete(conn, schedule_id, user_id)
         conn.commit()
 
-        return {
-            "status": "success",
-            "message": "Schedule deleted successfully."
-        }
-
-    finally:
-        conn.close()
+    return {
+        "status": "success",
+        "message": "Schedule deleted successfully.",
+    }
 
 
 def get_due_schedules(conn):
@@ -481,31 +344,7 @@ def get_due_schedules(conn):
     current_run_at = now.replace(tzinfo=None)
     today = now.date().isoformat()
 
-    return conn.execute("""
-        SELECT
-            schedule_id,
-            job_type,
-            schedule_time,
-            last_run_date,
-            is_active,
-            next_run_at
-        FROM upstox_data_collection_schedules
-        WHERE record_status = 'S'
-          AND job_type IN ('current_instruments', 'expired_instruments')
-          AND is_active = TRUE
-          AND (
-              last_run_date IS NULL
-              OR CAST(last_run_date AS VARCHAR) <> ?
-          )
-          AND (
-              next_run_at <= ?
-              OR (
-                  next_run_at IS NULL
-                  AND schedule_time <= ?
-              )
-          )
-        ORDER BY schedule_time;
-    """, [today, current_run_at, current_time]).fetchall()
+    return schedule_repo.get_due_schedules(conn, today, current_run_at, current_time)
 
 
 def mark_schedule_started(
@@ -514,23 +353,12 @@ def mark_schedule_started(
     schedule_time: str,
     run_date: str
 ):
-    conn.execute("""
-        UPDATE upstox_data_collection_schedules
-        SET
-            last_run_date = ?,
-            last_run_at = CURRENT_TIMESTAMP,
-            next_run_at = ?,
-            updated_at = CURRENT_TIMESTAMP,
-            updated_by = 'system_scheduler'
-        WHERE schedule_id = ?
-          AND job_type IN ('current_instruments', 'expired_instruments')
-          AND record_status = 'S';
-    """, [
+    schedule_repo.mark_started(
+        conn,
+        schedule_id,
         run_date,
         calculate_next_run_at_after_today(schedule_time, True),
-        schedule_id
-    ])
-
+    )
     conn.commit()
 
 
@@ -540,27 +368,18 @@ def update_schedule_next_run(
     schedule_time: str,
     is_active: bool
 ):
-    conn.execute("""
-        UPDATE upstox_data_collection_schedules
-        SET
-            next_run_at = ?,
-            updated_at = CURRENT_TIMESTAMP,
-            updated_by = 'system_scheduler'
-        WHERE schedule_id = ?
-          AND job_type IN ('current_instruments', 'expired_instruments')
-          AND record_status = 'S';
-    """, [
+    schedule_repo.update_next_run(
+        conn,
+        schedule_id,
         calculate_next_run_at(schedule_time, is_active),
-        schedule_id
-    ])
-
+    )
     conn.commit()
 
 
 def run_schedule_job(schedule_id: str, job_type: str):
     system_user = get_system_scheduler_user()
 
-    print(f"Data collection schedule triggered: {schedule_id} ({job_type})")
+    logger.info("Data collection schedule triggered: %s (%s)", schedule_id, job_type)
 
     if job_type == "current_instruments":
         return sync_upstox_current_instruments_service(
@@ -585,100 +404,106 @@ def run_token_expiry_notification_check():
     try:
         notify_admin_super_admins_upstox_token_expiry_service()
     except Exception as error:
-        print(f"Upstox analytics token expiry notification check failed: {error}")
+        logger.warning("Upstox analytics token expiry notification check failed: %s", error)
 
 
 def execute_due_schedules_once():
     if not _scheduler_lock.acquire(blocking=False):
         return
 
-    conn = get_connection()
-
     try:
-        run_token_expiry_notification_check()
+        with db_connection() as conn:
+            run_token_expiry_notification_check()
 
-        rows = get_due_schedules(conn)
+            rows = get_due_schedules(conn)
 
-        if not rows:
-            return
+            if not rows:
+                return
 
-        today = get_ist_now().date().isoformat()
+            today = get_ist_now().date().isoformat()
 
-        for row in rows:
-            schedule_id = row[0]
-            job_type = row[1]
-            schedule_time = row[2]
-            last_run_date = str(row[3]) if row[3] else None
-            is_active = bool(row[4])
+            for row in rows:
+                schedule_id = row[0]
+                job_type = row[1]
+                schedule_time = row[2]
+                last_run_date = str(row[3]) if row[3] else None
+                is_active = bool(row[4])
 
-            if not is_active:
-                continue
+                if not is_active:
+                    continue
 
-            if last_run_date == today:
-                continue
-
-            try:
-                mark_schedule_started(
-                    conn=conn,
-                    schedule_id=schedule_id,
-                    schedule_time=schedule_time,
-                    run_date=today
-                )
-
-                run_schedule_job(
-                    schedule_id=schedule_id,
-                    job_type=job_type
-                )
-
-            except HTTPException as error:
-                print(
-                    "Scheduled data collection failed: "
-                    f"{schedule_id} ({job_type}) - {error.detail}"
-                )
+                if last_run_date == today:
+                    continue
 
                 try:
-                    update_schedule_next_run(
+                    mark_schedule_started(
                         conn=conn,
                         schedule_id=schedule_id,
                         schedule_time=schedule_time,
-                        is_active=True
+                        run_date=today,
                     )
-                except Exception as update_error:
-                    print(f"Unable to update schedule next run: {update_error}")
 
-            except Exception as error:
-                print(
-                    "Scheduled data collection failed: "
-                    f"{schedule_id} ({job_type}) - {error}"
-                )
-
-                try:
-                    update_schedule_next_run(
-                        conn=conn,
+                    run_schedule_job(
                         schedule_id=schedule_id,
-                        schedule_time=schedule_time,
-                        is_active=True
+                        job_type=job_type,
                     )
-                except Exception as update_error:
-                    print(f"Unable to update schedule next run: {update_error}")
+
+                except HTTPException as error:
+                    logger.error(
+                        "Scheduled data collection failed: %s (%s) - %s",
+                        schedule_id,
+                        job_type,
+                        error.detail,
+                    )
+
+                    try:
+                        update_schedule_next_run(
+                            conn=conn,
+                            schedule_id=schedule_id,
+                            schedule_time=schedule_time,
+                            is_active=True,
+                        )
+                    except Exception as update_error:
+                        logger.warning(
+                            "Unable to update schedule next run: %s", update_error
+                        )
+
+                except Exception as error:
+                    logger.exception(
+                        "Scheduled data collection failed: %s (%s) - %s",
+                        schedule_id,
+                        job_type,
+                        error,
+                    )
+
+                    try:
+                        update_schedule_next_run(
+                            conn=conn,
+                            schedule_id=schedule_id,
+                            schedule_time=schedule_time,
+                            is_active=True,
+                        )
+                    except Exception as update_error:
+                        logger.warning(
+                            "Unable to update schedule next run: %s", update_error
+                        )
 
     finally:
-        conn.close()
         _scheduler_lock.release()
 
 
 def scheduler_loop():
-    print("Data collection scheduler started.")
+    logger.info("Data collection scheduler started")
 
     while not _scheduler_stop_event.is_set():
         try:
             execute_due_schedules_once()
         except Exception as error:
-            print(f"Data collection scheduler tick failed: {error}")
+            logger.exception("Data collection scheduler tick failed: %s", error)
 
         _scheduler_stop_event.wait(SCHEDULER_INTERVAL_SECONDS)
 
-    print("Data collection scheduler stopped.")
+    logger.info("Data collection scheduler stopped")
 
 
 def start_data_collection_scheduler():

@@ -2,7 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import init_database, get_connection
+from app.database import init_database
+from app.logging_config import setup_logging
+from app.repositories.app_metadata_repository import AppMetadataRepository
+from app.repositories.base_repository import db_connection
 from app.version import APP_VERSION, SCHEMA_VERSION
 from app.services.data_collection_scheduler_service import (
     start_data_collection_scheduler,
@@ -37,6 +40,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
+    setup_logging()
     init_database()
     start_data_collection_scheduler()
 
@@ -86,25 +90,18 @@ def get_version():
 
 @app.get("/db-version")
 def get_db_version():
-    conn = get_connection()
+    metadata_repo = AppMetadataRepository()
 
-    try:
-        rows = conn.execute("""
-            SELECT key, value, updated_at
-            FROM app_metadata
-            ORDER BY key;
-        """).fetchall()
+    with db_connection() as conn:
+        rows = metadata_repo.list_all(conn)
 
-        return {
-            "metadata": [
-                {
-                    "key": row[0],
-                    "value": row[1],
-                    "updated_at": str(row[2])
-                }
-                for row in rows
-            ]
-        }
-
-    finally:
-        conn.close()
+    return {
+        "metadata": [
+            {
+                "key": row[0],
+                "value": row[1],
+                "updated_at": str(row[2]),
+            }
+            for row in rows
+        ]
+    }

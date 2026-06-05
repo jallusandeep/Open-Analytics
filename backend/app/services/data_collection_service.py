@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 import time
 import uuid
 import urllib.request
@@ -9,7 +10,11 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
 
-from app.database import get_connection
+from app.repositories.base_repository import db_connection
+from app.repositories.data_collection_repository import DataCollectionRepository
+
+logger = logging.getLogger(__name__)
+data_collection_repo = DataCollectionRepository()
 
 
 UPSTOX_PROVIDER = "upstox"
@@ -102,28 +107,11 @@ def normalize_upstox_token(access_token: Any) -> str:
 
 
 def get_upstox_connection_status(conn) -> str:
-    row = conn.execute("""
-        SELECT connection_status
-        FROM external_connections
-        WHERE provider = ?
-          AND record_status = 'S'
-        LIMIT 1;
-    """, [UPSTOX_PROVIDER]).fetchone()
-
-    if not row:
-        return "not_connected"
-
-    return row[0] or "saved"
+    return data_collection_repo.get_upstox_connection_status(conn)
 
 
 def get_saved_upstox_access_token(conn) -> str:
-    row = conn.execute("""
-        SELECT access_token, connection_status
-        FROM external_connections
-        WHERE provider = ?
-          AND record_status = 'S'
-        LIMIT 1;
-    """, [UPSTOX_PROVIDER]).fetchone()
+    row = data_collection_repo.get_saved_upstox_access_token_row(conn)
 
     if not row:
         raise HTTPException(
@@ -151,30 +139,13 @@ def get_saved_upstox_access_token(conn) -> str:
 
 
 def mark_stale_sync_runs(conn):
-    conn.execute("""
-        UPDATE upstox_sync_runs
-        SET
-            status = 'failed',
-            finished_at = CURRENT_TIMESTAMP,
-            duration_seconds = date_diff('second', started_at, CURRENT_TIMESTAMP),
-            message = 'Sync run was interrupted before completion.'
-        WHERE status IN ('running', 'cancel_requested')
-          AND started_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 hour');
-    """, [STALE_RUNNING_RUN_HOURS])
-
-    conn.commit()
+    data_collection_repo.mark_stale_sync_runs(conn)
 
 
 def ensure_no_active_sync_run(conn):
     mark_stale_sync_runs(conn)
 
-    row = conn.execute("""
-        SELECT sync_type, status
-        FROM upstox_sync_runs
-        WHERE status IN ('running', 'cancel_requested')
-        ORDER BY started_at DESC
-        LIMIT 1;
-    """).fetchone()
+    row = data_collection_repo.get_active_sync_run(conn)
 
     if row:
         raise HTTPException(
@@ -217,34 +188,21 @@ def create_sync_run(
     sync_id = str(uuid.uuid4())
     trigger_metadata = get_sync_trigger_metadata(current_user)
 
-    conn.execute("""
-        INSERT INTO upstox_sync_runs (
-            sync_id,
-            sync_type,
-            status,
-            started_at,
-            finished_at,
-            duration_seconds,
-            message,
-            total_records,
-            trigger_source,
-            triggered_by_id,
-            triggered_by_name,
-            triggered_by_role
-        )
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP, NULL, NULL, ?, 0, ?, ?, ?, ?);
-    """, [
+    logger.info(
+        "Creating sync run: sync_id=%s type=%s status=%s",
         sync_id,
         sync_type,
         status_text,
-        message,
-        trigger_metadata["trigger_source"],
-        trigger_metadata["triggered_by_id"],
-        trigger_metadata["triggered_by_name"],
-        trigger_metadata["triggered_by_role"]
-    ])
+    )
 
-    conn.commit()
+    data_collection_repo.create_sync_run(
+        conn,
+        sync_id=sync_id,
+        sync_type=sync_type,
+        status_text=status_text,
+        message=message,
+        trigger_metadata=trigger_metadata,
+    )
     return sync_id
 
 
@@ -256,53 +214,40 @@ def finish_sync_run(
     total_records: int,
     started_at: datetime
 ):
-    conn.execute("""
-        UPDATE upstox_sync_runs
-        SET
-            status = ?,
-            finished_at = CURRENT_TIMESTAMP,
-            duration_seconds = ?,
-            message = ?,
-            total_records = ?
-        WHERE sync_id = ?;
-    """, [
+    logger.info(
+        "Finishing sync run: sync_id=%s status=%s records=%s",
+        sync_id,
         status_text,
-        duration_seconds(started_at),
-        message,
         total_records,
-        sync_id
-    ])
+    )
 
-    conn.commit()
+    data_collection_repo.finish_sync_run(
+        conn,
+        sync_id=sync_id,
+        status_text=status_text,
+        message=message,
+        total_records=total_records,
+        duration_seconds=duration_seconds(started_at),
+    )
 
 
 def check_sync_cancelled(conn, sync_id: str):
     if has_cancel_signal():
         raise SyncCancelled()
 
-    row = conn.execute("""
-        SELECT status
-        FROM upstox_sync_runs
-        WHERE sync_id = ?;
-    """, [sync_id]).fetchone()
+    row = data_collection_repo.get_sync_run_status(conn, sync_id)
 
     if row and row[0] in ("cancel_requested", "cancelled"):
         raise SyncCancelled()
 
 
 def request_cancel_active_sync_runs_service():
+    logger.info("Requesting cancel for active data collection sync runs")
     write_cancel_signal()
 
-    conn = get_connection()
-
-    try:
+    with db_connection() as conn:
         try:
-            rows = conn.execute("""
-                SELECT sync_id, sync_type
-                FROM upstox_sync_runs
-                WHERE status IN ('running', 'cancel_requested')
-                ORDER BY started_at DESC;
-            """).fetchall()
+            rows = data_collection_repo.get_running_sync_runs(conn)
         except Exception:
             return {
                 "status": "success",
@@ -318,14 +263,7 @@ def request_cancel_active_sync_runs_service():
             }
 
         try:
-            conn.execute("""
-                UPDATE upstox_sync_runs
-                SET
-                    message = 'Cancel requested by user.',
-                    status = 'cancel_requested'
-                WHERE status IN ('running', 'cancel_requested');
-            """)
-            conn.commit()
+            data_collection_repo.request_cancel_running_syncs(conn)
         except Exception:
             return {
                 "status": "success",
@@ -350,9 +288,6 @@ def request_cancel_active_sync_runs_service():
                 for row in rows
             ]
         }
-
-    finally:
-        conn.close()
 
 
 def print_current_file_sanity_check(file_path: Path):
@@ -515,108 +450,21 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
 
     insert_started_at = time.time()
 
-    conn.execute("""
-        DELETE FROM upstox_instruments
-        WHERE source_type = 'bod_complete';
-    """)
+    data_collection_repo.delete_bod_complete_instruments(conn)
 
     check_sync_cancelled(conn, sync_id)
 
-    conn.execute("""
-        INSERT INTO upstox_instruments (
-            instrument_key,
-            source_type,
-            segment,
-            name,
-            exchange,
-            isin,
-            instrument_type,
-            trading_symbol,
-            short_name,
-            exchange_token,
-            expiry,
-            strike_price,
-            lot_size,
-            minimum_lot,
-            freeze_quantity,
-            tick_size,
-            weekly,
-            underlying_key,
-            underlying_symbol,
-            underlying_type,
-            security_type,
-            raw_json,
-            synced_at
-        )
-        SELECT
-            instrument_key,
-            'bod_complete' AS source_type,
-            segment,
-            name,
-            exchange,
-            isin,
-            instrument_type,
-            trading_symbol,
-            short_name,
-            exchange_token,
-            CASE
-                WHEN expiry IS NULL THEN NULL
-                WHEN TRY_CAST(expiry AS BIGINT) IS NOT NULL
-                    THEN CAST(epoch_ms(TRY_CAST(expiry AS BIGINT)) AS DATE)
-                ELSE TRY_CAST(expiry AS DATE)
-            END AS expiry,
-            strike_price,
-            lot_size,
-            minimum_lot,
-            freeze_quantity,
-            tick_size,
-            weekly,
-            underlying_key,
-            underlying_symbol,
-            underlying_type,
-            security_type,
-            NULL AS raw_json,
-            CURRENT_TIMESTAMP AS synced_at
-        FROM read_json(
-            ?,
-            format = 'array',
-            maximum_object_size = 16777216,
-            columns = {
-                instrument_key: 'VARCHAR',
-                segment: 'VARCHAR',
-                name: 'VARCHAR',
-                exchange: 'VARCHAR',
-                isin: 'VARCHAR',
-                instrument_type: 'VARCHAR',
-                trading_symbol: 'VARCHAR',
-                short_name: 'VARCHAR',
-                exchange_token: 'VARCHAR',
-                expiry: 'VARCHAR',
-                strike_price: 'DOUBLE',
-                lot_size: 'BIGINT',
-                minimum_lot: 'BIGINT',
-                freeze_quantity: 'DOUBLE',
-                tick_size: 'DOUBLE',
-                weekly: 'BOOLEAN',
-                underlying_key: 'VARCHAR',
-                underlying_symbol: 'VARCHAR',
-                underlying_type: 'VARCHAR',
-                security_type: 'VARCHAR'
-            }
-        );
-    """, [duckdb_path])
+    data_collection_repo.import_current_instruments_from_json(conn, duckdb_path)
 
-    print(f"DuckDB insert time: {round(time.time() - insert_started_at, 2)} seconds")
+    logger.info(
+        "DuckDB current instruments insert time: %.2f seconds",
+        round(time.time() - insert_started_at, 2),
+    )
 
-    total_rows = conn.execute("""
-        SELECT COUNT(*)
-        FROM upstox_instruments
-        WHERE source_type = 'bod_complete';
-    """).fetchone()[0]
+    total_rows = data_collection_repo.count_bod_complete_instruments(conn)
+    logger.info("Current instruments inserted into DB: %s", total_rows)
 
-    print(f"Current instruments inserted directly into DB: {total_rows}")
-
-    return int(total_rows or 0)
+    return total_rows
 
 
 def import_upstox_client():
@@ -1927,76 +1775,41 @@ def safe_active_job_started_count(conn, sync_type: Optional[str], started_at) ->
 
 
 def get_data_collection_summary_service():
-    conn = get_connection()
+    logger.info("Fetching data collection summary")
 
-    try:
+    with db_connection() as conn:
         mark_stale_sync_runs(conn)
         connection_status = get_upstox_connection_status(conn)
 
-        current_count = safe_table_count(conn, "upstox_instruments")
-        expired_count = safe_table_count(conn, "upstox_expired_instruments")
-        equity_count = safe_table_count(conn, "upstox_equity_instruments")
-        ohlcv_daily_count = safe_table_count(conn, "ohlcv_daily")
-        equity_news_count = safe_table_count(conn, "equity_news")
-        fundamentals_count = safe_table_count(conn, "fundamentals")
-        corporate_actions_count = safe_table_count(conn, "corporate_actions")
-        fii_dii_count = safe_table_count(conn, "fii_dii_activity")
+        current_count = data_collection_repo.table_count(conn, "upstox_instruments")
+        expired_count = data_collection_repo.table_count(conn, "upstox_expired_instruments")
+        equity_count = data_collection_repo.table_count(conn, "upstox_equity_instruments")
+        ohlcv_daily_count = data_collection_repo.table_count(conn, "ohlcv_daily")
+        equity_news_count = data_collection_repo.table_count(conn, "equity_news")
+        fundamentals_count = data_collection_repo.table_count(conn, "fundamentals")
+        corporate_actions_count = data_collection_repo.table_count(conn, "corporate_actions")
+        fii_dii_count = data_collection_repo.table_count(conn, "fii_dii_activity")
 
-        total_runs = conn.execute("""
-            SELECT COUNT(*)
-            FROM upstox_sync_runs
-            WHERE sync_type IN (
-                'upstox_current_instruments',
-                'upstox_expired_instruments',
-                'upstox_equity_instruments',
-                'upstox_ohlcv_daily'
-            );
-        """).fetchone()[0]
-
-        last_run = conn.execute("""
-            SELECT
-                sync_type,
-                status,
-                started_at,
-                finished_at,
-                duration_seconds,
-                total_records
-            FROM upstox_sync_runs
-            WHERE sync_type IN (
-                'upstox_current_instruments',
-                'upstox_expired_instruments',
-                'upstox_equity_instruments',
-                'upstox_ohlcv_daily'
-            )
-            ORDER BY started_at DESC
-            LIMIT 1;
-        """).fetchone()
-
-        current_run = safe_last_success_run(conn, "upstox_current_instruments")
-        expired_run = safe_last_success_run(conn, "upstox_expired_instruments")
-        equity_run = safe_last_success_run(conn, "upstox_equity_instruments")
-        ohlcv_run = safe_last_success_run(conn, "upstox_ohlcv_daily")
-
-        active_run = conn.execute("""
-            SELECT sync_type, status, started_at
-            FROM upstox_sync_runs
-            WHERE status IN ('running', 'cancel_requested')
-            ORDER BY started_at DESC
-            LIMIT 1;
-        """).fetchone()
+        total_runs = data_collection_repo.count_sync_runs(conn)
+        last_run = data_collection_repo.get_last_sync_run(conn)
+        current_run = data_collection_repo.last_success_run(conn, "upstox_current_instruments")
+        expired_run = data_collection_repo.last_success_run(conn, "upstox_expired_instruments")
+        equity_run = data_collection_repo.last_success_run(conn, "upstox_equity_instruments")
+        ohlcv_run = data_collection_repo.last_success_run(conn, "upstox_ohlcv_daily")
+        active_run = data_collection_repo.get_active_sync_run_detail(conn)
 
         active_job = active_run[0] if active_run else None
         active_job_started_at = active_run[2] if active_run and active_run[2] else None
         active_job_table = table_name_for_sync_type(active_job)
         active_job_current_records = (
-            safe_table_count(conn, active_job_table)
+            data_collection_repo.table_count(conn, active_job_table)
             if active_job_table else None
         )
-        active_job_records_at_start = safe_active_job_started_count(
+        active_job_records_at_start = data_collection_repo.count_records_synced_before(
             conn,
-            active_job,
-            active_job_started_at
-        )
+            active_job_table or "",
+            active_job_started_at,
+        ) if active_job_table else None
 
         return {
             "connection_status": connection_status,
@@ -2032,192 +1845,166 @@ def get_data_collection_summary_service():
             )
         }
 
-    finally:
-        conn.close()
-
 
 def get_data_collection_runs_service():
-    conn = get_connection()
+    logger.info("Fetching recent data collection sync runs")
 
-    try:
-        rows = conn.execute("""
-            SELECT
-                sync_id,
-                sync_type,
-                status,
-                started_at,
-                finished_at,
-                duration_seconds,
-                message,
-                total_records,
-                trigger_source,
-                triggered_by_id,
-                triggered_by_name,
-                triggered_by_role
-            FROM upstox_sync_runs
-            WHERE sync_type IN (
-                'upstox_current_instruments',
-                'upstox_expired_instruments',
-                'upstox_equity_instruments',
-                'upstox_ohlcv_daily'
-            )
-            ORDER BY started_at DESC
-            LIMIT 25;
-        """).fetchall()
+    with db_connection() as conn:
+        rows = data_collection_repo.list_recent_sync_runs(conn)
 
-        return [
-            {
-                "sync_id": row[0],
-                "sync_type": row[1],
-                "status": row[2],
-                "started_at": str(row[3]) if row[3] else None,
-                "finished_at": str(row[4]) if row[4] else None,
-                "duration_seconds": row[5],
-                "message": row[6],
-                "total_records": row[7],
-                "trigger_source": row[8] or "manual",
-                "triggered_by_id": row[9],
-                "triggered_by_name": row[10],
-                "triggered_by_role": row[11]
-            }
-            for row in rows
-        ]
-
-    finally:
-        conn.close()
+    return [
+        {
+            "sync_id": row[0],
+            "sync_type": row[1],
+            "status": row[2],
+            "started_at": str(row[3]) if row[3] else None,
+            "finished_at": str(row[4]) if row[4] else None,
+            "duration_seconds": row[5],
+            "message": row[6],
+            "total_records": row[7],
+            "trigger_source": row[8] or "manual",
+            "triggered_by_id": row[9],
+            "triggered_by_name": row[10],
+            "triggered_by_role": row[11],
+        }
+        for row in rows
+    ]
 
 
 def sync_upstox_current_instruments_service(
     current_user: dict,
     clear_cancel_at_start: bool = True
 ):
-    conn = get_connection()
+    logger.info(
+        "Starting current instruments sync: user_id=%s",
+        (current_user or {}).get("user_id"),
+    )
     started_at = datetime.now()
     sync_id = None
     local_file = None
     total_records = 0
 
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        ensure_no_active_sync_run(conn)
-
-        sync_id = create_sync_run(
-            conn,
-            "upstox_current_instruments",
-            "running",
-            "Current instrument dump started.",
-            current_user=current_user
-        )
-
-        local_file = download_upstox_master_gz_file_once()
-
-        check_sync_cancelled(conn, sync_id)
-
-        conn.execute("BEGIN TRANSACTION")
-
-        total_records = import_current_instruments_from_local_file(
-            conn=conn,
-            sync_id=sync_id,
-            local_file=local_file
-        )
-
-        conn.execute("COMMIT")
-
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "Current instruments downloaded and imported successfully.",
-            total_records,
-            started_at
-        )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "success",
-            "message": "Current instruments downloaded and imported successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except SyncCancelled:
+    with db_connection() as conn:
         try:
-            conn.rollback()
-        except Exception:
-            pass
+            if clear_cancel_at_start:
+                clear_cancel_signal()
 
-        if sync_id:
+            ensure_no_active_sync_run(conn)
+
+            sync_id = create_sync_run(
+                conn,
+                "upstox_current_instruments",
+                "running",
+                "Current instrument dump started.",
+                current_user=current_user,
+            )
+
+            local_file = download_upstox_master_gz_file_once()
+            check_sync_cancelled(conn, sync_id)
+
+            conn.execute("BEGIN TRANSACTION")
+
+            total_records = import_current_instruments_from_local_file(
+                conn=conn,
+                sync_id=sync_id,
+                local_file=local_file,
+            )
+
+            conn.execute("COMMIT")
+
             finish_sync_run(
                 conn,
                 sync_id,
-                "cancelled",
-                "Current instrument dump cancelled.",
+                "success",
+                "Current instruments downloaded and imported successfully.",
                 total_records,
-                started_at
+                started_at,
             )
 
-        if clear_cancel_at_start:
-            clear_cancel_signal()
+            if clear_cancel_at_start:
+                clear_cancel_signal()
 
-        return {
-            "status": "cancelled",
-            "message": "Current instrument dump cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
+            return {
+                "status": "success",
+                "message": "Current instruments downloaded and imported successfully.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at),
+            }
 
-    except HTTPException:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        except SyncCancelled:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                "Current instrument dump failed.",
-                total_records,
-                started_at
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "cancelled",
+                    "Current instrument dump cancelled.",
+                    total_records,
+                    started_at,
+                )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            return {
+                "status": "cancelled",
+                "message": "Current instrument dump cancelled.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at),
+            }
+
+        except HTTPException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "failed",
+                    "Current instrument dump failed.",
+                    total_records,
+                    started_at,
+                )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            raise
+
+        except Exception as error:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "failed",
+                    f"Current instrument dump failed: {error}",
+                    total_records,
+                    started_at,
+                )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            logger.exception("Current instrument dump failed: %s", error)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to dump current instruments: {error}",
             )
 
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise
-
-    except Exception as error:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Current instrument dump failed: {error}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to dump current instruments: {error}"
-        )
-
-    finally:
-        delete_downloaded_master_file(local_file)
-        conn.close()
+        finally:
+            delete_downloaded_master_file(local_file)
 
 
 def sync_upstox_expired_instruments_service(
@@ -2225,181 +2012,188 @@ def sync_upstox_expired_instruments_service(
     config: Optional[dict] = None,
     clear_cancel_at_start: bool = True
 ):
-    conn = get_connection()
+    logger.info(
+        "Starting expired instruments sync: user_id=%s",
+        (current_user or {}).get("user_id"),
+    )
     started_at = datetime.now()
     sync_id = None
     expired_download = {
         "records": [],
         "group_statuses": [],
-        "skipped_groups": 0
+        "skipped_groups": 0,
     }
     total_records = 0
 
-    try:
-        if clear_cancel_at_start:
-            clear_cancel_signal()
+    with db_connection() as conn:
+        try:
+            if clear_cancel_at_start:
+                clear_cancel_signal()
 
-        ensure_no_active_sync_run(conn)
+            ensure_no_active_sync_run(conn)
+            access_token = get_saved_upstox_access_token(conn)
 
-        access_token = get_saved_upstox_access_token(conn)
+            sync_id = create_sync_run(
+                conn,
+                "upstox_expired_instruments",
+                "running",
+                "Expired instrument SDK download started.",
+                current_user=current_user,
+            )
 
-        sync_id = create_sync_run(
-            conn,
-            "upstox_expired_instruments",
-            "running",
-            "Expired instrument SDK download started.",
-            current_user=current_user
-        )
+            expired_download = download_expired_instruments_with_sdk(
+                conn=conn,
+                sync_id=sync_id,
+                access_token=access_token,
+                config=config,
+            )
 
-        expired_download = download_expired_instruments_with_sdk(
-            conn=conn,
-            sync_id=sync_id,
-            access_token=access_token,
-            config=config
-        )
+            was_cancelled = bool(expired_download.get("cancelled"))
 
-        was_cancelled = bool(expired_download.get("cancelled"))
+            if not was_cancelled:
+                check_sync_cancelled(conn, sync_id)
 
-        if not was_cancelled:
-            check_sync_cancelled(conn, sync_id)
+            conn.execute("BEGIN TRANSACTION")
 
-        conn.execute("BEGIN TRANSACTION")
+            total_records = int(expired_download.get("persisted_records") or 0)
 
-        total_records = int(expired_download.get("persisted_records") or 0)
+            total_records += import_expired_instruments_records(
+                conn=conn,
+                sync_id=sync_id,
+                records=expired_download.get("records", []),
+                group_statuses=expired_download.get("group_statuses", []),
+                underlying_statuses=expired_download.get("underlying_statuses", []),
+                allow_cancelled_import=was_cancelled,
+            )
 
-        total_records += import_expired_instruments_records(
-            conn=conn,
-            sync_id=sync_id,
-            records=expired_download.get("records", []),
-            group_statuses=expired_download.get("group_statuses", []),
-            underlying_statuses=expired_download.get("underlying_statuses", []),
-            allow_cancelled_import=was_cancelled
-        )
+            conn.execute("COMMIT")
 
-        conn.execute("COMMIT")
+            if was_cancelled:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "cancelled",
+                    "Expired instrument SDK download cancelled. Completed records were saved.",
+                    total_records,
+                    started_at,
+                )
 
-        if was_cancelled:
+                if clear_cancel_at_start:
+                    clear_cancel_signal()
+
+                return {
+                    "status": "cancelled",
+                    "message": (
+                        "Expired instrument SDK download cancelled. "
+                        "Completed records were saved."
+                    ),
+                    "total_records": total_records,
+                    "duration_seconds": duration_seconds(started_at),
+                }
+
             finish_sync_run(
                 conn,
                 sync_id,
-                "cancelled",
-                "Expired instrument SDK download cancelled. Completed records were saved.",
+                "success",
+                "Expired instruments downloaded through Upstox SDK and imported successfully.",
                 total_records,
-                started_at
+                started_at,
             )
 
             if clear_cancel_at_start:
                 clear_cancel_signal()
 
             return {
-                "status": "cancelled",
-                "message": "Expired instrument SDK download cancelled. Completed records were saved.",
+                "status": "success",
+                "message": (
+                    "Expired instruments downloaded through Upstox SDK "
+                    "and imported successfully."
+                ),
                 "total_records": total_records,
-                "duration_seconds": duration_seconds(started_at)
+                "duration_seconds": duration_seconds(started_at),
             }
 
-        finish_sync_run(
-            conn,
-            sync_id,
-            "success",
-            "Expired instruments downloaded through Upstox SDK and imported successfully.",
-            total_records,
-            started_at
-        )
+        except SyncCancelled:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
-        if clear_cancel_at_start:
-            clear_cancel_signal()
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "cancelled",
+                    "Expired instrument SDK download cancelled.",
+                    total_records,
+                    started_at,
+                )
 
-        return {
-            "status": "success",
-            "message": "Expired instruments downloaded through Upstox SDK and imported successfully.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
+            if clear_cancel_at_start:
+                clear_cancel_signal()
 
-    except SyncCancelled:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+            return {
+                "status": "cancelled",
+                "message": "Expired instrument SDK download cancelled.",
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at),
+            }
 
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "cancelled",
-                "Expired instrument SDK download cancelled.",
-                total_records,
-                started_at
+        except HTTPException as error:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            error_message = error.detail
+
+            if isinstance(error_message, dict):
+                error_message = error_message.get("message") or str(error_message)
+
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "failed",
+                    f"Expired instrument SDK download failed: {error_message}",
+                    total_records,
+                    started_at,
+                )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            return {
+                "status": "failed",
+                "message": str(error_message),
+                "total_records": total_records,
+                "duration_seconds": duration_seconds(started_at),
+            }
+
+        except Exception as error:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+            if sync_id:
+                finish_sync_run(
+                    conn,
+                    sync_id,
+                    "failed",
+                    f"Expired instrument SDK download failed: {error}",
+                    total_records,
+                    started_at,
+                )
+
+            if clear_cancel_at_start:
+                clear_cancel_signal()
+
+            logger.exception("Expired instrument dump failed: %s", error)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unable to dump expired instruments through Upstox SDK: {error}",
             )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "cancelled",
-            "message": "Expired instrument SDK download cancelled.",
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except HTTPException as error:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        error_message = error.detail
-
-        if isinstance(error_message, dict):
-            error_message = error_message.get("message") or str(error_message)
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Expired instrument SDK download failed: {error_message}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        return {
-            "status": "failed",
-            "message": str(error_message),
-            "total_records": total_records,
-            "duration_seconds": duration_seconds(started_at)
-        }
-
-    except Exception as error:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        if sync_id:
-            finish_sync_run(
-                conn,
-                sync_id,
-                "failed",
-                f"Expired instrument SDK download failed: {error}",
-                total_records,
-                started_at
-            )
-
-        if clear_cancel_at_start:
-            clear_cancel_signal()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to dump expired instruments through Upstox SDK: {error}"
-        )
-
-    finally:
-        conn.close()
 
 
 def normalize_page(value: int) -> int:
@@ -2512,63 +2306,43 @@ def get_upstox_instruments_preview_service(
     page: int = 1,
     page_size: int = 50
 ):
-    conn = get_connection()
+    current_page = normalize_page(page)
+    current_page_size = normalize_page_size(page_size)
+    offset = (current_page - 1) * current_page_size
 
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
+    where_sql, params = build_preview_filters(
+        search=search,
+        source_type=source_type,
+        segment=segment,
+        instrument_type=instrument_type,
+    )
 
-        where_sql, params = build_preview_filters(
-            search=search,
-            source_type=source_type,
-            segment=segment,
-            instrument_type=instrument_type
+    with db_connection() as conn:
+        total_records = data_collection_repo.count_instruments_preview(
+            conn, "upstox_instruments", where_sql, params
+        )
+        rows = data_collection_repo.list_instruments_preview(
+            conn,
+            "upstox_instruments",
+            where_sql,
+            params,
+            "synced_at DESC, segment, trading_symbol",
+            current_page_size,
+            offset,
         )
 
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM upstox_instruments
-            {where_sql};
-        """, params).fetchone()[0]
+    total_pages = max(
+        1,
+        int((total_records + current_page_size - 1) / current_page_size),
+    )
 
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                trading_symbol,
-                name,
-                segment,
-                exchange,
-                instrument_type,
-                expiry,
-                strike_price,
-                lot_size,
-                source_type,
-                underlying_key,
-                underlying_symbol,
-                synced_at
-            FROM upstox_instruments
-            {where_sql}
-            ORDER BY synced_at DESC, segment, trading_symbol
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_instrument_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
+    return {
+        "rows": [row_to_instrument_preview(row) for row in rows],
+        "page": current_page,
+        "page_size": current_page_size,
+        "total_pages": total_pages,
+        "total_records": total_records,
+    }
 
 
 def get_upstox_expired_instruments_preview_service(
@@ -2579,60 +2353,40 @@ def get_upstox_expired_instruments_preview_service(
     page: int = 1,
     page_size: int = 50
 ):
-    conn = get_connection()
+    current_page = normalize_page(page)
+    current_page_size = normalize_page_size(page_size)
+    offset = (current_page - 1) * current_page_size
 
-    try:
-        current_page = normalize_page(page)
-        current_page_size = normalize_page_size(page_size)
-        offset = (current_page - 1) * current_page_size
+    where_sql, params = build_preview_filters(
+        search=search,
+        source_type=source_type,
+        segment=segment,
+        instrument_type=instrument_type,
+    )
 
-        where_sql, params = build_preview_filters(
-            search=search,
-            source_type=source_type,
-            segment=segment,
-            instrument_type=instrument_type
+    with db_connection() as conn:
+        total_records = data_collection_repo.count_instruments_preview(
+            conn, "upstox_expired_instruments", where_sql, params
+        )
+        rows = data_collection_repo.list_instruments_preview(
+            conn,
+            "upstox_expired_instruments",
+            where_sql,
+            params,
+            "synced_at DESC, expiry DESC, segment, trading_symbol",
+            current_page_size,
+            offset,
         )
 
-        total_records = conn.execute(f"""
-            SELECT COUNT(*)
-            FROM upstox_expired_instruments
-            {where_sql};
-        """, params).fetchone()[0]
+    total_pages = max(
+        1,
+        int((total_records + current_page_size - 1) / current_page_size),
+    )
 
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                trading_symbol,
-                name,
-                segment,
-                exchange,
-                instrument_type,
-                expiry,
-                strike_price,
-                lot_size,
-                source_type,
-                underlying_key,
-                underlying_symbol,
-                synced_at
-            FROM upstox_expired_instruments
-            {where_sql}
-            ORDER BY synced_at DESC, expiry DESC, segment, trading_symbol
-            LIMIT ?
-            OFFSET ?;
-        """, params + [current_page_size, offset]).fetchall()
-
-        total_pages = max(
-            1,
-            int((total_records + current_page_size - 1) / current_page_size)
-        )
-
-        return {
-            "rows": [row_to_instrument_preview(row) for row in rows],
-            "page": current_page,
-            "page_size": current_page_size,
-            "total_pages": total_pages,
-            "total_records": total_records
-        }
-
-    finally:
-        conn.close()
+    return {
+        "rows": [row_to_instrument_preview(row) for row in rows],
+        "page": current_page,
+        "page_size": current_page_size,
+        "total_pages": total_pages,
+        "total_records": total_records,
+    }
