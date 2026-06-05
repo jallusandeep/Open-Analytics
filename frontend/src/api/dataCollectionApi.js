@@ -24,6 +24,12 @@ export function syncUpstoxCurrentInstruments(config = {}) {
   return axiosClient.post("/data-collection/upstox/sync-current", null, config);
 }
 
+export function getUpstoxOHLCVPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ohlcv", {
+    params
+  });
+}
+
 export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/sync-expired",
