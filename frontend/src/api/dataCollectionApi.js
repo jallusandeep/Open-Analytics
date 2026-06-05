@@ -30,6 +30,12 @@ export function getUpstoxOHLCVPreview(params = {}) {
   });
 }
 
+export function syncUpstoxOHLCV() {
+  return axiosClient.post(
+    "/data-collection/upstox/sync-ohlcv"
+  );
+}
+
 export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/sync-expired",

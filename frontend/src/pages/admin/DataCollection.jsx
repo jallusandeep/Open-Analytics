@@ -42,7 +42,9 @@ import {
   syncUpstoxCurrentInstruments,
   syncUpstoxExpiredInstruments,
   toggleUpstoxDataCollectionSchedule,
-  updateUpstoxDataCollectionSchedule
+  updateUpstoxDataCollectionSchedule,
+  getUpstoxOHLCVPreview,
+  syncUpstoxOHLCV
 } from "../../api/dataCollectionApi";
 
 const emptySummary = {
@@ -121,6 +123,22 @@ const segmentOptions = [
   { value: "NCD_FO", label: "NCD FO" },
   { value: "BCD_FO", label: "BCD FO" }
 ];
+
+const ohlcvColumns = [
+  { key: "instrument_key", label: "Instrument Key", filterable: false },
+  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
+  { key: "date", label: "Date", filterable: false },
+  { key: "open", label: "Open", filterable: false },
+  { key: "high", label: "High", filterable: false },
+  { key: "low", label: "Low", filterable: false },
+  { key: "close", label: "Close", filterable: false },
+  { key: "volume", label: "Volume", filterable: false },
+  { key: "oi", label: "OI", filterable: false },
+  { key: "ingested_at", label: "Ingested At", filterable: false }
+];
+
+const ohlcvGridTemplateColumns =
+  "280px 260px 150px 120px 120px 120px 120px 150px 120px 220px";
 
 const instrumentTypeOptions = [
   { value: "all", label: "All Types" },
@@ -978,12 +996,52 @@ function DbPreviewContent({
   onPageChange
 }) {
   const isExpired = previewMode === "expired";
-  const title = isExpired ? "Expired Instruments" : "Current Instruments";
+  const title =
+  previewMode === "ohlcv"
+    ? "OHLCV"
+    : isExpired
+    ? "Expired Instruments"
+    : "Current Instruments";
   const sourceOptions = isExpired
     ? expiredSourceTypeOptions
     : currentSourceTypeOptions;
 
+  const isOHLCV = previewMode === "ohlcv";
+
+  const activeColumns = isOHLCV
+    ? ohlcvColumns
+    : previewColumns;
+
+  const activeGridTemplateColumns = isOHLCV
+    ? ohlcvGridTemplateColumns
+    : previewGridTemplateColumns;
+
   function renderPreviewCell(row, column) {
+      if (column.key === "ingested_at") {
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {formatDateTime(row.ingested_at)}
+      </span>
+    );
+  }
+
+  if (
+    ["open", "high", "low", "close", "volume", "oi"].includes(column.key)
+  ) {
+    return (
+      <span className="truncate oa-code-font text-white">
+        {row[column.key] ?? "--"}
+      </span>
+    );
+  }
+
+  if (column.key === "date") {
+    return (
+      <span className="truncate oa-code-font text-cyan-200">
+        {row.date || "--"}
+      </span>
+    );
+  }
     if (column.key === "synced_at") {
       return (
         <span className="truncate oa-code-font text-oa-muted">
@@ -1055,30 +1113,33 @@ function DbPreviewContent({
               </button>
             ) : null}
           </div>
+          {!isOHLCV && (
+          <>
+            <Select
+              value={sourceType}
+              onChange={(event) => onSourceTypeChange(event.target.value)}
+              options={sourceOptions}
+              ariaLabel="Source type"
+              minWidth="w-40"
+            />
 
-          <Select
-            value={sourceType}
-            onChange={(event) => onSourceTypeChange(event.target.value)}
-            options={sourceOptions}
-            ariaLabel="Source type"
-            minWidth="w-40"
-          />
+            <Select
+              value={segment}
+              onChange={(event) => onSegmentChange(event.target.value)}
+              options={segmentOptions}
+              ariaLabel="Segment"
+              minWidth="w-36"
+            />
 
-          <Select
-            value={segment}
-            onChange={(event) => onSegmentChange(event.target.value)}
-            options={segmentOptions}
-            ariaLabel="Segment"
-            minWidth="w-36"
-          />
-
-          <Select
-            value={instrumentType}
-            onChange={(event) => onInstrumentTypeChange(event.target.value)}
-            options={instrumentTypeOptions}
-            ariaLabel="Instrument type"
-            minWidth="w-36"
-          />
+            <Select
+              value={instrumentType}
+              onChange={(event) => onInstrumentTypeChange(event.target.value)}
+              options={instrumentTypeOptions}
+              ariaLabel="Instrument type"
+              minWidth="w-36"
+            />
+          </>
+          )}
 
           <Tooltip text="Search" side="top">
             <button
@@ -1126,13 +1187,17 @@ function DbPreviewContent({
         )}
 
         <DataTable
-          columns={previewColumns}
+          columns={activeColumns}
           rows={previewData.rows}
           loading={false}
           loadingMessage={`Loading ${title.toLowerCase()}`}
           emptyMessage="No records found."
-          gridTemplateColumns={previewGridTemplateColumns}
-          minWidth="min-w-[2020px]"
+          gridTemplateColumns={activeGridTemplateColumns}
+          minWidth={
+            isOHLCV
+              ? "min-w-[1650px]"
+              : "min-w-[2020px]"
+          }
           getRowKey={(row, index) =>
             `${row.instrument_key || row.trading_symbol || index}-${index}`
           }
@@ -1220,9 +1285,6 @@ function DataCollection() {
 
   const [monitorSearch, setMonitorSearch] = useState("");
   const [appliedMonitorSearch, setAppliedMonitorSearch] = useState("");
-
-  const [ohlcvData, setOhlcvData] = useState(emptyPreviewData);
-  const [ohlcvLoading, setOhlcvLoading] = useState(false);
 
   const [selectedScheduleJob, setSelectedScheduleJob] = useState(null);
   const [scheduleFormMode, setScheduleFormMode] = useState("add");
@@ -1424,17 +1486,18 @@ function DataCollection() {
       setPreviewPage(nextData.page || customPage);
     } catch (error) {
       setPreviewData(emptyPreviewData);
+
+      const errorMessage =
+        previewMode === "expired"
+          ? "Unable to load expired instruments."
+          : previewMode === "ohlcv"
+          ? "Unable to load OHLCV data."
+          : "Unable to load current instruments.";
+
       showToast(
-        getApiErrorMessage(
-          error,
-          previewMode === "expired"
-            ? "Unable to load expired instruments."
-            : "Unable to load current instruments."
-        ),
+        getApiErrorMessage(error, errorMessage),
         "error"
       );
-    } finally {
-      setPreviewLoading(false);
     }
   }
 
@@ -1555,6 +1618,36 @@ function DataCollection() {
       setCancelling(false);
     }
   }
+
+  async function handleOHLCVSync() {
+  if (!isAdminControlAllowed) {
+    showToast(
+      "Admin access required to run OHLCV collection.",
+      "error"
+    );
+    return;
+  }
+
+  try {
+    const response = await syncUpstoxOHLCV();
+
+    showToast(
+      response.data?.message ||
+        "OHLCV collection started.",
+      "success"
+    );
+
+    await loadPreview(previewPage);
+  } catch (error) {
+    showToast(
+      getApiErrorMessage(
+        error,
+        "Unable to run OHLCV collection."
+      ),
+      "error"
+    );
+  }
+}
 
   async function handleCurrentSync() {
     if (!isAdminControlAllowed) {
@@ -2109,8 +2202,10 @@ function DataCollection() {
                   onRunPreview={
                     getPreviewMode(activeView) === "expired"
                       ? handleExpiredSync
+                      : getPreviewMode(activeView) === "ohlcv"
+                      ? handleOHLCVSync
                       : handleCurrentSync
-                  }
+}
                   onPreviousPage={() =>
                     setPreviewPage((value) => Math.max(1, value - 1))
                   }
