@@ -1421,6 +1421,22 @@ function DataCollection() {
         disabled: hasActiveJob && !isExpiredJobRunning,
         canCancel: isExpiredJobRunning && shouldShowCancelButton,
         onRun: handleExpiredSync
+      },
+      {
+        id: "ohlcv",
+        title: "OHLCV",
+        scheduleJobType: "ohlcv",
+        records: 0,
+        recordsAdded: 0,
+        lastSyncedAt: "--",
+        triggeredBy: "System",
+        triggerSource: "system",
+        duration: null,
+        lastStatus: "success",
+        loading: false,
+        disabled: hasActiveJob,
+        canCancel: false,
+        onRun: handleOHLCVSync
       }
     ];
   }, [
@@ -1475,12 +1491,15 @@ function DataCollection() {
       if (previewMode === "expired") {
         response = await getUpstoxExpiredInstrumentsPreview(params);
       } else if (previewMode === "ohlcv") {
-        response = await getUpstoxOHLCVPreview(params); // 👈 NEW API
+        response = await getUpstoxOHLCVPreview(params);
       } else {
         response = await getUpstoxInstrumentsPreview(params);
       }
 
-      const nextData = response.data.data || response.data || emptyPreviewData;
+      const nextData =
+        response.data.data ||
+        response.data ||
+        emptyPreviewData;
 
       setPreviewData(nextData);
       setPreviewPage(nextData.page || customPage);
@@ -1498,6 +1517,8 @@ function DataCollection() {
         getApiErrorMessage(error, errorMessage),
         "error"
       );
+    } finally {
+      setPreviewLoading(false);
     }
   }
 
