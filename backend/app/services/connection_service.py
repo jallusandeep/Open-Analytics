@@ -9,6 +9,20 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException, status
 
 from app.database import get_connection
+from app.telegram_alerts_msg.message_templates import (
+    build_telegram_connected_message,
+    build_telegram_test_message,
+    build_upstox_token_saved_from_webhook_message
+)
+from app.telegram_alerts_msg.telegram_sender import (
+    get_admin_super_admin_telegram_chat_ids,
+    get_telegram_bot_info,
+    get_telegram_bot_token,
+    get_telegram_updates,
+    get_user_telegram_connection_raw,
+    send_telegram_message,
+    validate_telegram_bot_token
+)
 
 
 UPSTOX_PROVIDER = "upstox"
@@ -31,8 +45,6 @@ UPSTOX_PUBLIC_INSTRUMENTS_BASE_URL = (
 UPSTOX_EXPIRED_OPTION_CONTRACT_PATH = "/expired-instruments/option/contract"
 UPSTOX_EXPIRED_FUTURE_CONTRACT_PATH = "/expired-instruments/future/contract"
 UPSTOX_EXPIRED_HISTORICAL_CANDLE_PATH = "/expired-instruments/historical-candle"
-
-TELEGRAM_BASE_URL = "https://api.telegram.org"
 
 IST_TIMEZONE = "Asia/Kolkata"
 REQUEST_TIMEOUT_SECONDS = 30
@@ -607,12 +619,8 @@ def handle_upstox_notifier_webhook_service(request):
         try:
             bot_token = get_telegram_bot_token(conn)
             chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
-
-            notify_message = (
-                "Open Analytics update\n\n"
-                "Upstox access token was received from the Upstox notifier webhook "
-                "and saved successfully.\n\n"
-                f"Token expiry: {expiry_date.strftime('%d %b %Y, %I:%M %p')} IST"
+            notify_message = build_upstox_token_saved_from_webhook_message(
+                expiry_date=expiry_date
             )
 
             for chat_id in chat_ids:
@@ -1325,198 +1333,6 @@ def disconnect_upstox_connection_service(current_user):
         conn.close()
 
 
-def telegram_api_request(bot_token: str, method_name: str, payload=None, query_params=None):
-    clean_bot_token = safe_strip(bot_token)
-
-    if not clean_bot_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram bot token is required."
-        )
-
-    query_string = ""
-
-    if query_params:
-        query_string = "?" + urllib.parse.urlencode(query_params)
-
-    url = f"{TELEGRAM_BASE_URL}/bot{clean_bot_token}/{method_name}{query_string}"
-    data = None
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "OpenAnalytics/1.0"
-    }
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    request = urllib.request.Request(
-        url,
-        data=data,
-        method="POST" if payload is not None else "GET",
-        headers=headers
-    )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=REQUEST_TIMEOUT_SECONDS
-        ) as response:
-            content = response.read().decode("utf-8")
-
-            if not content:
-                return {}
-
-            result = json.loads(content)
-
-            if not result.get("ok", False):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=result.get("description") or "Telegram API request failed."
-                )
-
-            return result
-
-    except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="ignore")
-
-        try:
-            payload = json.loads(error_body)
-            message = payload.get("description") or str(payload)
-        except Exception:
-            message = error_body or str(error)
-
-        raise HTTPException(
-            status_code=error.code,
-            detail=f"Telegram API error: {message}"
-        )
-
-    except urllib.error.URLError as error:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach Telegram API: {error}"
-        )
-
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Invalid JSON response received from Telegram API."
-        )
-
-
-def validate_telegram_bot_token(bot_token: str):
-    bot_response = telegram_api_request(
-        bot_token=bot_token,
-        method_name="getMe"
-    )
-
-    bot_data = bot_response.get("result") or {}
-
-    if not bot_data.get("id"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram bot token could not be verified."
-        )
-
-    return bot_data
-
-
-def get_telegram_bot_token(conn):
-    existing = get_telegram_connection_raw(conn)
-
-    if not existing or existing[8] == "disconnected":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Telegram bot is not configured by admin."
-        )
-
-    bot_token = safe_strip(existing[6] or existing[2])
-
-    if not bot_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram bot token is missing."
-        )
-
-    return bot_token
-
-
-def get_telegram_bot_info(conn):
-    bot_token = get_telegram_bot_token(conn)
-    bot_data = validate_telegram_bot_token(bot_token)
-
-    bot_username = safe_strip(bot_data.get("username"))
-    bot_name = safe_strip(bot_data.get("first_name")) or "Telegram bot"
-
-    if not bot_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram bot username is missing. Please check the bot in BotFather."
-        )
-
-    return {
-        "bot_token": bot_token,
-        "bot_username": bot_username,
-        "bot_name": bot_name
-    }
-
-
-def clear_telegram_webhook(bot_token: str):
-    telegram_api_request(
-        bot_token=bot_token,
-        method_name="deleteWebhook",
-        query_params={
-            "drop_pending_updates": "false"
-        }
-    )
-
-
-def get_telegram_updates(bot_token: str):
-    return telegram_api_request(
-        bot_token=bot_token,
-        method_name="getUpdates",
-        query_params={
-            "limit": 100,
-            "timeout": 2,
-            "allowed_updates": json.dumps([
-                "message",
-                "edited_message",
-                "channel_post",
-                "edited_channel_post"
-            ])
-        }
-    )
-
-
-def send_telegram_message(bot_token: str, chat_id: str, message: str):
-    return telegram_api_request(
-        bot_token=bot_token,
-        method_name="sendMessage",
-        payload={
-            "chat_id": chat_id,
-            "text": message
-        }
-    )
-
-
-def get_admin_super_admin_telegram_chat_ids(conn):
-    rows = conn.execute("""
-        SELECT DISTINCT utc.telegram_chat_id
-        FROM user_telegram_connections utc
-        INNER JOIN users u
-            ON u.user_id = utc.user_id
-        WHERE utc.record_status = 'S'
-          AND utc.connection_status = 'connected'
-          AND utc.telegram_chat_id IS NOT NULL
-          AND TRIM(utc.telegram_chat_id) <> ''
-          AND u.record_status = 'S'
-          AND u.is_active = TRUE
-          AND u.role IN ('admin', 'super_admin');
-    """).fetchall()
-
-    return [row[0] for row in rows if row and row[0]]
-
-
 def ensure_app_metadata_table(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS app_metadata (
@@ -1576,187 +1392,6 @@ def clear_upstox_expiry_notification_marker(conn):
             'upstox_access_token_request_last_triggered_at'
         );
     """)
-
-
-def notify_admin_super_admins_upstox_token_expiry_service():
-    conn = get_connection()
-
-    try:
-        upstox_connection = get_upstox_connection_raw(conn)
-
-        if not upstox_connection:
-            return {
-                "status": "skipped",
-                "message": "Upstox connection is not configured."
-            }
-
-        api_key = safe_strip(upstox_connection[2])
-        api_secret = safe_strip(upstox_connection[3])
-        access_token = safe_strip(upstox_connection[6])
-        expiry_value = upstox_connection[7]
-
-        now = get_ist_now()
-
-        if now.hour < 6:
-            return {
-                "status": "skipped",
-                "message": "Upstox token reminder starts after 6:00 AM IST."
-            }
-
-        expiry_date = parse_db_datetime(expiry_value)
-
-        token_is_missing = not access_token
-        token_expiry_missing = bool(access_token and not expiry_date)
-        token_is_expired = expiry_date is not None and expiry_date <= now
-
-        if not token_is_missing and not token_expiry_missing and not token_is_expired:
-            return {
-                "status": "skipped",
-                "message": "Upstox access token is still valid."
-            }
-
-        last_sent_value = get_app_metadata_value(
-            conn,
-            "upstox_access_token_reminder_last_sent_at"
-        )
-        last_sent_at = parse_db_datetime(last_sent_value)
-
-        if last_sent_at and now - last_sent_at < timedelta(hours=1):
-            return {
-                "status": "skipped",
-                "message": "Upstox access token reminder already sent within the last hour."
-            }
-
-        auto_request_status = "skipped"
-        auto_request_message = "Upstox API key or API secret is missing."
-
-        if api_key and api_secret:
-            try:
-                token_request_response = upstox_access_token_request_post(
-                    client_id=api_key,
-                    client_secret=api_secret
-                )
-
-                auto_request_status = "success"
-                auto_request_message = (
-                    token_request_response.get("message")
-                    or "Upstox access token approval request triggered."
-                )
-
-                set_app_metadata_value(
-                    conn,
-                    "upstox_access_token_request_last_triggered_at",
-                    now.strftime("%Y-%m-%d %H:%M:%S")
-                )
-
-            except HTTPException as request_error:
-                request_detail = request_error.detail
-
-                if isinstance(request_detail, dict):
-                    auto_request_message = (
-                        request_detail.get("message")
-                        or str(request_detail)
-                    )
-                else:
-                    auto_request_message = str(request_detail)
-
-                auto_request_status = "failed"
-
-            except Exception as request_error:
-                auto_request_status = "failed"
-                auto_request_message = str(request_error)
-
-        set_app_metadata_value(
-            conn,
-            "upstox_access_token_reminder_last_sent_at",
-            now.strftime("%Y-%m-%d %H:%M:%S")
-        )
-
-        try:
-            bot_token = get_telegram_bot_token(conn)
-        except HTTPException:
-            conn.commit()
-
-            return {
-                "status": "skipped",
-                "message": "Telegram bot is not configured. Upstox auto request check was still processed."
-            }
-
-        chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
-
-        if not chat_ids:
-            conn.commit()
-
-            return {
-                "status": "skipped",
-                "message": "No connected admin/super admin Telegram users found."
-            }
-
-        if token_is_missing:
-            token_status_text = "missing"
-        elif token_expiry_missing:
-            token_status_text = "saved, but expiry time is missing"
-        else:
-            token_status_text = (
-                f"expired at {expiry_date.strftime('%d %b %Y, %I:%M %p')} IST"
-            )
-
-        if auto_request_status == "success":
-            approval_text = (
-                "Backend has triggered the Upstox access token approval request. "
-                "Please approve it from Upstox app/web or WhatsApp."
-            )
-        else:
-            approval_text = (
-                "Backend could not trigger the Upstox approval request automatically. "
-                "Please open Open Analytics > Connections and generate the Upstox access token."
-            )
-
-        message = (
-            "Open Analytics reminder\n\n"
-            f"Upstox access token is {token_status_text}.\n\n"
-            f"{approval_text}\n\n"
-            f"Auto request status: {auto_request_status}\n"
-            f"Details: {auto_request_message}\n\n"
-            "This reminder repeats every 1 hour after 6:00 AM IST until a valid token is saved."
-        )
-
-        sent_count = 0
-
-        for chat_id in chat_ids:
-            try:
-                send_telegram_message(
-                    bot_token=bot_token,
-                    chat_id=chat_id,
-                    message=message
-                )
-                sent_count += 1
-            except Exception as error:
-                print(f"Unable to send Upstox token Telegram reminder: {error}")
-
-        conn.commit()
-
-        return {
-            "status": "success",
-            "message": f"Upstox access token reminder sent to {sent_count} admin/super admin user(s)."
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unable to notify Upstox access token expiry: {e}"
-        )
-
-    finally:
-        conn.close()
 
 
 def save_telegram_connection_service(request, current_user):
@@ -1960,25 +1595,6 @@ def telegram_user_connection_to_response(row):
         "telegram_last_name": telegram_last_name,
         "updated_at": str(updated_at) if updated_at else None
     }
-
-
-def get_user_telegram_connection_raw(conn, user_id: str):
-    return conn.execute("""
-        SELECT
-            telegram_connection_id,
-            user_id,
-            telegram_chat_id,
-            telegram_username,
-            telegram_first_name,
-            telegram_last_name,
-            link_token,
-            connection_status,
-            updated_at
-        FROM user_telegram_connections
-        WHERE user_id = ?
-          AND record_status = 'S'
-        LIMIT 1;
-    """, [user_id]).fetchone()
 
 
 def get_my_telegram_connection_status_service(current_user):
@@ -2208,7 +1824,7 @@ def verify_my_telegram_connection_service(current_user):
         send_telegram_message(
             bot_token=bot_token,
             chat_id=matched["telegram_chat_id"],
-            message="Open Analytics Telegram connected successfully."
+            message=build_telegram_connected_message()
         )
 
         row = get_user_telegram_connection_raw(conn, user_id)
@@ -2266,7 +1882,7 @@ def test_my_telegram_connection_service(current_user):
         send_telegram_message(
             bot_token=bot_token,
             chat_id=telegram_chat_id,
-            message="Open Analytics Telegram test message."
+            message=build_telegram_test_message()
         )
 
         return {
