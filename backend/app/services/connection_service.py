@@ -243,7 +243,9 @@ def refresh_connection_statuses_for_list(conn):
 
         if current_status != "disconnected":
             if access_token and access_token_expires_at and access_token_expires_at <= now_time:
-                next_status = "failed"
+                next_status = "limited" if analytical_token else "failed"
+            elif current_status in ("failed", "limited"):
+                next_status = current_status
             else:
                 next_status = get_upstox_save_status(
                     api_key=api_key,
@@ -1187,6 +1189,74 @@ def update_connection_test_status(
     conn.commit()
 
 
+def get_upstox_token_test_result(token: str):
+    if not token:
+        return {
+            "state": "missing",
+            "message": "not saved"
+        }
+
+    try:
+        validate_upstox_expired_permission(token)
+
+        return {
+            "state": "connected",
+            "message": "connected"
+        }
+
+    except HTTPException as error:
+        detail = error.detail
+        error_code = None
+        message = ""
+
+        if isinstance(detail, dict):
+            error_code = detail.get("error_code")
+            message = detail.get("message") or ""
+        else:
+            message = str(detail)
+
+        if error.status_code == status.HTTP_401_UNAUTHORIZED:
+            return {
+                "state": "invalid",
+                "message": "invalid or expired"
+            }
+
+        if (
+            error.status_code == status.HTTP_403_FORBIDDEN
+            or is_expired_permission_error(error_code, message)
+        ):
+            return {
+                "state": "limited",
+                "message": "connected with limited permission"
+            }
+
+        return {
+            "state": "failed",
+            "message": message or detail or "verification failed"
+        }
+
+
+def get_upstox_analytical_token_test_result(token: str):
+    if not token:
+        return {
+            "state": "missing",
+            "message": "not saved"
+        }
+
+    return {
+        "state": "connected",
+        "message": "connected"
+    }
+
+
+def is_upstox_token_usable(test_result: dict) -> bool:
+    return test_result.get("state") in ("connected", "limited")
+
+
+def format_upstox_token_test_label(token_label: str, test_result: dict) -> str:
+    return f"{token_label} {test_result.get('message', 'verification failed')}"
+
+
 def test_upstox_connection_service(current_user):
     conn = get_connection()
 
@@ -1219,81 +1289,20 @@ def test_upstox_connection_service(current_user):
                 detail="Analytical token or access token is required before testing Upstox connection."
             )
 
-        token_for_test = access_token or analytical_token
-
-        try:
-            validate_upstox_expired_permission(token_for_test)
-
-        except HTTPException as e:
-            detail = e.detail
-            error_code = None
-            message = ""
-
-            if isinstance(detail, dict):
-                error_code = detail.get("error_code")
-                message = detail.get("message") or ""
-            else:
-                message = str(detail)
-
-            if e.status_code == status.HTTP_401_UNAUTHORIZED:
-                update_connection_test_status(
-                    conn=conn,
-                    connection_id=connection_id,
-                    current_user=current_user,
-                    connection_status="failed"
-                )
-
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Upstox token is invalid or expired. Please save a fresh token."
-                )
-
-            if e.status_code == status.HTTP_403_FORBIDDEN or is_expired_permission_error(error_code, message):
-                test_status = get_upstox_save_status(
-                    api_key=api_key,
-                    api_secret=api_secret,
-                    redirect_url=redirect_url,
-                    analytical_token=analytical_token,
-                    access_token=access_token
-                )
-
-                update_connection_test_status(
-                    conn=conn,
-                    connection_id=connection_id,
-                    current_user=current_user,
-                    connection_status=test_status
-                )
-
-                if test_status == "connected":
-                    return {
-                        "status": "success",
-                        "message": "Upstox connection verified successfully."
-                    }
-
-                return {
-                    "status": "limited",
-                    "message": "Upstox token verified with limited connection."
-                }
-
-            update_connection_test_status(
-                conn=conn,
-                connection_id=connection_id,
-                current_user=current_user,
-                connection_status="failed"
-            )
-
-            raise HTTPException(
-                status_code=e.status_code,
-                detail=message or detail or "Unable to verify Upstox connection."
-            )
-
-        test_status = get_upstox_save_status(
-            api_key=api_key,
-            api_secret=api_secret,
-            redirect_url=redirect_url,
-            analytical_token=analytical_token,
-            access_token=access_token
+        analytical_result = get_upstox_analytical_token_test_result(
+            analytical_token
         )
+        access_result = get_upstox_token_test_result(access_token)
+
+        has_usable_analytical_token = is_upstox_token_usable(analytical_result)
+        has_usable_access_token = is_upstox_token_usable(access_result)
+
+        if has_usable_access_token and api_key and api_secret and redirect_url:
+            test_status = "connected"
+        elif has_usable_access_token or has_usable_analytical_token:
+            test_status = "limited"
+        else:
+            test_status = "failed"
 
         update_connection_test_status(
             conn=conn,
@@ -1302,15 +1311,35 @@ def test_upstox_connection_service(current_user):
             connection_status=test_status
         )
 
+        tested_parts = []
+
+        if analytical_token:
+            tested_parts.append(
+                format_upstox_token_test_label("Analytical token", analytical_result)
+            )
+
+        if access_token:
+            tested_parts.append(
+                format_upstox_token_test_label("Access token", access_result)
+            )
+
+        message = ". ".join(tested_parts)
+
+        if test_status == "failed":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"{message}. Please save a fresh token."
+            )
+
         if test_status == "connected":
             return {
                 "status": "success",
-                "message": "Upstox connection verified successfully."
+                "message": f"{message}. Upstox connection verified successfully."
             }
 
         return {
             "status": "limited",
-            "message": "Upstox token verified with limited connection."
+            "message": f"{message}. Upstox connection is limited."
         }
 
     except HTTPException:

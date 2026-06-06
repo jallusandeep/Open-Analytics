@@ -743,8 +743,10 @@ function Connections() {
     setSaving(true);
 
     try {
+      let response = null;
+
       if (formBroker.id === "upstox") {
-        await saveUpstoxConnection({
+        response = await saveUpstoxConnection({
           api_key: formData.api_key.trim() || null,
           api_secret: formData.api_secret.trim() || null,
           redirect_url: formData.redirect_url.trim() || null,
@@ -754,13 +756,19 @@ function Connections() {
       }
 
       if (formBroker.id === "telegram") {
-        await saveTelegramConnection({
+        response = await saveTelegramConnection({
           bot_token: formData.bot_token.trim()
         });
       }
 
-      showToast(`${formBroker.name} connection saved successfully.`, "success");
       await loadConnections(false);
+
+      showToast(
+        response?.data?.message ||
+          `${formBroker.name} connection saved successfully.`,
+        response?.data?.status === "limited" ? "warning" : "success"
+      );
+
       setFormMode("closed");
       setFormData(emptyFormData);
     } catch (error) {

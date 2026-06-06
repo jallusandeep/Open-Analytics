@@ -1,4 +1,6 @@
 import threading
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -30,6 +32,7 @@ IST_TZINFO = timezone(timedelta(hours=5, minutes=30))
 UPSTOX_TOKEN_CHECK_HOUR = 3
 UPSTOX_TOKEN_CHECK_MINUTE = 30
 UPSTOX_REMINDER_INTERVAL_SECONDS = 60 * 60
+UPSTOX_TOKEN_EXPIRY_WARNING_DAYS = 1
 
 _connection_scheduler_thread = None
 _connection_scheduler_stop_event = threading.Event()
@@ -67,6 +70,76 @@ def get_seconds_until_next_upstox_check(now: datetime | None = None) -> int:
     return max(wait_seconds, 60)
 
 
+def parse_jwt_expiry(token: str):
+    token_value = safe_strip(token)
+
+    if not token_value:
+        return None
+
+    try:
+        parts = token_value.split(".")
+
+        if len(parts) < 2:
+            return None
+
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded_payload = base64.urlsafe_b64decode(payload.encode("utf-8"))
+        data = json.loads(decoded_payload.decode("utf-8"))
+        expires_at = data.get("exp")
+
+        if not expires_at:
+            return None
+
+        parsed_date = datetime.fromtimestamp(
+            int(expires_at),
+            ZoneInfo(IST_TIMEZONE)
+        )
+
+        return parsed_date.replace(tzinfo=None)
+
+    except Exception:
+        return None
+
+
+def get_token_expiry_state(token: str, expiry_date, now: datetime):
+    if not token:
+        return "missing"
+
+    if not expiry_date:
+        return "expiry_missing"
+
+    if expiry_date <= now:
+        return "expired"
+
+    if expiry_date <= now + timedelta(days=UPSTOX_TOKEN_EXPIRY_WARNING_DAYS):
+        return "expires_soon"
+
+    return "valid"
+
+
+def format_token_status(label: str, state: str, expiry_date) -> str:
+    expiry_label = (
+        expiry_date.strftime("%d %b %Y, %I:%M %p")
+        if expiry_date
+        else "--"
+    )
+
+    if state == "missing":
+        return f"{label}: missing"
+
+    if state == "expiry_missing":
+        return f"{label}: saved, but expiry time is missing"
+
+    if state == "expired":
+        return f"{label}: expired at {expiry_label} IST"
+
+    if state == "expires_soon":
+        return f"{label}: expires at {expiry_label} IST"
+
+    return f"{label}: valid until {expiry_label} IST"
+
+
 def get_upstox_token_status():
     conn = get_connection()
 
@@ -80,25 +153,33 @@ def get_upstox_token_status():
                 "message": "Upstox connection is not configured."
             }
 
+        analytical_token = safe_strip(upstox_connection[5])
         access_token = safe_strip(upstox_connection[6])
-        expiry_value = upstox_connection[7]
-        expiry_date = parse_db_datetime(expiry_value)
+        access_expiry_value = upstox_connection[7]
+        access_expiry_date = parse_db_datetime(access_expiry_value)
+        analytical_expiry_date = parse_jwt_expiry(analytical_token)
         now = get_ist_now()
 
-        token_is_missing = not access_token
-        token_expiry_missing = bool(access_token and not expiry_date)
-        token_is_expired = expiry_date is not None and expiry_date <= now
+        access_state = get_token_expiry_state(
+            token=access_token,
+            expiry_date=access_expiry_date,
+            now=now
+        )
+        analytical_state = get_token_expiry_state(
+            token=analytical_token,
+            expiry_date=analytical_expiry_date,
+            now=now
+        )
 
         token_is_valid = (
-            not token_is_missing
-            and not token_expiry_missing
-            and not token_is_expired
+            access_state in ("valid", "expires_soon")
+            and analytical_state in ("valid", "missing")
         )
 
         return {
             "configured": True,
             "valid": token_is_valid,
-            "message": "Upstox access token is valid." if token_is_valid else "Upstox access token requires update."
+            "message": "Upstox tokens are valid." if token_is_valid else "Upstox token requires update."
         }
 
     finally:
@@ -120,20 +201,36 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
         api_key = safe_strip(upstox_connection[2])
         api_secret = safe_strip(upstox_connection[3])
+        analytical_token = safe_strip(upstox_connection[5])
         access_token = safe_strip(upstox_connection[6])
-        expiry_value = upstox_connection[7]
+        access_expiry_value = upstox_connection[7]
 
         now = get_ist_now()
-        expiry_date = parse_db_datetime(expiry_value)
+        access_expiry_date = parse_db_datetime(access_expiry_value)
+        analytical_expiry_date = parse_jwt_expiry(analytical_token)
 
-        token_is_missing = not access_token
-        token_expiry_missing = bool(access_token and not expiry_date)
-        token_is_expired = expiry_date is not None and expiry_date <= now
+        access_state = get_token_expiry_state(
+            token=access_token,
+            expiry_date=access_expiry_date,
+            now=now
+        )
+        analytical_state = get_token_expiry_state(
+            token=analytical_token,
+            expiry_date=analytical_expiry_date,
+            now=now
+        )
 
-        if not token_is_missing and not token_expiry_missing and not token_is_expired:
+        access_needs_reminder = access_state in (
+            "missing",
+            "expiry_missing",
+            "expired"
+        )
+        analytical_needs_reminder = analytical_state not in ("valid", "missing")
+
+        if not access_needs_reminder and not analytical_needs_reminder:
             return {
                 "status": "skipped",
-                "message": "Upstox access token is still valid.",
+                "message": "Upstox tokens are still valid.",
                 "token_valid": True
             }
 
@@ -217,14 +314,24 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 "token_valid": False
             }
 
-        if token_is_missing:
-            token_status_text = "missing"
-        elif token_expiry_missing:
-            token_status_text = "saved, but expiry time is missing"
-        else:
-            token_status_text = (
-                f"expired at {expiry_date.strftime('%d %b %Y, %I:%M %p')} IST"
+        token_status_lines = [
+            format_token_status(
+                label="Access token",
+                state=access_state,
+                expiry_date=access_expiry_date
             )
+        ]
+
+        if analytical_token:
+            token_status_lines.append(
+                format_token_status(
+                    label="Analytical token",
+                    state=analytical_state,
+                    expiry_date=analytical_expiry_date
+                )
+            )
+
+        token_status_text = "\n".join(token_status_lines)
 
         if auto_request_status == "success":
             approval_text = (

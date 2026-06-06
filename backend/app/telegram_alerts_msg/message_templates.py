@@ -124,9 +124,9 @@ def build_upstox_access_token_reminder_message(
 ) -> str:
     return (
         f"{APP_NAME} reminder\n\n"
-        f"Upstox access token is {format_display_value(token_status_text)}.\n\n"
+        f"Upstox token status:\n{format_display_value(token_status_text)}\n\n"
         f"{format_display_value(approval_text)}\n\n"
         f"Auto request status: {format_display_value(auto_request_status)}\n"
         f"Details: {format_display_value(auto_request_message)}\n\n"
-        "This reminder repeats every 1 hour after 6:00 AM IST until a valid token is saved."
+        "This reminder repeats every 1 hour until tokens are valid."
     )
