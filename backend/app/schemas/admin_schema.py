@@ -13,7 +13,6 @@ class AdminUserCreateRequest(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
-    login_id: str = Field(..., min_length=2, max_length=50)
     full_name: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     mobile_number: Optional[str] = None

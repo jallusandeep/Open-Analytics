@@ -16,7 +16,9 @@ from app.telegram_alerts_msg.message_templates import (
 from app.telegram_alerts_msg.telegram_sender import send_user_telegram_alert
 
 
+LOGIN_ID_PREFIX_LENGTH = 5
 LOGIN_ID_SUFFIX_LENGTH = 5
+LOGIN_ID_GENERATION_ATTEMPTS = 50
 FORGOT_PASSWORD_OTP_MINUTES = 5
 FORGOT_PASSWORD_OTP_LENGTH = 6
 
@@ -31,16 +33,16 @@ def normalize_mobile_number(value: str | None) -> str | None:
 
 
 def generate_candidate_login_id() -> str:
-    first_five_digits = "".join(random.choices(string.digits, k=5))
+    prefix = "".join(random.choices(string.digits, k=LOGIN_ID_PREFIX_LENGTH))
     suffix = "".join(
         random.choices(string.ascii_uppercase + string.digits, k=LOGIN_ID_SUFFIX_LENGTH)
     )
 
-    return f"{first_five_digits}{suffix}"
+    return f"{prefix}{suffix}"
 
 
 def generate_unique_login_id(conn) -> str:
-    for _ in range(50):
+    for _ in range(LOGIN_ID_GENERATION_ATTEMPTS):
         login_id = generate_candidate_login_id()
 
         existing = conn.execute(

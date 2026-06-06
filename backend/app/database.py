@@ -216,79 +216,11 @@ def init_database():
         """)
 
         # -----------------------------
-        # Default admin user
-        # -----------------------------
-        admin_email = "admin@openanalytics.com"
-        admin_password = "admin123"
-
-        existing_admin = conn.execute("""
-            SELECT user_id
-            FROM users
-            WHERE email = ?;
-        """, [admin_email]).fetchone()
-
-        if not existing_admin:
-            admin_user_id = str(uuid.uuid4())
-            admin_password_hash = pwd_context.hash(admin_password)
-
-            conn.execute("""
-                INSERT INTO users (
-                    user_id,
-                    login_id,
-                    full_name,
-                    email,
-                    mobile_number,
-                    password_hash,
-                    role,
-                    access_restrictions,
-                    is_active,
-                    record_status,
-                    version_no,
-                    created_by,
-                    updated_by
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, [
-                admin_user_id,
-                "admin",
-                "Admin User",
-                admin_email,
-                None,
-                admin_password_hash,
-                "admin",
-                None,
-                True,
-                "S",
-                1,
-                "system",
-                "system"
-            ])
-
-            print("Default admin user created.")
-        else:
-            conn.execute("""
-                UPDATE users
-                SET
-                    login_id = 'admin',
-                    full_name = CASE 
-                        WHEN full_name IS NULL OR full_name = '' THEN 'Admin User'
-                        ELSE full_name
-                    END,
-                    role = 'admin',
-                    is_active = TRUE,
-                    record_status = 'S',
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = 'system'
-                WHERE email = ?;
-            """, [admin_email])
-
-            print("Default admin user verified.")
-
-        # -----------------------------
         # Default super admin user
         # -----------------------------
         super_admin_email = "jallusandeep0902@gmail.com"
         super_admin_password = "1234"
+        super_admin_mobile_number = "8686504620"
 
         existing_super_admin = conn.execute("""
             SELECT user_id
@@ -320,9 +252,9 @@ def init_database():
             """, [
                 super_admin_user_id,
                 "jallusandeep0902",
-                "Super Admin",
+                "Sandeep Jallu",
                 super_admin_email,
-                None,
+                super_admin_mobile_number,
                 super_admin_password_hash,
                 "super_admin",
                 None,
@@ -338,18 +270,19 @@ def init_database():
             conn.execute("""
                 UPDATE users
                 SET
-                    login_id = 'jallusandeep0902',
-                    full_name = CASE
-                        WHEN full_name IS NULL OR full_name = '' THEN 'Super Admin'
-                        ELSE full_name
+                    login_id = CASE
+                        WHEN login_id IS NULL OR login_id = '' THEN 'jallusandeep0902'
+                        ELSE login_id
                     END,
+                    full_name = 'Sandeep Jallu',
+                    mobile_number = ?,
                     role = 'super_admin',
                     is_active = TRUE,
                     record_status = 'S',
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = 'system'
                 WHERE email = ?;
-            """, [super_admin_email])
+            """, [super_admin_mobile_number, super_admin_email])
 
             print("Default super admin user verified.")
 

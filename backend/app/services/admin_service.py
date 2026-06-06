@@ -11,20 +11,22 @@ from app.security import hash_password
 
 
 VALID_ROLES = ["user", "admin", "super_admin"]
+LOGIN_ID_PREFIX_LENGTH = 5
 LOGIN_ID_SUFFIX_LENGTH = 5
+LOGIN_ID_GENERATION_ATTEMPTS = 50
 
 
 def generate_candidate_login_id() -> str:
-    first_five_digits = "".join(random.choices(string.digits, k=5))
+    prefix = "".join(random.choices(string.digits, k=LOGIN_ID_PREFIX_LENGTH))
     suffix = "".join(
         random.choices(string.ascii_uppercase + string.digits, k=LOGIN_ID_SUFFIX_LENGTH)
     )
 
-    return f"{first_five_digits}{suffix}"
+    return f"{prefix}{suffix}"
 
 
 def generate_unique_login_id(conn) -> str:
-    for _ in range(50):
+    for _ in range(LOGIN_ID_GENERATION_ATTEMPTS):
         login_id = generate_candidate_login_id()
 
         existing = conn.execute(
@@ -169,11 +171,14 @@ def create_user_service(request, current_user):
         """
         SELECT user_id
         FROM users
-        WHERE LOWER(email) = ?
-           OR (
+        WHERE (
+            LOWER(email) = ?
+            OR (
                 ? IS NOT NULL
                 AND mobile_number = ?
-           )
+            )
+        )
+        AND COALESCE(record_status, 'S') != 'D'
         """,
         [clean_email, clean_mobile_number, clean_mobile_number]
     ).fetchone()
@@ -255,15 +260,9 @@ def update_user_service(user_id: str, request, current_user: dict):
             detail="Invalid user role"
         )
 
-    if user_id == current_user["user_id"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You cannot edit your own account"
-        )
-
-    clean_login_id = request.login_id.strip()
     clean_email = request.email.strip().lower()
     clean_mobile_number = request.mobile_number.strip() if request.mobile_number else None
+    is_self_update = user_id == current_user["user_id"]
 
     conn = get_connection()
 
@@ -271,7 +270,9 @@ def update_user_service(user_id: str, request, current_user: dict):
         """
         SELECT
             user_id,
-            role
+            login_id,
+            role,
+            is_active
         FROM users
         WHERE user_id = ?
           AND COALESCE(record_status, 'S') != 'D'
@@ -286,7 +287,18 @@ def update_user_service(user_id: str, request, current_user: dict):
             detail="User not found"
         )
 
-    target_role = target_user[1]
+    target_role = target_user[2]
+    target_is_active = target_user[3]
+
+    if is_self_update and (
+        request.role != target_role
+        or request.is_active != target_is_active
+    ):
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot change your own role or active status"
+        )
 
     if (
         current_user["role"] == "admin"
@@ -301,6 +313,7 @@ def update_user_service(user_id: str, request, current_user: dict):
     if (
         current_user["role"] == "admin"
         and request.role in ["admin", "super_admin"]
+        and (not is_self_update or request.role != target_role)
     ):
         conn.close()
         raise HTTPException(
@@ -314,17 +327,16 @@ def update_user_service(user_id: str, request, current_user: dict):
         FROM users
         WHERE (
             LOWER(email) = ?
-            OR login_id = ?
             OR (
                 ? IS NOT NULL
                 AND mobile_number = ?
             )
         )
         AND user_id != ?
+        AND COALESCE(record_status, 'S') != 'D'
         """,
         [
             clean_email,
-            clean_login_id,
             clean_mobile_number,
             clean_mobile_number,
             user_id
@@ -335,7 +347,7 @@ def update_user_service(user_id: str, request, current_user: dict):
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email, Login ID, or mobile number already exists"
+            detail="Email or mobile number already exists"
         )
 
     access_restrictions = None
@@ -349,7 +361,6 @@ def update_user_service(user_id: str, request, current_user: dict):
         """
         UPDATE users
         SET
-            login_id = ?,
             full_name = ?,
             email = ?,
             mobile_number = ?,
@@ -360,7 +371,6 @@ def update_user_service(user_id: str, request, current_user: dict):
         WHERE user_id = ?
         """,
         [
-            clean_login_id,
             request.full_name.strip(),
             clean_email,
             clean_mobile_number,
@@ -432,11 +442,7 @@ def delete_user_service(user_id: str, current_user: dict):
 
     conn.execute(
         """
-        UPDATE users
-        SET
-            is_active = FALSE,
-            record_status = 'D',
-            updated_at = CURRENT_TIMESTAMP
+        DELETE FROM users
         WHERE user_id = ?
         """,
         [user_id]
@@ -445,6 +451,6 @@ def delete_user_service(user_id: str, current_user: dict):
     conn.close()
 
     return {
-        "message": "User deleted successfully",
+        "message": "User permanently deleted successfully",
         "user_id": user_id
     }

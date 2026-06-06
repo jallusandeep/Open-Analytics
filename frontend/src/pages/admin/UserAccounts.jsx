@@ -24,6 +24,7 @@ import FloatingInput from "../../components/common/FloatingInput";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
+import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
   oaFormTextStyles,
@@ -147,7 +148,24 @@ function parseAccessRestrictions(value) {
   }
 }
 
+function getErrorMessage(error, fallbackMessage) {
+  const detail = error.response?.data?.detail;
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item.msg || item.message || fallbackMessage)
+      .join(" ");
+  }
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  return fallbackMessage;
+}
+
 function UserAccounts() {
+  const { showToast } = useToast();
   const [users, setUsers] = useState([]);
 
   const [searchText, setSearchText] = useState("");
@@ -200,14 +218,11 @@ function UserAccounts() {
     { value: "inactive", label: "Inactive" }
   ];
 
-  const editRoleOptions =
-    currentUserRole === "admin"
-      ? [{ value: "user", label: "User" }]
-      : [
-          { value: "user", label: "User" },
-          { value: "admin", label: "Admin" },
-          { value: "super_admin", label: "Super Admin" }
-        ];
+  const fullRoleOptions = [
+    { value: "user", label: "User" },
+    { value: "admin", label: "Admin" },
+    { value: "super_admin", label: "Super Admin" }
+  ];
 
   async function loadUsers(customPage = page, overrides = {}) {
     setLoading(true);
@@ -243,9 +258,9 @@ function UserAccounts() {
       setTotalPages(response.data.total_pages);
       setTotalRecords(response.data.total_records);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to load user accounts."
-      );
+      const message = getErrorMessage(error, "Unable to load user accounts.");
+      setActionMessage(message);
+      showToast(message, "error");
     } finally {
       setLoading(false);
     }
@@ -439,11 +454,42 @@ function UserAccounts() {
       return false;
     }
 
+    if (currentUserRole === "admin" && user.role === "super_admin") {
+      return false;
+    }
+
+    return true;
+  }
+
+  function isCurrentUser(user) {
+    return user?.user_id === currentUser?.user_id;
+  }
+
+  function getEditRoleOptions(user) {
+    if (isCurrentUser(user)) {
+      return fullRoleOptions.filter((option) => option.value === user.role);
+    }
+
+    if (currentUserRole === "admin") {
+      return [{ value: "user", label: "User" }];
+    }
+
+    return fullRoleOptions;
+  }
+
+  function canDeleteUser(user) {
+    if (!["admin", "super_admin"].includes(currentUserRole)) {
+      return false;
+    }
+
     if (user.user_id === currentUser?.user_id) {
       return false;
     }
 
-    if (currentUserRole === "admin" && user.role === "super_admin") {
+    if (
+      currentUserRole === "admin" &&
+      ["admin", "super_admin"].includes(user.role)
+    ) {
       return false;
     }
 
@@ -454,11 +500,10 @@ function UserAccounts() {
     setActionMessage("");
 
     if (!canEditUser(user)) {
-      setActionMessage(
-        user.user_id === currentUser?.user_id
-          ? "You cannot edit your own account from User Accounts."
-          : "You do not have permission to edit this user."
-      );
+      const message = "You do not have permission to edit this user.";
+
+      setActionMessage(message);
+      showToast(message, "warning");
       return;
     }
 
@@ -486,6 +531,18 @@ function UserAccounts() {
 
   function openDeleteModal(user) {
     setActionMessage("");
+
+    if (!canDeleteUser(user)) {
+      const message =
+        user.user_id === currentUser?.user_id
+          ? "You cannot delete your own account from User Accounts."
+          : "You do not have permission to delete this user.";
+
+      setActionMessage(message);
+      showToast(message, "warning");
+      return;
+    }
+
     setDeleteUser(user);
   }
 
@@ -534,12 +591,12 @@ function UserAccounts() {
       setShowAddModal(false);
       setFormData(emptyFormData);
 
-      setActionMessage("User created successfully.");
+      showToast("User created successfully.", "success");
       loadUsers(1);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to create user."
-      );
+      const message = getErrorMessage(error, "Unable to create user.");
+      setActionMessage(message);
+      showToast(message, "error");
     } finally {
       setSaving(false);
     }
@@ -557,24 +614,25 @@ function UserAccounts() {
 
     try {
       await updateAdminUser(editUser.user_id, {
-        login_id: editFormData.login_id,
         full_name: editFormData.full_name,
         email: editFormData.email,
         mobile_number: editFormData.mobile_number,
-        role: editFormData.role,
-        is_active: editFormData.is_active,
+        role: isCurrentUser(editUser) ? editUser.role : editFormData.role,
+        is_active: isCurrentUser(editUser)
+          ? Boolean(editUser.is_active)
+          : editFormData.is_active,
         access_restrictions:
           editFormData.role === "user" ? editFormData.access_restrictions : []
       });
 
       setEditUser(null);
       setEditFormData(emptyFormData);
-      setActionMessage("User updated successfully.");
+      showToast("User updated successfully.", "success");
       loadUsers(page);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to update user."
-      );
+      const message = getErrorMessage(error, "Unable to update user.");
+      setActionMessage(message);
+      showToast(message, "error");
     } finally {
       setUpdating(false);
     }
@@ -590,13 +648,13 @@ function UserAccounts() {
 
     try {
       await deleteAdminUser(deleteUser.user_id);
-      setActionMessage("User deleted successfully.");
+      showToast("User permanently deleted successfully.", "success");
       setDeleteUser(null);
       loadUsers(page);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to deactivate user."
-      );
+      const message = getErrorMessage(error, "Unable to delete user.");
+      setActionMessage(message);
+      showToast(message, "error");
     } finally {
       setDeleting(false);
     }
@@ -679,13 +737,15 @@ function UserAccounts() {
           />
         )}
 
-        <IconButton
-          icon={Trash2}
-          label="Delete"
-          variant="danger"
-          tooltipSide="left"
-          onClick={() => openDeleteModal(user)}
-        />
+        {canDeleteUser(user) && (
+          <IconButton
+            icon={Trash2}
+            label="Delete"
+            variant="danger"
+            tooltipSide="left"
+            onClick={() => openDeleteModal(user)}
+          />
+        )}
       </span>
     );
   }
@@ -963,7 +1023,7 @@ function UserAccounts() {
               label="Login ID"
               value={editFormData.login_id}
               onChange={handleEditInputChange}
-              required
+              disabled
             />
 
             <FloatingInput
@@ -1003,9 +1063,10 @@ function UserAccounts() {
                       role: event.target.value
                     }))
                   }
-                  options={editRoleOptions}
+                  options={getEditRoleOptions(editUser)}
                   ariaLabel="Edit user role"
                   minWidth="w-full"
+                  disabled={isCurrentUser(editUser)}
                 />
               </div>
             </div>
@@ -1027,6 +1088,7 @@ function UserAccounts() {
                   ]}
                   ariaLabel="Edit user status"
                   minWidth="w-full"
+                  disabled={isCurrentUser(editUser)}
                 />
               </div>
             </div>
@@ -1042,8 +1104,8 @@ function UserAccounts() {
 
       <Modal
         open={Boolean(deleteUser)}
-        title="Delete User"
-        subtitle="Please confirm before deleting this user."
+        title="Permanently Delete User"
+        subtitle="Please confirm before permanently deleting this user account."
         onClose={closeDeleteModal}
         width="max-w-md"
         closeOnOverlay={!deleting}
@@ -1083,7 +1145,7 @@ function UserAccounts() {
 
           <div className="min-w-0">
             <p className={oaCardStyles.headerTitle}>
-              Are you sure you want to delete this user?
+              Are you sure you want to permanently delete this user?
             </p>
 
             <div className={`mt-2 space-y-1 ${oaFormTextStyles.helper}`}>
@@ -1104,7 +1166,8 @@ function UserAccounts() {
             </div>
 
             <p className="mt-3 text-[11px] text-red-300">
-              This will remove this user from the User Accounts list.
+              This permanently deletes the account and removes it from the User
+              Accounts list.
             </p>
           </div>
         </div>
