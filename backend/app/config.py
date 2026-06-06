@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     JWT_SECRET_KEY: str = "change_this_secret_key_later"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
 
     class Config:
         env_file = str(BACKEND_ROOT / ".env")
