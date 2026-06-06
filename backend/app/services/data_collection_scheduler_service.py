@@ -8,7 +8,8 @@ from fastapi import HTTPException, status
 from app.database import get_connection
 from app.services.data_collection_service import (
     sync_upstox_current_instruments_service,
-    sync_upstox_expired_instruments_service
+    sync_upstox_expired_instruments_service,
+    sync_upstox_ohlcv_daily_service
 )
 
 
@@ -24,8 +25,14 @@ VALID_JOB_TYPES = {
     "expired_instruments": {
         "label": "Expired Instruments",
         "sync_type": "upstox_expired_instruments"
+    },
+    "ohlcv_daily": {
+        "label": "OHLCV Candles",
+        "sync_type": "upstox_ohlcv_daily"
     }
 }
+
+SCHEDULABLE_JOB_TYPES = tuple(VALID_JOB_TYPES.keys())
 
 _scheduler_thread = None
 _scheduler_stop_event = threading.Event()
@@ -116,7 +123,7 @@ def validate_job_type(job_type: str) -> str:
     if clean_job_type not in VALID_JOB_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid job type. Use current_instruments or expired_instruments."
+            detail="Invalid job type. Use current_instruments, expired_instruments, or ohlcv_daily."
         )
 
     return clean_job_type
@@ -207,7 +214,7 @@ def get_data_collection_schedules_service():
                 updated_by
             FROM upstox_data_collection_schedules
             WHERE record_status = 'S'
-              AND job_type IN ('current_instruments', 'expired_instruments')
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
             ORDER BY job_type, schedule_time;
         """).fetchall()
 
@@ -308,7 +315,7 @@ def update_data_collection_schedule_service(
             SELECT schedule_id
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
               AND record_status = 'S'
             LIMIT 1;
         """, [schedule_id]).fetchone()
@@ -349,7 +356,7 @@ def update_data_collection_schedule_service(
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
               AND record_status = 'S';
         """, [
             job_type,
@@ -383,7 +390,7 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
             SELECT schedule_time, is_active
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
               AND record_status = 'S'
             LIMIT 1;
         """, [schedule_id]).fetchone()
@@ -407,7 +414,7 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
               AND record_status = 'S';
         """, [
             next_is_active,
@@ -437,7 +444,7 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
             SELECT schedule_id
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments')
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
               AND record_status = 'S'
             LIMIT 1;
         """, [schedule_id]).fetchone()
@@ -458,7 +465,7 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments');
+              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily');
         """, [user_id, schedule_id])
 
         conn.commit()
@@ -488,7 +495,7 @@ def get_due_schedules(conn):
             next_run_at
         FROM upstox_data_collection_schedules
         WHERE record_status = 'S'
-          AND job_type IN ('current_instruments', 'expired_instruments')
+          AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
           AND is_active = TRUE
           AND (
               last_run_date IS NULL
@@ -520,7 +527,7 @@ def mark_schedule_started(
             updated_at = CURRENT_TIMESTAMP,
             updated_by = 'system_scheduler'
         WHERE schedule_id = ?
-          AND job_type IN ('current_instruments', 'expired_instruments')
+          AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
           AND record_status = 'S';
     """, [
         run_date,
@@ -544,7 +551,7 @@ def update_schedule_next_run(
             updated_at = CURRENT_TIMESTAMP,
             updated_by = 'system_scheduler'
         WHERE schedule_id = ?
-          AND job_type IN ('current_instruments', 'expired_instruments')
+          AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily')
           AND record_status = 'S';
     """, [
         calculate_next_run_at(schedule_time, is_active),
@@ -569,6 +576,13 @@ def run_schedule_job(schedule_id: str, job_type: str):
         return sync_upstox_expired_instruments_service(
             current_user=system_user,
             config={},
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "ohlcv_daily":
+        return sync_upstox_ohlcv_daily_service(
+            current_user=system_user,
+            config=None,
             clear_cancel_at_start=True
         )
 

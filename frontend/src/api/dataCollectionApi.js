@@ -20,6 +20,20 @@ export function getUpstoxExpiredInstrumentsPreview(params = {}) {
   });
 }
 
+export function getUpstoxOhlcvPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ohlcv/preview", {
+    params
+  });
+}
+
+export function getUpstoxOhlcvOptions() {
+  return axiosClient.get("/data-collection/upstox/ohlcv/options");
+}
+
+export function saveUpstoxOhlcvOptions(payload) {
+  return axiosClient.put("/data-collection/upstox/ohlcv/options", payload);
+}
+
 export function syncUpstoxCurrentInstruments(config = {}) {
   return axiosClient.post("/data-collection/upstox/sync-current", null, config);
 }
@@ -27,6 +41,14 @@ export function syncUpstoxCurrentInstruments(config = {}) {
 export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/sync-expired",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxOhlcvDaily(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/ohlcv/run",
     payload,
     config
   );

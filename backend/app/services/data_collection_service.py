@@ -3,8 +3,10 @@ import json
 import time
 from collections import deque
 import uuid
+import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +25,10 @@ EXPIRED_INSTRUMENT_FILE = DATA_DIR / "upstox_expired_instruments.json"
 UPSTOX_CURRENT_MASTER_URL = (
     "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
 )
+
+UPSTOX_CURRENT_HISTORICAL_V3_URL = "https://api.upstox.com/v3/historical-candle"
+UPSTOX_CURRENT_INTRADAY_V3_URL = "https://api.upstox.com/v3/historical-candle/intraday"
+UPSTOX_EXPIRED_HISTORICAL_URL = "https://api.upstox.com/v2/expired-instruments/historical-candle"
 
 REQUEST_TIMEOUT_SECONDS = 180
 UPSTOX_STANDARD_MAX_REQUESTS_PER_SECOND = 45
@@ -46,6 +52,34 @@ DEFAULT_EXPIRED_UNDERLYING_TYPES = ["INDEX", "EQUITY"]
 
 EXPIRED_SOURCE_OPTION = "expired_option_contract"
 EXPIRED_SOURCE_FUTURE = "expired_future_contract"
+
+OHLCV_SYNC_TYPE = "upstox_ohlcv_daily"
+OHLCV_CURRENT_SOURCE = "current"
+OHLCV_EXPIRED_SOURCE = "expired"
+OHLCV_HISTORICAL_MODE = "historical"
+OHLCV_INTRADAY_MODE = "intraday"
+
+OHLCV_ALLOWED_SOURCES = {OHLCV_CURRENT_SOURCE, OHLCV_EXPIRED_SOURCE}
+OHLCV_ALLOWED_MODES = {OHLCV_HISTORICAL_MODE, OHLCV_INTRADAY_MODE}
+OHLCV_DEFAULT_SOURCES = [OHLCV_CURRENT_SOURCE]
+OHLCV_DEFAULT_MODES = [OHLCV_HISTORICAL_MODE]
+OHLCV_DEFAULT_INTERVALS = ["day"]
+OHLCV_DEFAULT_BATCH_SIZE = 25
+OHLCV_DEFAULT_REQUEST_DELAY_MS = 500
+OHLCV_DEFAULT_BATCH_DELAY_SECONDS = 2
+OHLCV_DEFAULT_RETRY_COUNT = 3
+
+OHLCV_INTERVAL_OPTIONS = {
+    "1minute": {"label": "1 minute", "unit": "minutes", "interval_value": 1, "expired_interval": "1minute"},
+    "3minute": {"label": "3 minute", "unit": "minutes", "interval_value": 3, "expired_interval": "3minute"},
+    "5minute": {"label": "5 minute", "unit": "minutes", "interval_value": 5, "expired_interval": "5minute"},
+    "15minute": {"label": "15 minute", "unit": "minutes", "interval_value": 15, "expired_interval": "15minute"},
+    "30minute": {"label": "30 minute", "unit": "minutes", "interval_value": 30, "expired_interval": "30minute"},
+    "1hour": {"label": "1 hour", "unit": "hours", "interval_value": 1, "expired_interval": None},
+    "day": {"label": "Day", "unit": "days", "interval_value": 1, "expired_interval": "day"},
+    "week": {"label": "Week", "unit": "weeks", "interval_value": 1, "expired_interval": None},
+    "month": {"label": "Month", "unit": "months", "interval_value": 1, "expired_interval": None}
+}
 
 
 class UpstoxRollingRateLimiter:
@@ -233,6 +267,40 @@ def get_saved_upstox_access_token(conn) -> str:
         )
 
     return access_token
+
+
+def get_saved_upstox_analytical_token(conn) -> str:
+    row = conn.execute("""
+        SELECT analytical_token, connection_status
+        FROM external_connections
+        WHERE provider = ?
+          AND record_status = 'S'
+        LIMIT 1;
+    """, [UPSTOX_PROVIDER]).fetchone()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Upstox connection is not configured. Save analytical token in Connections first."
+        )
+
+    connection_status = row[1] or "saved"
+
+    if connection_status == "disconnected":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox connection is disconnected. Save analytical token in Connections first."
+        )
+
+    analytical_token = normalize_upstox_token(row[0])
+
+    if not analytical_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upstox analytical token is missing. Save analytical token in Connections first."
+        )
+
+    return analytical_token
 
 
 def mark_stale_sync_runs(conn):
@@ -2021,7 +2089,7 @@ def table_name_for_sync_type(sync_type: Optional[str]) -> Optional[str]:
         "upstox_current_instruments": "upstox_instruments",
         "upstox_expired_instruments": "upstox_expired_instruments",
         "upstox_equity_instruments": "upstox_equity_instruments",
-        "upstox_ohlcv_daily": "ohlcv_daily"
+        "upstox_ohlcv_daily": "upstox_ohlcv_candles"
     }.get(sync_type or "")
 
 
@@ -2031,11 +2099,13 @@ def safe_active_job_started_count(conn, sync_type: Optional[str], started_at) ->
     if not table_name or not started_at:
         return None
 
+    timestamp_column = "ingested_at" if table_name == "upstox_ohlcv_candles" else "synced_at"
+
     try:
         row = conn.execute(f"""
             SELECT COUNT(*)
             FROM {table_name}
-            WHERE synced_at < ?;
+            WHERE {timestamp_column} < ?;
         """, [started_at]).fetchone()
         return int(row[0] or 0)
     except Exception:
@@ -2052,7 +2122,7 @@ def get_data_collection_summary_service():
         current_count = safe_table_count(conn, "upstox_instruments")
         expired_count = safe_table_count(conn, "upstox_expired_instruments")
         equity_count = safe_table_count(conn, "upstox_equity_instruments")
-        ohlcv_daily_count = safe_table_count(conn, "ohlcv_daily")
+        ohlcv_daily_count = safe_table_count(conn, "upstox_ohlcv_candles")
         equity_news_count = safe_table_count(conn, "equity_news")
         fundamentals_count = safe_table_count(conn, "fundamentals")
         corporate_actions_count = safe_table_count(conn, "corporate_actions")
@@ -2519,6 +2589,1707 @@ def sync_upstox_expired_instruments_service(
         conn.close()
 
 
+
+def parse_iso_date(value: Any, field_name: str, default_value: Optional[date] = None) -> date:
+    if value in (None, ""):
+        if default_value is not None:
+            return default_value
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} is required."
+        )
+
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} must be a valid date in YYYY-MM-DD format."
+        )
+
+
+def normalize_string_list(value: Any, default_values: List[str]) -> List[str]:
+    if value in (None, ""):
+        return default_values.copy()
+
+    if isinstance(value, str):
+        values = [item.strip() for item in value.split(",")]
+    elif isinstance(value, list):
+        values = [str(item).strip() for item in value]
+    else:
+        values = []
+
+    return unique_preserve_order([value for value in values if value]) or default_values.copy()
+
+
+def normalize_bool(value: Any, default_value: bool = False) -> bool:
+    if value is None:
+        return default_value
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    clean_value = str(value).strip().lower()
+
+    if clean_value in ("1", "true", "yes", "y", "on"):
+        return True
+
+    if clean_value in ("0", "false", "no", "n", "off"):
+        return False
+
+    return default_value
+
+
+def normalize_positive_int(value: Any, default_value: int, minimum: int = 1, maximum: Optional[int] = None) -> int:
+    try:
+        number = int(value)
+    except Exception:
+        number = default_value
+
+    number = max(minimum, number)
+
+    if maximum is not None:
+        number = min(maximum, number)
+
+    return number
+
+
+def normalize_optional_positive_int(value: Any, minimum: int = 1, maximum: Optional[int] = None) -> Optional[int]:
+    if value in (None, "", 0, "0", "all"):
+        return None
+
+    try:
+        number = int(value)
+    except Exception:
+        return None
+
+    number = max(minimum, number)
+
+    if maximum is not None:
+        number = min(maximum, number)
+
+    return number
+
+
+def normalize_ohlcv_interval_key(value: Any) -> str:
+    clean_value = str(value or "").strip().lower().replace(" ", "")
+
+    aliases = {
+        "1m": "1minute",
+        "1min": "1minute",
+        "1minute": "1minute",
+        "3m": "3minute",
+        "3min": "3minute",
+        "3minute": "3minute",
+        "5m": "5minute",
+        "5min": "5minute",
+        "5minute": "5minute",
+        "15m": "15minute",
+        "15min": "15minute",
+        "15minute": "15minute",
+        "30m": "30minute",
+        "30min": "30minute",
+        "30minute": "30minute",
+        "1h": "1hour",
+        "1hour": "1hour",
+        "hour": "1hour",
+        "day": "day",
+        "daily": "day",
+        "1day": "day",
+        "week": "week",
+        "weekly": "week",
+        "1week": "week",
+        "month": "month",
+        "monthly": "month",
+        "1month": "month"
+    }
+
+    return aliases.get(clean_value, clean_value)
+
+
+def normalize_ohlcv_config(payload: Optional[dict]) -> dict:
+    payload = payload or {}
+    today = datetime.now().date()
+    default_from_date = today - timedelta(days=30)
+
+    selected_sources = normalize_string_list(
+        payload.get("sources") or payload.get("selected_sources"),
+        OHLCV_DEFAULT_SOURCES
+    )
+    selected_sources = [value for value in selected_sources if value in OHLCV_ALLOWED_SOURCES]
+
+    selected_modes = normalize_string_list(
+        payload.get("candle_modes") or payload.get("selected_candle_modes"),
+        OHLCV_DEFAULT_MODES
+    )
+    selected_modes = [value for value in selected_modes if value in OHLCV_ALLOWED_MODES]
+
+    raw_intervals = normalize_string_list(
+        payload.get("intervals") or payload.get("selected_intervals"),
+        OHLCV_DEFAULT_INTERVALS
+    )
+    selected_intervals = []
+
+    for interval in raw_intervals:
+        interval_key = normalize_ohlcv_interval_key(interval)
+
+        if interval_key in OHLCV_INTERVAL_OPTIONS:
+            selected_intervals.append(interval_key)
+
+    selected_intervals = unique_preserve_order(selected_intervals)
+
+    if not selected_sources:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select at least one OHLCV instrument source."
+        )
+
+    if not selected_modes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select at least one OHLCV candle mode."
+        )
+
+    if not selected_intervals:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select at least one OHLCV interval."
+        )
+
+    from_date = parse_iso_date(payload.get("from_date"), "from_date", default_from_date)
+    to_date = parse_iso_date(payload.get("to_date"), "to_date", today)
+
+    if to_date < from_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="to_date must be greater than or equal to from_date."
+        )
+
+    if OHLCV_INTRADAY_MODE in selected_modes:
+        to_date = today
+
+    instrument_limit = normalize_optional_positive_int(payload.get("instrument_limit"), 1, 1000000)
+    single_instrument_key = safe_strip(payload.get("single_instrument_key"))
+
+    batch_size = normalize_positive_int(
+        payload.get("batch_size"),
+        OHLCV_DEFAULT_BATCH_SIZE,
+        1,
+        500
+    )
+    request_delay_ms = normalize_positive_int(
+        payload.get("request_delay_ms"),
+        OHLCV_DEFAULT_REQUEST_DELAY_MS,
+        0,
+        60000
+    )
+    batch_delay_seconds = normalize_positive_int(
+        payload.get("batch_delay_seconds"),
+        OHLCV_DEFAULT_BATCH_DELAY_SECONDS,
+        0,
+        3600
+    )
+    retry_count = normalize_positive_int(
+        payload.get("retry_count"),
+        OHLCV_DEFAULT_RETRY_COUNT,
+        1,
+        10
+    )
+
+    return {
+        "sources": selected_sources,
+        "candle_modes": selected_modes,
+        "intervals": selected_intervals,
+        "from_date": from_date,
+        "to_date": to_date,
+        "skip_existing": normalize_bool(payload.get("skip_existing"), True),
+        "respect_api_limits": normalize_bool(payload.get("respect_api_limits"), True),
+        "retry_failed": normalize_bool(payload.get("retry_failed"), True),
+        "instrument_limit": instrument_limit,
+        "single_instrument_key": single_instrument_key,
+        "batch_size": batch_size,
+        "request_delay_ms": request_delay_ms,
+        "batch_delay_seconds": batch_delay_seconds,
+        "retry_count": retry_count
+    }
+
+
+def ohlcv_config_to_jsonable(config: dict) -> dict:
+    return {
+        **config,
+        "from_date": config["from_date"].isoformat(),
+        "to_date": config["to_date"].isoformat()
+    }
+
+def get_default_ohlcv_options_payload() -> dict:
+    today = datetime.now().date()
+    from_date = today - timedelta(days=30)
+
+    return {
+        "sources": OHLCV_DEFAULT_SOURCES.copy(),
+        "candle_modes": OHLCV_DEFAULT_MODES.copy(),
+        "intervals": OHLCV_DEFAULT_INTERVALS.copy(),
+        "from_date": from_date.isoformat(),
+        "to_date": today.isoformat(),
+        "skip_existing": True,
+        "respect_api_limits": True,
+        "retry_failed": True,
+        "instrument_limit": None,
+        "single_instrument_key": "",
+        "batch_size": OHLCV_DEFAULT_BATCH_SIZE,
+        "request_delay_ms": OHLCV_DEFAULT_REQUEST_DELAY_MS,
+        "batch_delay_seconds": OHLCV_DEFAULT_BATCH_DELAY_SECONDS,
+        "retry_count": OHLCV_DEFAULT_RETRY_COUNT
+    }
+
+
+def get_upstox_ohlcv_options_service():
+    conn = get_connection()
+
+    try:
+        row = conn.execute("""
+            SELECT request_options, updated_at, updated_by
+            FROM upstox_ohlcv_collection_settings
+            WHERE setting_name = 'default'
+              AND is_active = TRUE
+            LIMIT 1;
+        """).fetchone()
+
+        if not row or not row[0]:
+            return {
+                "options": get_default_ohlcv_options_payload(),
+                "updated_at": None,
+                "updated_by": None
+            }
+
+        try:
+            request_options = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        except Exception:
+            request_options = get_default_ohlcv_options_payload()
+
+        return {
+            "options": request_options or get_default_ohlcv_options_payload(),
+            "updated_at": str(row[1]) if row[1] else None,
+            "updated_by": row[2]
+        }
+
+    finally:
+        conn.close()
+
+
+def save_upstox_ohlcv_options_service(payload: dict, current_user: dict):
+    normalized_config = normalize_ohlcv_config(payload)
+    request_options = ohlcv_config_to_jsonable(normalized_config)
+    trigger_metadata = get_sync_trigger_metadata(current_user)
+    user_id = trigger_metadata["triggered_by_id"] or "system"
+
+    conn = get_connection()
+
+    try:
+        existing = conn.execute("""
+            SELECT setting_id
+            FROM upstox_ohlcv_collection_settings
+            WHERE setting_name = 'default'
+            LIMIT 1;
+        """).fetchone()
+
+        if existing:
+            conn.execute("""
+                UPDATE upstox_ohlcv_collection_settings
+                SET
+                    request_options = TRY_CAST(? AS JSON),
+                    is_active = TRUE,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = ?
+                WHERE setting_name = 'default';
+            """, [
+                json.dumps(request_options, ensure_ascii=False, default=str),
+                user_id
+            ])
+        else:
+            conn.execute("""
+                INSERT INTO upstox_ohlcv_collection_settings (
+                    setting_id,
+                    setting_name,
+                    request_options,
+                    is_active,
+                    created_by,
+                    updated_by
+                )
+                VALUES (?, 'default', TRY_CAST(? AS JSON), TRUE, ?, ?);
+            """, [
+                str(uuid.uuid4()),
+                json.dumps(request_options, ensure_ascii=False, default=str),
+                user_id,
+                user_id
+            ])
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": "OHLCV options saved successfully.",
+            "data": {
+                "options": request_options
+            }
+        }
+
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+    finally:
+        conn.close()
+
+
+def get_saved_ohlcv_options_for_run(conn) -> dict:
+    row = conn.execute("""
+        SELECT request_options
+        FROM upstox_ohlcv_collection_settings
+        WHERE setting_name = 'default'
+          AND is_active = TRUE
+        LIMIT 1;
+    """).fetchone()
+
+    if not row or not row[0]:
+        return get_default_ohlcv_options_payload()
+
+    try:
+        return json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    except Exception:
+        return get_default_ohlcv_options_payload()
+
+def update_ohlcv_sync_run_options(conn, sync_id: str, config: dict):
+    jsonable_config = ohlcv_config_to_jsonable(config)
+
+    conn.execute("""
+        UPDATE upstox_sync_runs
+        SET
+            request_options = TRY_CAST(? AS JSON),
+            selected_sources = TRY_CAST(? AS JSON),
+            selected_candle_modes = TRY_CAST(? AS JSON),
+            selected_intervals = TRY_CAST(? AS JSON),
+            from_date = TRY_CAST(? AS DATE),
+            to_date = TRY_CAST(? AS DATE),
+            skip_existing = ?,
+            respect_api_limits = ?,
+            retry_failed = ?,
+            instrument_limit = ?,
+            single_instrument_key = ?,
+            batch_size = ?,
+            request_delay_ms = ?,
+            batch_delay_seconds = ?
+        WHERE sync_id = ?;
+    """, [
+        json.dumps(jsonable_config, ensure_ascii=False, default=str),
+        json.dumps(config["sources"], ensure_ascii=False),
+        json.dumps(config["candle_modes"], ensure_ascii=False),
+        json.dumps(config["intervals"], ensure_ascii=False),
+        config["from_date"].isoformat(),
+        config["to_date"].isoformat(),
+        bool(config["skip_existing"]),
+        bool(config["respect_api_limits"]),
+        bool(config["retry_failed"]),
+        config["instrument_limit"],
+        config["single_instrument_key"],
+        config["batch_size"],
+        config["request_delay_ms"],
+        config["batch_delay_seconds"],
+        sync_id
+    ])
+
+    conn.commit()
+
+
+def finish_ohlcv_sync_run_metrics(conn, sync_id: str, metrics: dict):
+    conn.execute("""
+        UPDATE upstox_sync_runs
+        SET
+            api_calls_attempted = ?,
+            api_calls_skipped = ?,
+            candles_inserted = ?,
+            candles_skipped = ?,
+            failed_instruments = ?
+        WHERE sync_id = ?;
+    """, [
+        int(metrics.get("api_calls_attempted") or 0),
+        int(metrics.get("api_calls_skipped") or 0),
+        int(metrics.get("candles_inserted") or 0),
+        int(metrics.get("candles_skipped") or 0),
+        int(metrics.get("failed_instruments") or 0),
+        sync_id
+    ])
+
+    conn.commit()
+
+
+def get_ohlcv_interval_definition(interval_key: str) -> dict:
+    interval = OHLCV_INTERVAL_OPTIONS.get(interval_key)
+
+    if not interval:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported OHLCV interval: {interval_key}"
+        )
+
+    return interval
+
+
+def get_ohlcv_chunk_days(unit: str, interval_value: int, source: str) -> Optional[int]:
+    if source == OHLCV_EXPIRED_SOURCE:
+        return 31 if unit == "minutes" else 3650
+
+    if unit == "minutes" and interval_value <= 15:
+        return 31
+
+    if unit == "minutes" and interval_value > 15:
+        return 92
+
+    if unit == "hours":
+        return 92
+
+    if unit == "days":
+        return 3652
+
+    return None
+
+
+def split_ohlcv_date_range(from_date: date, to_date: date, unit: str, interval_value: int, source: str) -> List[dict]:
+    max_days = get_ohlcv_chunk_days(unit, interval_value, source)
+
+    if not max_days:
+        return [{"from_date": from_date, "to_date": to_date}]
+
+    chunks = []
+    current_from = from_date
+
+    while current_from <= to_date:
+        current_to = min(to_date, current_from + timedelta(days=max_days - 1))
+        chunks.append({"from_date": current_from, "to_date": current_to})
+        current_from = current_to + timedelta(days=1)
+
+    return chunks
+
+
+def get_existing_ohlcv_dates_for_chunk(
+    conn,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    from_date: date,
+    to_date: date
+) -> set:
+    rows = conn.execute("""
+        SELECT DISTINCT candle_date
+        FROM upstox_ohlcv_candles
+        WHERE provider = ?
+          AND instrument_source = ?
+          AND candle_mode = ?
+          AND instrument_key = ?
+          AND unit = ?
+          AND interval_value = ?
+          AND candle_date BETWEEN ? AND ?;
+    """, [
+        UPSTOX_PROVIDER,
+        source,
+        mode,
+        instrument_key,
+        unit,
+        interval_value,
+        from_date,
+        to_date
+    ]).fetchall()
+
+    return {row[0] for row in rows if row and row[0]}
+
+
+def all_dates_exist_for_chunk(
+    conn,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    from_date: date,
+    to_date: date
+) -> bool:
+    existing_dates = get_existing_ohlcv_dates_for_chunk(
+        conn=conn,
+        source=source,
+        mode=mode,
+        instrument_key=instrument_key,
+        unit=unit,
+        interval_value=interval_value,
+        from_date=from_date,
+        to_date=to_date
+    )
+
+    if not existing_dates:
+        return False
+
+    day_count = (to_date - from_date).days + 1
+
+    return len(existing_dates) >= day_count
+
+
+def fetch_ohlcv_instruments(conn, source: str, config: dict) -> List[dict]:
+    params = []
+
+    if source == OHLCV_CURRENT_SOURCE:
+        where_sql = """
+        WHERE instrument_key IS NOT NULL
+          AND TRIM(instrument_key) <> ''
+          AND source_type = 'bod_complete'
+          AND (
+              UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
+              OR UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
+          )
+        """
+
+        if config["single_instrument_key"]:
+            where_sql += " AND instrument_key = ?"
+            params.append(config["single_instrument_key"])
+
+        limit_sql = ""
+
+        if config["instrument_limit"]:
+            limit_sql = "LIMIT ?"
+            params.append(config["instrument_limit"])
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                name,
+                exchange,
+                segment,
+                isin,
+                NULL AS expiry,
+                instrument_type
+            FROM upstox_instruments
+            {where_sql}
+            ORDER BY trading_symbol, instrument_key
+            {limit_sql};
+        """, params).fetchall()
+
+        return [
+            {
+                "instrument_key": row[0],
+                "trading_symbol": row[1],
+                "name": row[2],
+                "exchange": row[3],
+                "segment": row[4],
+                "isin": row[5],
+                "expiry": row[6],
+                "instrument_type": row[7]
+            }
+            for row in rows
+        ]
+
+    if source == OHLCV_EXPIRED_SOURCE:
+        where_sql = "WHERE instrument_key IS NOT NULL AND TRIM(instrument_key) <> ''"
+
+        if config["single_instrument_key"]:
+            where_sql += " AND instrument_key = ?"
+            params.append(config["single_instrument_key"])
+
+        limit_sql = ""
+
+        if config["instrument_limit"]:
+            limit_sql = "LIMIT ?"
+            params.append(config["instrument_limit"])
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                name,
+                exchange,
+                segment,
+                NULL AS isin,
+                expiry,
+                instrument_type
+            FROM upstox_expired_instruments
+            {where_sql}
+            ORDER BY expiry DESC, trading_symbol, instrument_key
+            {limit_sql};
+        """, params).fetchall()
+
+        return [
+            {
+                "instrument_key": row[0],
+                "trading_symbol": row[1],
+                "name": row[2],
+                "exchange": row[3],
+                "segment": row[4],
+                "isin": row[5],
+                "expiry": row[6],
+                "instrument_type": row[7]
+            }
+            for row in rows
+        ]
+
+    return []
+
+    if source == OHLCV_EXPIRED_SOURCE:
+        where_sql = "WHERE instrument_key IS NOT NULL AND TRIM(instrument_key) <> ''"
+
+        if config["single_instrument_key"]:
+            where_sql += " AND instrument_key = ?"
+            params.append(config["single_instrument_key"])
+
+        limit_sql = ""
+
+        if config["instrument_limit"]:
+            limit_sql = "LIMIT ?"
+            params.append(config["instrument_limit"])
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                name,
+                exchange,
+                segment,
+                NULL AS isin,
+                expiry,
+                instrument_type
+            FROM upstox_expired_instruments
+            {where_sql}
+            ORDER BY expiry DESC, trading_symbol, instrument_key
+            {limit_sql};
+        """, params).fetchall()
+
+        return [
+            {
+                "instrument_key": row[0],
+                "trading_symbol": row[1],
+                "name": row[2],
+                "exchange": row[3],
+                "segment": row[4],
+                "isin": row[5],
+                "expiry": row[6],
+                "instrument_type": row[7]
+            }
+            for row in rows
+        ]
+
+    return []
+
+
+def build_ohlcv_url(source: str, mode: str, instrument_key: str, interval: dict, from_date: date, to_date: date) -> str:
+    encoded_instrument_key = urllib.parse.quote(instrument_key, safe="")
+
+    if source == OHLCV_EXPIRED_SOURCE:
+        expired_interval = interval.get("expired_interval")
+
+        if not expired_interval:
+            raise ValueError("Interval is not supported for expired OHLCV candles.")
+
+        return (
+            f"{UPSTOX_EXPIRED_HISTORICAL_URL}/"
+            f"{encoded_instrument_key}/{expired_interval}/{to_date.isoformat()}/{from_date.isoformat()}"
+        )
+
+    if mode == OHLCV_INTRADAY_MODE:
+        return (
+            f"{UPSTOX_CURRENT_INTRADAY_V3_URL}/"
+            f"{encoded_instrument_key}/{interval['unit']}/{interval['interval_value']}"
+        )
+
+    return (
+        f"{UPSTOX_CURRENT_HISTORICAL_V3_URL}/"
+        f"{encoded_instrument_key}/{interval['unit']}/{interval['interval_value']}/"
+        f"{to_date.isoformat()}/{from_date.isoformat()}"
+    )
+
+
+def upstox_http_get_json(url: str, token: str, timeout: int = REQUEST_TIMEOUT_SECONDS) -> dict:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {normalize_upstox_token(token)}",
+            "User-Agent": "OpenAnalytics/1.0"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_text = response.read().decode("utf-8")
+            return json.loads(response_text or "{}")
+    except urllib.error.HTTPError as error:
+        error_text = error.read().decode("utf-8", errors="replace")
+        raise HTTPException(
+            status_code=error.code,
+            detail=error_text or str(error)
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to call Upstox OHLCV API: {error}"
+        )
+
+
+def fetch_ohlcv_candles_with_retry(
+    url: str,
+    token: str,
+    retry_count: int,
+    retry_failed: bool,
+    rate_limiter: UpstoxRollingRateLimiter
+) -> dict:
+    attempts = retry_count if retry_failed else 1
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            rate_limiter.wait_for_slot()
+            return upstox_http_get_json(url=url, token=token)
+        except HTTPException as error:
+            last_error = error
+            error_text = str(error.detail).lower()
+            should_retry = (
+                error.status_code in (408, 429, 500, 502, 503, 504)
+                or "timeout" in error_text
+                or "rate" in error_text
+            )
+
+            if not retry_failed or not should_retry or attempt >= attempts:
+                raise
+
+            sleep_seconds = min(30, 2 * attempt)
+            print(f"Upstox OHLCV retry {attempt}/{attempts} after {sleep_seconds}s: {error.detail}")
+            time.sleep(sleep_seconds)
+
+    if last_error:
+        raise last_error
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Unable to call Upstox OHLCV API."
+    )
+
+
+def extract_ohlcv_candles(response: dict) -> List[list]:
+    if not isinstance(response, dict):
+        return []
+
+    data = response.get("data")
+
+    if isinstance(data, dict) and isinstance(data.get("candles"), list):
+        return data.get("candles")
+
+    if isinstance(response.get("candles"), list):
+        return response.get("candles")
+
+    return []
+
+
+def parse_ohlcv_timestamp(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+
+    clean_value = str(value).strip()
+
+    try:
+        parsed = datetime.fromisoformat(clean_value.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=None)
+    except Exception:
+        pass
+
+    try:
+        return datetime.strptime(clean_value[:19], "%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return None
+
+
+def normalize_ohlcv_candle_record(
+    candle: list,
+    source: str,
+    mode: str,
+    interval: dict,
+    instrument: dict,
+    sync_id: str
+) -> Optional[dict]:
+    if not isinstance(candle, list) or len(candle) < 6:
+        return None
+
+    candle_timestamp = parse_ohlcv_timestamp(candle[0])
+
+    if not candle_timestamp:
+        return None
+
+    return {
+        "provider": UPSTOX_PROVIDER,
+        "instrument_source": source,
+        "candle_mode": mode,
+        "instrument_key": instrument.get("instrument_key"),
+        "trading_symbol": instrument.get("trading_symbol"),
+        "name": instrument.get("name"),
+        "exchange": instrument.get("exchange"),
+        "segment": instrument.get("segment"),
+        "isin": instrument.get("isin"),
+        "expiry": normalize_expiry_value(instrument.get("expiry")),
+        "instrument_type": instrument.get("instrument_type"),
+        "unit": interval["unit"],
+        "interval_value": interval["interval_value"],
+        "interval_label": interval["label"],
+        "candle_timestamp": candle_timestamp,
+        "candle_date": candle_timestamp.date(),
+        "open_price": candle[1] if len(candle) > 1 else None,
+        "high_price": candle[2] if len(candle) > 2 else None,
+        "low_price": candle[3] if len(candle) > 3 else None,
+        "close_price": candle[4] if len(candle) > 4 else None,
+        "volume": candle[5] if len(candle) > 5 else 0,
+        "open_interest": candle[6] if len(candle) > 6 else 0,
+        "source_sync_id": sync_id,
+        "raw_json": json.dumps(candle, ensure_ascii=False, default=str)
+    }
+
+
+def insert_ohlcv_candles(conn, records: List[dict]) -> int:
+    if not records:
+        return 0
+
+    conn.executemany("""
+        INSERT OR REPLACE INTO upstox_ohlcv_candles (
+            provider,
+            instrument_source,
+            candle_mode,
+            instrument_key,
+            trading_symbol,
+            name,
+            exchange,
+            segment,
+            isin,
+            expiry,
+            instrument_type,
+            unit,
+            interval_value,
+            interval_label,
+            candle_timestamp,
+            candle_date,
+            open_price,
+            high_price,
+            low_price,
+            close_price,
+            volume,
+            open_interest,
+            source_sync_id,
+            raw_json,
+            ingested_at,
+            updated_at
+        )
+        SELECT
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, TRY_CAST(? AS DATE), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            TRY_CAST(? AS JSON), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP;
+    """, [
+        (
+            record.get("provider"),
+            record.get("instrument_source"),
+            record.get("candle_mode"),
+            record.get("instrument_key"),
+            record.get("trading_symbol"),
+            record.get("name"),
+            record.get("exchange"),
+            record.get("segment"),
+            record.get("isin"),
+            record.get("expiry"),
+            record.get("instrument_type"),
+            record.get("unit"),
+            record.get("interval_value"),
+            record.get("interval_label"),
+            record.get("candle_timestamp"),
+            record.get("candle_date"),
+            record.get("open_price"),
+            record.get("high_price"),
+            record.get("low_price"),
+            record.get("close_price"),
+            record.get("volume"),
+            record.get("open_interest"),
+            record.get("source_sync_id"),
+            record.get("raw_json")
+        )
+        for record in records
+    ])
+
+    return len(records)
+
+
+def insert_ohlcv_daily_compatibility_rows(conn, records: List[dict]) -> int:
+    daily_records = [
+        record
+        for record in records
+        if record.get("instrument_source") == OHLCV_CURRENT_SOURCE
+        and record.get("candle_mode") == OHLCV_HISTORICAL_MODE
+        and record.get("unit") == "days"
+        and int(record.get("interval_value") or 0) == 1
+    ]
+
+    if not daily_records:
+        return 0
+
+    conn.executemany("""
+        INSERT OR REPLACE INTO ohlcv_daily (
+            instrument_key,
+            trading_symbol,
+            date,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            oi,
+            ingested_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+    """, [
+        (
+            record.get("instrument_key"),
+            record.get("trading_symbol") or "--",
+            record.get("candle_date"),
+            record.get("open_price"),
+            record.get("high_price"),
+            record.get("low_price"),
+            record.get("close_price"),
+            record.get("volume") or 0,
+            record.get("open_interest") or 0
+        )
+        for record in daily_records
+    ])
+
+    return len(daily_records)
+
+
+
+def log_ohlcv_message(message: str):
+    print(f"[OHLCV] {message}", flush=True)
+
+
+def count_ohlcv_records_for_sync(
+    conn,
+    sync_id: Optional[str],
+    started_at: Optional[datetime] = None
+) -> int:
+    if not sync_id and not started_at:
+        return 0
+
+    try:
+        if sync_id:
+            row = conn.execute("""
+                SELECT COUNT(*)
+                FROM upstox_ohlcv_candles
+                WHERE source_sync_id = ?;
+            """, [sync_id]).fetchone()
+
+            sync_count = int(row[0] or 0) if row else 0
+
+            if sync_count > 0:
+                return sync_count
+
+        if started_at:
+            row = conn.execute("""
+                SELECT COUNT(*)
+                FROM upstox_ohlcv_candles
+                WHERE ingested_at >= ?;
+            """, [started_at]).fetchone()
+
+            return int(row[0] or 0) if row else 0
+
+        return 0
+
+    except Exception as error:
+        log_ohlcv_message(f"Unable to count saved records for sync {sync_id}: {error}")
+        return 0
+
+def filter_new_ohlcv_records(conn, records: List[dict]) -> List[dict]:
+    new_records = []
+
+    for record in records:
+        row = conn.execute("""
+            SELECT 1
+            FROM upstox_ohlcv_candles
+            WHERE provider = ?
+              AND instrument_source = ?
+              AND candle_mode = ?
+              AND instrument_key = ?
+              AND unit = ?
+              AND interval_value = ?
+              AND candle_timestamp = ?
+            LIMIT 1;
+        """, [
+            record.get("provider"),
+            record.get("instrument_source"),
+            record.get("candle_mode"),
+            record.get("instrument_key"),
+            record.get("unit"),
+            record.get("interval_value"),
+            record.get("candle_timestamp")
+        ]).fetchone()
+
+        if not row:
+            new_records.append(record)
+
+    return new_records
+
+def persist_ohlcv_records(conn, records: List[dict]) -> int:
+    if not records:
+        return 0
+
+    new_records = filter_new_ohlcv_records(conn, records)
+
+    if not new_records:
+        log_ohlcv_message(
+            "OHLCV batch skipped because all returned candles already exist in DuckDB."
+        )
+        return 0
+
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        insert_ohlcv_candles(conn, new_records)
+        insert_ohlcv_daily_compatibility_rows(conn, new_records)
+        conn.execute("COMMIT")
+        return len(new_records)
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def update_ohlcv_metrics_progress(conn, sync_id: str, metrics: dict):
+    try:
+        finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
+    except Exception as error:
+        print(f"Unable to update OHLCV progress metrics: {error}")
+
+
+def sync_upstox_ohlcv_daily_service(
+    current_user: dict,
+    config: Optional[dict] = None,
+    clear_cancel_at_start: bool = True
+):
+    conn = get_connection()
+    started_at = datetime.now()
+    sync_id = None
+    total_records = 0
+    metrics = {
+        "api_calls_attempted": 0,
+        "api_calls_skipped": 0,
+        "candles_inserted": 0,
+        "candles_skipped": 0,
+        "failed_instruments": 0
+    }
+    failed_items = []
+
+    try:
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        ensure_no_active_sync_run(conn)
+        run_config = config or get_saved_ohlcv_options_for_run(conn)
+        normalized_config = normalize_ohlcv_config(run_config)
+
+        log_ohlcv_message(
+            "Starting collection "
+            f"sources={normalized_config['sources']} "
+            f"modes={normalized_config['candle_modes']} "
+            f"intervals={normalized_config['intervals']} "
+            f"from={normalized_config['from_date']} "
+            f"to={normalized_config['to_date']} "
+            f"limit={normalized_config['instrument_limit'] or 'all'} "
+            f"single={normalized_config['single_instrument_key'] or '--'}"
+        )
+
+        analytical_token = None
+        access_token = None
+
+        if OHLCV_CURRENT_SOURCE in normalized_config["sources"]:
+            analytical_token = get_saved_upstox_analytical_token(conn)
+            log_ohlcv_message("Analytical token loaded for current OHLCV.")
+
+        if OHLCV_EXPIRED_SOURCE in normalized_config["sources"]:
+            access_token = get_saved_upstox_access_token(conn)
+            log_ohlcv_message("Access token loaded for expired OHLCV.")
+
+        sync_id = create_sync_run(
+            conn,
+            OHLCV_SYNC_TYPE,
+            "running",
+            "OHLCV download started.",
+            current_user=current_user
+        )
+        update_ohlcv_sync_run_options(conn, sync_id, normalized_config)
+
+        log_ohlcv_message(f"Sync run created: {sync_id}")
+
+        rate_limiter = UpstoxRollingRateLimiter()
+
+        for source in normalized_config["sources"]:
+            check_sync_cancelled(conn, sync_id)
+
+            instruments = fetch_ohlcv_instruments(conn, source, normalized_config)
+
+            if not instruments:
+                log_ohlcv_message(f"No instruments found for source={source}.")
+                continue
+
+            token = analytical_token if source == OHLCV_CURRENT_SOURCE else access_token
+
+            log_ohlcv_message(
+                f"Source {source}: {len(instruments)} instruments loaded."
+            )
+
+            for instrument_index, instrument in enumerate(instruments, start=1):
+                check_sync_cancelled(conn, sync_id)
+
+                if instrument_index > 1 and normalized_config["batch_size"]:
+                    if (instrument_index - 1) % normalized_config["batch_size"] == 0:
+                        log_ohlcv_message(
+                            "Batch pause "
+                            f"after {instrument_index - 1} instruments "
+                            f"for {normalized_config['batch_delay_seconds']}s."
+                        )
+                        time.sleep(normalized_config["batch_delay_seconds"])
+                        check_sync_cancelled(conn, sync_id)
+
+                instrument_key = safe_strip(instrument.get("instrument_key"))
+                trading_symbol = safe_strip(instrument.get("trading_symbol")) or "--"
+
+                if not instrument_key:
+                    continue
+
+                log_ohlcv_message(
+                    f"Instrument {instrument_index}/{len(instruments)} "
+                    f"{trading_symbol} ({instrument_key})"
+                )
+
+                for mode in normalized_config["candle_modes"]:
+                    check_sync_cancelled(conn, sync_id)
+
+                    if source == OHLCV_EXPIRED_SOURCE and mode == OHLCV_INTRADAY_MODE:
+                        metrics["api_calls_skipped"] += 1
+                        log_ohlcv_message(
+                            f"Skipped {instrument_key}: expired intraday is not supported."
+                        )
+                        update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                        continue
+
+                    for interval_key in normalized_config["intervals"]:
+                        check_sync_cancelled(conn, sync_id)
+
+                        interval = get_ohlcv_interval_definition(interval_key)
+
+                        if source == OHLCV_EXPIRED_SOURCE and not interval.get("expired_interval"):
+                            metrics["api_calls_skipped"] += 1
+                            log_ohlcv_message(
+                                f"Skipped {instrument_key}: expired interval {interval_key} is not supported."
+                            )
+                            update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                            continue
+
+                        if mode == OHLCV_INTRADAY_MODE and interval["unit"] in ("weeks", "months"):
+                            metrics["api_calls_skipped"] += 1
+                            log_ohlcv_message(
+                                f"Skipped {instrument_key}: intraday interval {interval_key} is not supported."
+                            )
+                            update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                            continue
+
+                        chunks = split_ohlcv_date_range(
+                            from_date=normalized_config["from_date"],
+                            to_date=normalized_config["to_date"],
+                            unit=interval["unit"],
+                            interval_value=interval["interval_value"],
+                            source=source
+                        )
+
+                        if mode == OHLCV_INTRADAY_MODE:
+                            chunks = [
+                                {
+                                    "from_date": normalized_config["to_date"],
+                                    "to_date": normalized_config["to_date"]
+                                }
+                            ]
+
+                        for chunk_index, chunk in enumerate(chunks, start=1):
+                            check_sync_cancelled(conn, sync_id)
+
+                            chunk_from = chunk["from_date"]
+                            chunk_to = chunk["to_date"]
+
+                            if normalized_config["skip_existing"] and all_dates_exist_for_chunk(
+                                conn=conn,
+                                source=source,
+                                mode=mode,
+                                instrument_key=instrument_key,
+                                unit=interval["unit"],
+                                interval_value=interval["interval_value"],
+                                from_date=chunk_from,
+                                to_date=chunk_to
+                            ):
+                                skipped_days = (chunk_to - chunk_from).days + 1
+                                metrics["api_calls_skipped"] += 1
+                                metrics["candles_skipped"] += skipped_days
+                                log_ohlcv_message(
+                                    f"Skipped API call {instrument_key} {source} {mode} "
+                                    f"{interval_key} {chunk_from} to {chunk_to}: already downloaded."
+                                )
+                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                                continue
+
+                            url = build_ohlcv_url(
+                                source=source,
+                                mode=mode,
+                                instrument_key=instrument_key,
+                                interval=interval,
+                                from_date=chunk_from,
+                                to_date=chunk_to
+                            )
+
+                            try:
+                                log_ohlcv_message(
+                                    f"API {source} {mode} {interval_key} "
+                                    f"chunk {chunk_index}/{len(chunks)} "
+                                    f"{instrument_key} {chunk_from} to {chunk_to}"
+                                )
+
+                                response = fetch_ohlcv_candles_with_retry(
+                                    url=url,
+                                    token=token,
+                                    retry_count=normalized_config["retry_count"],
+                                    retry_failed=normalized_config["retry_failed"],
+                                    rate_limiter=rate_limiter
+                                )
+                                metrics["api_calls_attempted"] += 1
+
+                                candles = extract_ohlcv_candles(response)
+                                records = []
+
+                                for candle in candles:
+                                    normalized_record = normalize_ohlcv_candle_record(
+                                        candle=candle,
+                                        source=source,
+                                        mode=mode,
+                                        interval=interval,
+                                        instrument=instrument,
+                                        sync_id=sync_id
+                                    )
+
+                                    if normalized_record:
+                                        records.append(normalized_record)
+
+                                inserted_records = persist_ohlcv_records(conn, records)
+
+                                if inserted_records:
+                                    total_records += inserted_records
+                                    metrics["candles_inserted"] += inserted_records
+
+                                log_ohlcv_message(
+                                    f"Saved {inserted_records} OHLCV rows for "
+                                    f"{instrument_key} {source} {mode} {interval_key} "
+                                    f"{chunk_from} to {chunk_to}. "
+                                    f"Total saved={total_records}."
+                                )
+
+                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
+
+                                if normalized_config["request_delay_ms"]:
+                                    time.sleep(normalized_config["request_delay_ms"] / 1000)
+                                    check_sync_cancelled(conn, sync_id)
+
+                            except SyncCancelled:
+                                raise
+                            except HTTPException as error:
+                                try:
+                                    conn.rollback()
+                                except Exception:
+                                    pass
+
+                                metrics["failed_instruments"] += 1
+                                failed_items.append({
+                                    "instrument_key": instrument_key,
+                                    "source": source,
+                                    "mode": mode,
+                                    "interval": interval_key,
+                                    "from_date": chunk_from.isoformat(),
+                                    "to_date": chunk_to.isoformat(),
+                                    "error": error.detail
+                                })
+                                log_ohlcv_message(
+                                    "API failed "
+                                    f"{instrument_key} {source} {mode} {interval_key} "
+                                    f"{chunk_from} to {chunk_to}: {error.detail}"
+                                )
+                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                                continue
+                            except Exception as error:
+                                try:
+                                    conn.rollback()
+                                except Exception:
+                                    pass
+
+                                metrics["failed_instruments"] += 1
+                                failed_items.append({
+                                    "instrument_key": instrument_key,
+                                    "source": source,
+                                    "mode": mode,
+                                    "interval": interval_key,
+                                    "from_date": chunk_from.isoformat(),
+                                    "to_date": chunk_to.isoformat(),
+                                    "error": str(error)
+                                })
+                                log_ohlcv_message(
+                                    "Save/API failed "
+                                    f"{instrument_key} {source} {mode} {interval_key} "
+                                    f"{chunk_from} to {chunk_to}: {error}"
+                                )
+                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                                continue
+
+        total_records = count_ohlcv_records_for_sync(conn, sync_id, started_at) or total_records
+        metrics["candles_inserted"] = max(
+            int(metrics.get("candles_inserted") or 0),
+            int(total_records or 0)
+        )
+
+        status_text = "success" if not failed_items else "partial_success"
+        message = "OHLCV downloaded successfully."
+
+        if failed_items:
+            failed_file = DATA_DIR / "upstox_ohlcv_failed_items.json"
+
+            with open(failed_file, "w", encoding="utf-8") as output_file:
+                json.dump(failed_items, output_file, ensure_ascii=False, indent=2, default=str)
+
+            message = (
+                "OHLCV downloaded with some failed instruments. "
+                f"Failed items saved to {failed_file}."
+            )
+
+        finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
+        finish_sync_run(
+            conn,
+            sync_id,
+            status_text,
+            message,
+            total_records,
+            started_at
+        )
+
+        log_ohlcv_message(
+            f"Finished sync {sync_id}: status={status_text}, saved={total_records}, "
+            f"api_calls={metrics['api_calls_attempted']}, skipped={metrics['api_calls_skipped']}, "
+            f"failed={metrics['failed_instruments']}."
+        )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": status_text,
+            "message": message,
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at),
+            "metrics": metrics,
+            "failed_items": len(failed_items)
+        }
+
+    except SyncCancelled:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        saved_records = count_ohlcv_records_for_sync(conn, sync_id, started_at)
+        total_records = max(total_records, saved_records)
+        metrics["candles_inserted"] = max(
+            int(metrics.get("candles_inserted") or 0),
+            int(total_records or 0)
+        )
+
+        log_ohlcv_message(
+            f"Cancellation received for sync {sync_id}. "
+            f"Committed OHLCV rows preserved={total_records}."
+        )
+
+        if sync_id:
+            finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                "OHLCV download cancelled. Completed rows were saved.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "cancelled",
+            "message": "OHLCV download cancelled. Completed rows were saved.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at),
+            "metrics": metrics
+        }
+
+    except HTTPException as error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            saved_records = count_ohlcv_records_for_sync(conn, sync_id)
+            total_records = max(total_records, saved_records)
+            finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"OHLCV download failed: {error.detail}",
+                total_records,
+                started_at
+            )
+
+        log_ohlcv_message(f"Failed sync {sync_id}: {error.detail}")
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise
+
+    except Exception as error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            saved_records = count_ohlcv_records_for_sync(conn, sync_id)
+            total_records = max(total_records, saved_records)
+            finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"OHLCV download failed: {error}",
+                total_records,
+                started_at
+            )
+
+        log_ohlcv_message(f"Failed sync {sync_id}: {error}")
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to download OHLCV: {error}"
+        )
+
+    finally:
+        conn.close()
+
+def build_ohlcv_preview_filters(
+    search: str,
+    source: str,
+    mode: str,
+    interval: str,
+    segment: str
+):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_source = source.strip() if source else "all"
+    clean_mode = mode.strip() if mode else "all"
+    clean_interval = interval.strip() if interval else "all"
+    clean_segment = segment.strip() if segment else "all"
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(instrument_key, '')) LIKE ?
+                OR LOWER(COALESCE(trading_symbol, '')) LIKE ?
+                OR LOWER(COALESCE(name, '')) LIKE ?
+                OR LOWER(COALESCE(exchange, '')) LIKE ?
+                OR LOWER(COALESCE(segment, '')) LIKE ?
+                OR LOWER(COALESCE(instrument_type, '')) LIKE ?
+                OR LOWER(COALESCE(instrument_source, '')) LIKE ?
+                OR LOWER(COALESCE(candle_mode, '')) LIKE ?
+                OR LOWER(COALESCE(interval_label, '')) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            search_value
+        ])
+
+    if clean_source != "all":
+        where_clauses.append("instrument_source = ?")
+        params.append(clean_source)
+
+    if clean_mode != "all":
+        where_clauses.append("candle_mode = ?")
+        params.append(clean_mode)
+
+    if clean_interval != "all":
+        interval_key = normalize_ohlcv_interval_key(clean_interval)
+        interval_definition = OHLCV_INTERVAL_OPTIONS.get(interval_key)
+
+        if interval_definition:
+            where_clauses.append("unit = ? AND interval_value = ?")
+            params.extend([
+                interval_definition["unit"],
+                interval_definition["interval_value"]
+            ])
+        else:
+            where_clauses.append("LOWER(COALESCE(interval_label, '')) = ?")
+            params.append(clean_interval.lower())
+
+    if clean_segment != "all":
+        where_clauses.append("segment = ?")
+        params.append(clean_segment)
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
+def row_to_ohlcv_preview(row):
+    return {
+        "instrument_key": row[0],
+        "trading_symbol": row[1],
+        "source": row[2],
+        "mode": row[3],
+        "unit": row[4],
+        "interval_value": row[5],
+        "interval_label": row[6],
+        "timestamp": str(row[7]) if row[7] else None,
+        "date": str(row[8]) if row[8] else None,
+        "open": row[9],
+        "high": row[10],
+        "low": row[11],
+        "close": row[12],
+        "volume": row[13],
+        "open_interest": row[14],
+        "exchange": row[15],
+        "segment": row[16],
+        "instrument_type": row[17],
+        "expiry": str(row[18]) if row[18] else None,
+        "name": row[19],
+        "isin": row[20],
+        "ingested_at": str(row[21]) if row[21] else None,
+        "updated_at": str(row[22]) if row[22] else None
+    }
+
+
+def get_upstox_ohlcv_preview_service(
+    search: str = "",
+    source: str = "all",
+    mode: str = "all",
+    interval: str = "all",
+    segment: str = "all",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_ohlcv_preview_filters(
+            search=search,
+            source=source,
+            mode=mode,
+            interval=interval,
+            segment=segment
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM upstox_ohlcv_candles
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                instrument_key,
+                trading_symbol,
+                instrument_source,
+                candle_mode,
+                unit,
+                interval_value,
+                interval_label,
+                candle_timestamp,
+                candle_date,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                volume,
+                open_interest,
+                exchange,
+                segment,
+                instrument_type,
+                expiry,
+                name,
+                isin,
+                ingested_at,
+                updated_at
+            FROM upstox_ohlcv_candles
+            {where_sql}
+            ORDER BY candle_timestamp DESC, ingested_at DESC, instrument_key
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_ohlcv_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
 def normalize_page(value: int) -> int:
     try:
         page = int(value)
@@ -2537,8 +4308,8 @@ def normalize_page_size(value: int) -> int:
     if page_size < 10:
         return 10
 
-    if page_size > 200:
-        return 200
+    if page_size > 2000:
+        return 2000
 
     return page_size
 

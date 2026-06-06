@@ -8,9 +8,13 @@ from app.services.data_collection_service import (
     get_data_collection_summary_service,
     get_upstox_expired_instruments_preview_service,
     get_upstox_instruments_preview_service,
+    get_upstox_ohlcv_options_service,
+    get_upstox_ohlcv_preview_service,
     request_cancel_active_sync_runs_service,
+    save_upstox_ohlcv_options_service,
     sync_upstox_current_instruments_service,
-    sync_upstox_expired_instruments_service
+    sync_upstox_expired_instruments_service,
+    sync_upstox_ohlcv_daily_service
 )
 from app.services.data_collection_scheduler_service import (
     create_data_collection_schedule_service,
@@ -29,7 +33,10 @@ def start_detached_collection_job(target, **kwargs):
         try:
             target(**kwargs)
         except Exception as error:
+            import traceback
+
             print(f"Detached data collection job failed: {error}")
+            traceback.print_exc()
 
     worker = threading.Thread(target=run_job, daemon=True)
     worker.start()
@@ -107,6 +114,106 @@ def get_upstox_expired_instruments_preview(
     }
 
 
+@router.get("/upstox/ohlcv-preview")
+def get_upstox_ohlcv_preview_legacy(
+    search: str = Query(
+        "",
+        description="Search instrument key, symbol, source, mode, interval, exchange, or segment."
+    ),
+    source: str = Query("all", description="Filter by OHLCV source."),
+    mode: str = Query("all", description="Filter by OHLCV mode."),
+    interval: str = Query("all", description="Filter by OHLCV interval."),
+    segment: str = Query("all", description="Filter by segment."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ohlcv_preview_service(
+            search=search,
+            source=source,
+            mode=mode,
+            interval=interval,
+            segment=segment,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/ohlcv/preview")
+def get_upstox_ohlcv_preview(
+    search: str = Query(
+        "",
+        description="Search instrument key, symbol, source, mode, interval, exchange, or segment."
+    ),
+    source: str = Query("all", description="Filter by OHLCV source."),
+    mode: str = Query("all", description="Filter by OHLCV mode."),
+    interval: str = Query("all", description="Filter by OHLCV interval."),
+    segment: str = Query("all", description="Filter by segment."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ohlcv_preview_service(
+            search=search,
+            source=source,
+            mode=mode,
+            interval=interval,
+            segment=segment,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/ohlcv-options")
+def get_upstox_ohlcv_options_legacy(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ohlcv_options_service()
+    }
+
+
+@router.get("/upstox/ohlcv/options")
+def get_upstox_ohlcv_options(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ohlcv_options_service()
+    }
+
+
+@router.put("/upstox/ohlcv-options")
+def save_upstox_ohlcv_options_legacy(
+    payload: dict,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return save_upstox_ohlcv_options_service(payload, current_user)
+
+
+@router.post("/upstox/ohlcv/options")
+def save_upstox_ohlcv_options(
+    payload: dict,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return save_upstox_ohlcv_options_service(payload, current_user)
+
+
+@router.put("/upstox/ohlcv/options")
+def update_upstox_ohlcv_options(
+    payload: dict,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return save_upstox_ohlcv_options_service(payload, current_user)
+
+
 @router.post("/upstox/sync-current")
 def sync_upstox_current_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
@@ -136,6 +243,40 @@ def sync_upstox_expired_instruments(
     return {
         "status": "started",
         "message": "Expired Instruments collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/sync-ohlcv")
+def sync_upstox_ohlcv_daily_legacy(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_ohlcv_daily_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "OHLCV collection started using selected options. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/ohlcv/run")
+def sync_upstox_ohlcv_daily(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_ohlcv_daily_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "OHLCV collection started using selected options. Monitor will update while it runs."
     }
 
 

@@ -4,6 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { oaIconButtonStyles, oaInputStyles } from "./uiStyles";
 
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const POPOVER_WIDTH = 280;
+const POPOVER_HEIGHT = 342;
+const SAFE_PADDING = 8;
+const GAP = 6;
 
 function parseDate(value) {
   if (!value) {
@@ -16,7 +20,18 @@ function parseDate(value) {
     return null;
   }
 
-  return new Date(year, month - 1, day);
+  const parsed = new Date(year, month - 1, day);
+
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return parsed;
 }
 
 function toDateValue(date) {
@@ -49,18 +64,53 @@ function sameDay(left, right) {
   return toDateValue(left) === toDateValue(right);
 }
 
+function normalizeTypedDate(value) {
+  const cleanValue = String(value || "").trim();
+
+  if (!cleanValue) {
+    return "";
+  }
+
+  const match = cleanValue.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+
+  if (!match) {
+    return cleanValue;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(year, month - 1, day);
+
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return cleanValue;
+  }
+
+  return toDateValue(parsed);
+}
+
 function DatePicker({
+  name,
   value = "",
   onChange,
-  placeholder = "Date",
+  placeholder = "YYYY-MM-DD",
   className = "",
-  ariaLabel = "Select date"
+  ariaLabel = "Select date",
+  disabled = false
 }) {
   const selectedDate = parseDate(value);
   const today = new Date();
-  const buttonRef = useRef(null);
+  const inputRef = useRef(null);
+  const calendarButtonRef = useRef(null);
   const popoverRef = useRef(null);
+
   const [open, setOpen] = useState(false);
+  const [draftValue, setDraftValue] = useState(value || "");
   const [viewDate, setViewDate] = useState(selectedDate || today);
   const [popoverPosition, setPopoverPosition] = useState({
     top: 0,
@@ -85,6 +135,24 @@ function DatePicker({
     });
   }, [viewDate]);
 
+  useEffect(() => {
+    setDraftValue(value || "");
+
+    const parsed = parseDate(value);
+    if (parsed) {
+      setViewDate(parsed);
+    }
+  }, [value]);
+
+  function emitChange(nextValue) {
+    onChange?.({
+      target: {
+        name,
+        value: nextValue
+      }
+    });
+  }
+
   function changeMonth(offset) {
     setViewDate(
       new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1)
@@ -92,37 +160,92 @@ function DatePicker({
   }
 
   function placePopover() {
-    if (!buttonRef.current) {
+    const anchor = inputRef.current || calendarButtonRef.current;
+
+    if (!anchor) {
       return;
     }
 
-    const rect = buttonRef.current.getBoundingClientRect();
-    const width = 280;
+    const rect = anchor.getBoundingClientRect();
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight;
+
+    const spaceBelow = viewportHeight - rect.bottom - SAFE_PADDING;
+    const spaceAbove = rect.top - SAFE_PADDING;
+    const opensUp = spaceBelow < POPOVER_HEIGHT && spaceAbove > spaceBelow;
+
+    const top = opensUp
+      ? Math.max(SAFE_PADDING, rect.top - POPOVER_HEIGHT - GAP)
+      : Math.min(
+          rect.bottom + GAP,
+          Math.max(SAFE_PADDING, viewportHeight - POPOVER_HEIGHT - SAFE_PADDING)
+        );
+
     const left = Math.min(
-      Math.max(8, rect.left),
-      Math.max(8, window.innerWidth - width - 8)
+      Math.max(SAFE_PADDING, rect.left),
+      Math.max(SAFE_PADDING, viewportWidth - POPOVER_WIDTH - SAFE_PADDING)
     );
 
-    setPopoverPosition({
-      top: rect.bottom + 6,
-      left
-    });
+    setPopoverPosition({ top, left });
   }
 
   function selectDate(date) {
-    onChange?.(toDateValue(date));
+    const nextValue = toDateValue(date);
+    setDraftValue(nextValue);
+    emitChange(nextValue);
     setOpen(false);
   }
 
   function clearDate(event) {
     event.stopPropagation();
-    onChange?.("");
+    setDraftValue("");
+    emitChange("");
+    setOpen(false);
+    inputRef.current?.focus();
   }
 
   function openCalendar() {
+    if (disabled) {
+      return;
+    }
+
     setViewDate(selectedDate || today);
-    placePopover();
-    setOpen((current) => !current);
+    setOpen(true);
+  }
+
+  function handleInputChange(event) {
+    const nextValue = event.target.value;
+    setDraftValue(nextValue);
+
+    const normalizedValue = normalizeTypedDate(nextValue);
+    emitChange(normalizedValue);
+
+    const parsed = parseDate(normalizedValue);
+    if (parsed) {
+      setViewDate(parsed);
+    }
+  }
+
+  function handleInputBlur() {
+    const normalizedValue = normalizeTypedDate(draftValue);
+
+    if (normalizedValue !== draftValue) {
+      setDraftValue(normalizedValue);
+      emitChange(normalizedValue);
+    }
+  }
+
+  function handleInputKeyDown(event) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      openCalendar();
+    }
+
+    if (event.key === "Escape") {
+      setOpen(false);
+    }
   }
 
   useEffect(() => {
@@ -130,11 +253,12 @@ function DatePicker({
       return undefined;
     }
 
-    placePopover();
+    window.requestAnimationFrame(placePopover);
 
     function handlePointerDown(event) {
       if (
-        buttonRef.current?.contains(event.target) ||
+        inputRef.current?.contains(event.target) ||
+        calendarButtonRef.current?.contains(event.target) ||
         popoverRef.current?.contains(event.target)
       ) {
         return;
@@ -164,31 +288,48 @@ function DatePicker({
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [open]);
+  }, [open, selectedDate]);
 
   return (
     <div className={`relative h-8 ${className}`}>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={openCalendar}
-        className={`${oaInputStyles.base} flex h-8 w-full items-center gap-2 pr-8 text-left hover:border-sky-500/40 hover:bg-oa-card ${
+      <input
+        ref={inputRef}
+        name={name}
+        type="text"
+        inputMode="numeric"
+        value={draftValue}
+        disabled={disabled}
+        onFocus={placePopover}
+        onChange={handleInputChange}
+        onBlur={handleInputBlur}
+        onKeyDown={handleInputKeyDown}
+        placeholder={placeholder}
+        className={`${oaInputStyles.base} h-8 w-full pr-14 oa-code-font text-[12px] hover:border-sky-500/40 hover:bg-oa-card ${
           open ? "border-blue-500 bg-oa-card" : ""
-        }`}
+        } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
         aria-label={ariaLabel}
+      />
+
+      <button
+        ref={calendarButtonRef}
+        type="button"
+        onClick={() => {
+          if (open) {
+            setOpen(false);
+            return;
+          }
+
+          openCalendar();
+        }}
+        disabled={disabled}
+        className="absolute right-7 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-sky-300 transition hover:bg-oa-card hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+        aria-label={`${ariaLabel} calendar`}
         aria-expanded={open}
       >
-        <CalendarDays size={14} className="shrink-0 text-sky-300" />
-        <span
-          className={`truncate oa-code-font text-[12px] ${
-            value ? "text-white" : "text-oa-muted"
-          }`}
-        >
-          {formatDateLabel(value) || placeholder}
-        </span>
+        <CalendarDays size={14} />
       </button>
 
-      {value ? (
+      {draftValue && !disabled ? (
         <button
           type="button"
           onClick={clearDate}
@@ -204,8 +345,8 @@ function DatePicker({
           ref={popoverRef}
           className="fixed z-[9999] w-[280px] rounded border border-oa-border bg-black p-2 font-mono shadow-2xl animate-[oaMenuIn_0.14s_ease-out]"
           style={{
-            top: popoverPosition.top,
-            left: popoverPosition.left
+            top: `${popoverPosition.top}px`,
+            left: `${popoverPosition.left}px`
           }}
         >
           <div className="rounded border border-oa-border bg-[#070708] p-2">
