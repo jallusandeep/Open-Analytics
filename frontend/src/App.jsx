@@ -4,6 +4,7 @@ import Login from "./pages/auth/Login";
 import Dashboard from "./pages/dashboard/Dashboard";
 import UserAccounts from "./pages/admin/UserAccounts";
 import Connections from "./pages/admin/Connections";
+import UpstoxCallback from "./pages/admin/UpstoxCallback";
 import DataCollection from "./pages/admin/DataCollection";
 import Settings from "./pages/settings/Settings";
 
@@ -44,6 +45,17 @@ function App() {
               <ProtectedRoute>
                 <AdminRoute>
                   <Connections />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/connections/upstox/callback"
+            element={
+              <ProtectedRoute>
+                <AdminRoute>
+                  <UpstoxCallback />
                 </AdminRoute>
               </ProtectedRoute>
             }

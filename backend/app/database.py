@@ -431,6 +431,7 @@ def init_database():
                 api_key VARCHAR,
                 api_secret VARCHAR,
                 redirect_url VARCHAR,
+                analytical_token VARCHAR,
                 access_token VARCHAR,
                 refresh_token VARCHAR,
                 token_type VARCHAR,
@@ -450,6 +451,7 @@ def init_database():
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_key VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_secret VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN redirect_url VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN analytical_token VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN refresh_token VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN token_type VARCHAR;")

@@ -7,6 +7,10 @@ from app.logging_config import setup_logging
 from app.repositories.app_metadata_repository import AppMetadataRepository
 from app.repositories.base_repository import db_connection
 from app.version import APP_VERSION, SCHEMA_VERSION
+from app.services.connection_scheduler_service import (
+    start_connection_scheduler,
+    stop_connection_scheduler
+)
 from app.services.data_collection_scheduler_service import (
     start_data_collection_scheduler,
     stop_data_collection_scheduler
@@ -43,10 +47,12 @@ def startup_event():
     setup_logging()
     init_database()
     start_data_collection_scheduler()
+    start_connection_scheduler()
 
 
 @app.on_event("shutdown")
 def shutdown_event():
+    stop_connection_scheduler()
     stop_data_collection_scheduler()
 
 

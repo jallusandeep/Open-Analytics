@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Bot,
   Check,
   Edit3,
+  ExternalLink,
+  KeyRound,
   Plus,
   PlugZap,
   RefreshCcw,
@@ -16,6 +17,7 @@ import {
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
+import Tooltip from "../../components/common/Tooltip";
 import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
@@ -30,14 +32,21 @@ import {
   disconnectTelegramConnection,
   disconnectUpstoxConnection,
   getConnections,
+  getUpstoxAuthorizeUrl,
   saveTelegramConnection,
   saveUpstoxConnection,
   testTelegramConnection,
   testUpstoxConnection
 } from "../../api/connectionApi";
 
+const UPSTOX_REDIRECT_URL = "http://localhost:5173/connections/upstox/callback";
+
 const emptyFormData = {
   provider: "",
+  api_key: "",
+  api_secret: "",
+  redirect_url: "",
+  analytical_token: "",
   access_token: "",
   bot_token: ""
 };
@@ -46,14 +55,14 @@ const brokers = [
   {
     id: "upstox",
     name: "Upstox",
-    description: "Analytics token based broker connection.",
+    description: "Broker connection.",
     apiSupported: true,
     icon: PlugZap
   },
   {
     id: "telegram",
     name: "Telegram",
-    description: "Bot based alert connection.",
+    description: "Bot alert connection.",
     apiSupported: true,
     icon: Send
   }
@@ -78,7 +87,7 @@ const connectionColumns = [
   { key: "updated_by", label: "Updated By", filterable: false }
 ];
 
-const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 132px";
+const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 168px";
 
 function getStoredCurrentUser() {
   try {
@@ -236,14 +245,16 @@ function StatusBadge({ status }) {
 
 function ClearInputButton({ label, onClick }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-      aria-label={label}
-    >
-      <X size={13} />
-    </button>
+    <Tooltip text={label} side="top">
+      <button
+        type="button"
+        onClick={onClick}
+        className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+        aria-label={label}
+      >
+        <X size={13} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -257,7 +268,8 @@ function ConnectionFormModal({
   onClose,
   onSave,
   onInputChange,
-  onClearField
+  onClearField,
+  onUseDefaultRedirectUrl
 }) {
   const selectedBroker =
     brokers.find((broker) => broker.id === formData.provider) || null;
@@ -267,14 +279,6 @@ function ConnectionFormModal({
   const hasProviderSelected = Boolean(selectedBroker);
 
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
-
-  const hasAccessToken = formData.access_token.trim();
-  const hasTelegramBotToken = formData.bot_token.trim();
-
-  const canSave =
-    isAdminControlAllowed &&
-    hasProviderSelected &&
-    ((isUpstox && hasAccessToken) || (isTelegram && hasTelegramBotToken));
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -287,7 +291,7 @@ function ConnectionFormModal({
       title={title}
       subtitle=""
       onClose={onClose}
-      width="max-w-lg"
+      width="max-w-xl"
       footer={
         <div className="flex items-center justify-end gap-2">
           <IconButton
@@ -303,7 +307,7 @@ function ConnectionFormModal({
             icon={Check}
             label={mode === "edit" ? "Update connection" : "Save connection"}
             variant="default"
-            disabled={saving || !canSave}
+            disabled={saving || !isAdminControlAllowed || !hasProviderSelected}
             onClick={onSave}
             tooltipSide="top"
           />
@@ -339,31 +343,144 @@ function ConnectionFormModal({
         ) : null}
 
         {isUpstox ? (
-          <div>
-            <label className={oaFormTextStyles.label}>
-              Analytics Access Token
-            </label>
-            <div className="relative mt-1">
-              <Input
-                name="access_token"
-                type="password"
-                value={formData.access_token}
-                onChange={onInputChange}
-                placeholder={
-                  selectedConnection?.has_access_token
-                    ? "Saved - enter to replace"
-                    : "Enter Upstox analytics token"
-                }
-                className="pr-9"
-                autoFocus
-              />
-
-              {formData.access_token ? (
-                <ClearInputButton
-                  label="Clear analytics token"
-                  onClick={() => onClearField("access_token")}
+          <div className="space-y-3">
+            <div>
+              <label className={oaFormTextStyles.label}>API Key</label>
+              <div className="relative mt-1">
+                <Input
+                  name="api_key"
+                  value={formData.api_key}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.api_key
+                      ? "Saved - enter to replace"
+                      : "Enter Upstox API key"
+                  }
+                  className="pr-9"
+                  autoFocus
                 />
-              ) : null}
+
+                {formData.api_key ? (
+                  <ClearInputButton
+                    label="Clear API key"
+                    onClick={() => onClearField("api_key")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>API Secret</label>
+              <div className="relative mt-1">
+                <Input
+                  name="api_secret"
+                  type="password"
+                  value={formData.api_secret}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_api_secret
+                      ? "Saved - enter to replace"
+                      : "Enter Upstox API secret"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.api_secret ? (
+                  <ClearInputButton
+                    label="Clear API secret"
+                    onClick={() => onClearField("api_secret")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <label className={oaFormTextStyles.label}>Redirect URL</label>
+
+                <Tooltip text="Use app redirect URL" side="top">
+                  <button
+                    type="button"
+                    onClick={onUseDefaultRedirectUrl}
+                    className="inline-flex items-center gap-1 rounded-sm border border-oa-border bg-black px-2 py-1 text-[11px] text-sky-300 transition hover:border-sky-500/50 hover:bg-sky-950/30 hover:text-sky-200"
+                    aria-label="Use app redirect URL"
+                  >
+                    <ExternalLink size={12} />
+                    Use app URL
+                  </button>
+                </Tooltip>
+              </div>
+
+              <div className="relative mt-1">
+                <Input
+                  name="redirect_url"
+                  value={formData.redirect_url}
+                  onChange={onInputChange}
+                  placeholder="Enter Upstox redirect URL"
+                  className="pr-9"
+                />
+
+                {formData.redirect_url ? (
+                  <ClearInputButton
+                    label="Clear redirect URL"
+                    onClick={() => onClearField("redirect_url")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>
+                Analytical Token
+              </label>
+              <div className="relative mt-1">
+                <Input
+                  name="analytical_token"
+                  type="password"
+                  value={formData.analytical_token}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_analytical_token
+                      ? "Saved - enter to replace"
+                      : "Enter analytical token"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.analytical_token ? (
+                  <ClearInputButton
+                    label="Clear analytical token"
+                    onClick={() => onClearField("analytical_token")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>
+                Manual Access Token
+              </label>
+              <div className="relative mt-1">
+                <Input
+                  name="access_token"
+                  type="password"
+                  value={formData.access_token}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_access_token
+                      ? "Saved - enter to replace"
+                      : "Paste access token"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.access_token ? (
+                  <ClearInputButton
+                    label="Clear manual access token"
+                    onClick={() => onClearField("access_token")}
+                  />
+                ) : null}
+              </div>
             </div>
           </div>
         ) : null}
@@ -416,6 +533,7 @@ function Connections() {
   const [saving, setSaving] = useState(false);
   const [testingProvider, setTestingProvider] = useState("");
   const [disconnectingProvider, setDisconnectingProvider] = useState("");
+  const [authorizingProvider, setAuthorizingProvider] = useState("");
 
   const { showToast } = useToast();
 
@@ -517,10 +635,14 @@ function Connections() {
   }
 
   function openEditForm(provider) {
+    const connection = connectionsByProvider[provider] || null;
+
     setFormMode("edit");
     setFormData({
       ...emptyFormData,
-      provider
+      provider,
+      api_key: connection?.api_key || "",
+      redirect_url: connection?.redirect_url || ""
     });
   }
 
@@ -557,6 +679,13 @@ function Connections() {
     }));
   }
 
+  function handleUseDefaultRedirectUrl() {
+    setFormData((previous) => ({
+      ...previous,
+      redirect_url: UPSTOX_REDIRECT_URL
+    }));
+  }
+
   function handleSearchSubmit(event) {
     event.preventDefault();
     setAppliedSearchValue(searchValue.trim());
@@ -583,9 +712,33 @@ function Connections() {
       return;
     }
 
-    if (formBroker.id === "upstox" && !formData.access_token.trim()) {
-      showToast("Upstox analytics token is required.", "warning");
-      return;
+    if (formBroker.id === "upstox") {
+      const apiKey = formData.api_key.trim();
+      const apiSecret = formData.api_secret.trim();
+      const redirectUrl = formData.redirect_url.trim();
+      const analyticalToken = formData.analytical_token.trim();
+      const accessToken = formData.access_token.trim();
+
+      const hasAnyValue =
+        apiKey || apiSecret || redirectUrl || analyticalToken || accessToken;
+      const hasPartialApiCredential = apiKey || apiSecret || redirectUrl;
+      const hasCompleteApiCredential = apiKey && apiSecret && redirectUrl;
+
+      if (!hasAnyValue) {
+        showToast(
+          "Enter Upstox API key, API secret, redirect URL, analytical token, or manual access token.",
+          "warning"
+        );
+        return;
+      }
+
+      if (hasPartialApiCredential && !hasCompleteApiCredential) {
+        showToast(
+          "Upstox API key, API secret, and redirect URL are required together.",
+          "warning"
+        );
+        return;
+      }
     }
 
     if (formBroker.id === "telegram" && !formData.bot_token.trim()) {
@@ -598,7 +751,11 @@ function Connections() {
     try {
       if (formBroker.id === "upstox") {
         await saveUpstoxConnection({
-          access_token: formData.access_token.trim()
+          api_key: formData.api_key.trim() || null,
+          api_secret: formData.api_secret.trim() || null,
+          redirect_url: formData.redirect_url.trim() || null,
+          analytical_token: formData.analytical_token.trim() || null,
+          access_token: formData.access_token.trim() || null
         });
       }
 
@@ -619,6 +776,37 @@ function Connections() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleGenerateUpstoxAccessToken() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to generate access token.", "error");
+      return;
+    }
+
+    setAuthorizingProvider("upstox");
+
+    try {
+      const response = await getUpstoxAuthorizeUrl();
+      const authorizeUrl = response.data?.authorize_url;
+
+      if (!authorizeUrl) {
+        showToast("Unable to get Upstox authorization URL.", "error");
+        return;
+      }
+
+      window.location.href = authorizeUrl;
+    } catch (error) {
+      showToast(
+        getErrorMessage(
+          error,
+          "Save Upstox API key, API secret, and redirect URL first."
+        ),
+        "error"
+      );
+    } finally {
+      setAuthorizingProvider("");
     }
   }
 
@@ -664,6 +852,7 @@ function Connections() {
         getErrorMessage(error, `Unable to test ${broker.name} connection.`),
         "error"
       );
+      await loadConnections(false);
     } finally {
       setTestingProvider("");
     }
@@ -762,6 +951,7 @@ function Connections() {
     const hasConnection = Boolean(row.connection);
     const isTesting = testingProvider === row.broker.id;
     const isDeleting = disconnectingProvider === row.broker.id;
+    const isAuthorizing = authorizingProvider === row.broker.id;
 
     return (
       <div className="flex justify-end gap-2">
@@ -776,45 +966,85 @@ function Connections() {
           tooltipSide="left"
         />
 
-        <button
-          type="button"
-          disabled={
-            isTesting ||
-            !hasConnection ||
-            !row.broker.apiSupported ||
-            !isAdminControlAllowed
-          }
-          onClick={() => handleTest(row.broker.id)}
-          className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={isTesting ? "Testing connection" : "Test connection"}
-          title={isTesting ? "Testing connection" : "Test connection"}
-        >
-          {isTesting ? (
-            <Spinner size="xs" color="light" />
-          ) : (
-            <PlugZap size={15} />
-          )}
-        </button>
+        {row.broker.id === "upstox" ? (
+          <Tooltip
+            text={
+              isAuthorizing ? "Generating access token" : "Generate access token"
+            }
+            side="left"
+          >
+            <button
+              type="button"
+              disabled={
+                isAuthorizing ||
+                !hasConnection ||
+                !row.broker.apiSupported ||
+                !isAdminControlAllowed
+              }
+              onClick={handleGenerateUpstoxAccessToken}
+              className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label={
+                isAuthorizing
+                  ? "Generating access token"
+                  : "Generate access token"
+              }
+            >
+              {isAuthorizing ? (
+                <Spinner size="xs" color="light" />
+              ) : (
+                <KeyRound size={15} />
+              )}
+            </button>
+          </Tooltip>
+        ) : null}
 
-        <button
-          type="button"
-          disabled={
-            isDeleting ||
-            !hasConnection ||
-            !row.broker.apiSupported ||
-            !isAdminControlAllowed
-          }
-          onClick={() => handleDisconnect(row.broker.id)}
-          className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={isDeleting ? "Deleting connection" : "Delete connection"}
-          title={isDeleting ? "Deleting connection" : "Delete connection"}
+        <Tooltip
+          text={isTesting ? "Testing connection" : "Test connection"}
+          side="left"
         >
-          {isDeleting ? (
-            <Spinner size="xs" color="light" />
-          ) : (
-            <Trash2 size={15} />
-          )}
-        </button>
+          <button
+            type="button"
+            disabled={
+              isTesting ||
+              !hasConnection ||
+              !row.broker.apiSupported ||
+              !isAdminControlAllowed
+            }
+            onClick={() => handleTest(row.broker.id)}
+            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={isTesting ? "Testing connection" : "Test connection"}
+          >
+            {isTesting ? (
+              <Spinner size="xs" color="light" />
+            ) : (
+              <PlugZap size={15} />
+            )}
+          </button>
+        </Tooltip>
+
+        <Tooltip
+          text={isDeleting ? "Deleting connection" : "Delete connection"}
+          side="left"
+        >
+          <button
+            type="button"
+            disabled={
+              isDeleting ||
+              !hasConnection ||
+              !row.broker.apiSupported ||
+              !isAdminControlAllowed
+            }
+            onClick={() => handleDisconnect(row.broker.id)}
+            className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={isDeleting ? "Deleting connection" : "Delete connection"}
+          >
+            {isDeleting ? (
+              <Spinner size="xs" color="light" />
+            ) : (
+              <Trash2 size={15} />
+            )}
+          </button>
+        </Tooltip>
       </div>
     );
   }
@@ -860,25 +1090,20 @@ function Connections() {
                   />
 
                   {searchValue ? (
-                    <button
-                      type="button"
+                    <ClearInputButton
+                      label="Clear search"
                       onClick={handleClearSearch}
-                      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                      aria-label="Clear search"
-                    >
-                      <X size={13} />
-                    </button>
+                    />
                   ) : null}
                 </div>
 
-                <button
+                <IconButton
+                  icon={Search}
+                  label="Search connections"
                   type="submit"
-                  className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
-                  aria-label="Search connections"
-                  title="Search connections"
-                >
-                  <Search size={14} />
-                </button>
+                  variant="search"
+                  tooltipSide="top"
+                />
 
                 <IconButton
                   icon={Plus}
@@ -928,6 +1153,7 @@ function Connections() {
           onSave={handleSave}
           onInputChange={handleInputChange}
           onClearField={handleClearField}
+          onUseDefaultRedirectUrl={handleUseDefaultRedirectUrl}
         />
       </section>
     </MainLayout>
