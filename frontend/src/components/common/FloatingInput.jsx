@@ -35,42 +35,40 @@ function FloatingInput({
   const [focused, setFocused] = useState(false);
   const [autofilled, setAutofilled] = useState(false);
 
-  const hasValue = String(value ?? "").length > 0;
-  const isFloating = focused || hasValue || autofilled;
-
   const isAuth = variant === "auth";
   const isUserModal = variant === "userModal";
 
   const wrapperClass = isAuth
     ? "h-12 rounded-lg px-3"
     : isUserModal
-      ? "h-10 rounded px-3"
-      : "h-10 rounded px-3";
+      ? "h-8 rounded px-3"
+      : "h-8 rounded px-3";
 
-  const inputTextClass = isAuth ? "text-sm" : "text-[13px]";
-  const insideLabelClass = isAuth ? "text-xs" : "text-[12px]";
-  const floatingLabelClass = "text-[10px]";
-  const insideLeftClass = Icon ? "left-10" : "left-3";
+  const inputTextClass = isAuth ? "text-sm" : "text-[12px]";
 
-  const syncAutofillValue = useCallback((isAutofill, notifyChange = false) => {
-    const input = inputRef.current;
-    const domValue = input?.value ?? "";
-    const detectedAutofill = isAutofill || inputMatchesAutofill(input);
+  const syncAutofillValue = useCallback(
+    (isAutofill, notifyChange = false) => {
+      const input = inputRef.current;
+      const domValue = input?.value ?? "";
+      const detectedAutofill = isAutofill || inputMatchesAutofill(input);
 
-    setAutofilled(Boolean(detectedAutofill && domValue));
+      setAutofilled(Boolean(detectedAutofill && domValue));
 
-    if (notifyChange && domValue && domValue !== String(value ?? "")) {
-      onChange?.({
-        target: input,
-        currentTarget: input
-      });
-    }
-  }, [onChange, value]);
+      if (notifyChange && domValue && domValue !== String(value ?? "")) {
+        onChange?.({
+          target: input,
+          currentTarget: input
+        });
+      }
+    },
+    [onChange, value]
+  );
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() =>
       syncAutofillValue(false, true)
     );
+
     const timeoutIds = [100, 500, 1000].map((delay) =>
       window.setTimeout(() => syncAutofillValue(false, true), delay)
     );
@@ -83,9 +81,18 @@ function FloatingInput({
 
   return (
     <div className={`relative ${className}`}>
+      {label && (
+        <label
+          htmlFor={inputId}
+          className="mb-1.5 block text-[12px] font-medium tracking-wide text-oa-muted"
+        >
+          {label}
+          {required && <span className="ml-1 text-red-400">*</span>}
+        </label>
+      )}
+
       <div
         data-autofilled={autofilled ? "true" : "false"}
-        data-floating={isFloating ? "true" : "false"}
         className={`relative flex ${wrapperClass} items-center gap-2 border bg-black transition-colors duration-200 ${
           error
             ? "border-red-500/70 focus-within:border-red-400"
@@ -123,22 +130,9 @@ function FloatingInput({
           autoComplete={autoComplete}
           disabled={disabled}
           required={required}
-          placeholder=" "
-          className={`oa-floating-input__control w-full bg-transparent text-oa-text outline-none placeholder:text-transparent disabled:cursor-not-allowed ${inputTextClass} ${
-            isFloating ? "pt-2" : "pt-0"
-          } ${inputClassName}`}
+          placeholder=""
+          className={`oa-floating-input__control w-full bg-transparent text-oa-text outline-none placeholder:text-oa-muted disabled:cursor-not-allowed ${inputTextClass} ${inputClassName}`}
         />
-
-        <label
-          htmlFor={inputId}
-          className={`oa-floating-input__label pointer-events-none absolute z-10 bg-black px-1.5 font-medium tracking-wide text-oa-muted transition-all duration-200 ease-out ${
-            isFloating
-              ? `left-3 top-0 -translate-y-1/2 ${floatingLabelClass}`
-              : `${insideLeftClass} top-1/2 -translate-y-1/2 ${insideLabelClass}`
-          }`}
-        >
-          {label}
-        </label>
       </div>
 
       {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}

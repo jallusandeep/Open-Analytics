@@ -895,22 +895,27 @@ function UserAccounts() {
               required
             />
 
-            <Select
-              value={formData.role}
-              onChange={(event) =>
-                setFormData((previous) => ({
-                  ...previous,
-                  role: event.target.value
-                }))
-              }
-              options={[
-                { value: "user", label: "User" },
-                { value: "admin", label: "Admin" },
-                { value: "super_admin", label: "Super Admin" }
-              ]}
-              ariaLabel="New user role"
-              minWidth="w-full"
-            />
+            <div>
+              <label className={oaFormTextStyles.label}>Role</label>
+              <div className="mt-1">
+                <Select
+                  value={formData.role}
+                  onChange={(event) =>
+                    setFormData((previous) => ({
+                      ...previous,
+                      role: event.target.value
+                    }))
+                  }
+                  options={[
+                    { value: "user", label: "User" },
+                    { value: "admin", label: "Admin" },
+                    { value: "super_admin", label: "Super Admin" }
+                  ]}
+                  ariaLabel="New user role"
+                  minWidth="w-full"
+                />
+              </div>
+            </div>
           </div>
         </form>
       </Modal>
@@ -987,34 +992,44 @@ function UserAccounts() {
               autoComplete="tel"
             />
 
-            <Select
-              value={editFormData.role}
-              onChange={(event) =>
-                setEditFormData((previous) => ({
-                  ...previous,
-                  role: event.target.value
-                }))
-              }
-              options={editRoleOptions}
-              ariaLabel="Edit user role"
-              minWidth="w-full"
-            />
+            <div>
+              <label className={oaFormTextStyles.label}>Role</label>
+              <div className="mt-1">
+                <Select
+                  value={editFormData.role}
+                  onChange={(event) =>
+                    setEditFormData((previous) => ({
+                      ...previous,
+                      role: event.target.value
+                    }))
+                  }
+                  options={editRoleOptions}
+                  ariaLabel="Edit user role"
+                  minWidth="w-full"
+                />
+              </div>
+            </div>
 
-            <Select
-              value={editFormData.is_active ? "active" : "inactive"}
-              onChange={(event) =>
-                setEditFormData((previous) => ({
-                  ...previous,
-                  is_active: event.target.value === "active"
-                }))
-              }
-              options={[
-                { value: "active", label: "Active" },
-                { value: "inactive", label: "Inactive" }
-              ]}
-              ariaLabel="Edit user status"
-              minWidth="w-full"
-            />
+            <div>
+              <label className={oaFormTextStyles.label}>Status</label>
+              <div className="mt-1">
+                <Select
+                  value={editFormData.is_active ? "active" : "inactive"}
+                  onChange={(event) =>
+                    setEditFormData((previous) => ({
+                      ...previous,
+                      is_active: event.target.value === "active"
+                    }))
+                  }
+                  options={[
+                    { value: "active", label: "Active" },
+                    { value: "inactive", label: "Inactive" }
+                  ]}
+                  ariaLabel="Edit user status"
+                  minWidth="w-full"
+                />
+              </div>
+            </div>
           </div>
 
           {currentUserRole === "admin" && editUser?.role === "admin" && (

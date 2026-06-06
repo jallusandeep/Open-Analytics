@@ -336,12 +336,6 @@ function ConnectionFormModal({
           </div>
         </div>
 
-        {!hasProviderSelected ? (
-          <div className="rounded border border-oa-border bg-black p-3">
-            <p className="text-[12px] text-oa-muted">Select provider.</p>
-          </div>
-        ) : null}
-
         {isUpstox ? (
           <div className="space-y-3">
             <div>
