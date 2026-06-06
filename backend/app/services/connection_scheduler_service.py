@@ -17,7 +17,8 @@ from app.services.connection_service import (
     upstox_access_token_request_post
 )
 from app.telegram_alerts_msg.message_templates import (
-    build_upstox_access_token_reminder_message
+    build_upstox_access_token_reminder_message,
+    build_upstox_analytical_token_reminder_message
 )
 from app.telegram_alerts_msg.telegram_sender import (
     get_admin_super_admin_telegram_chat_ids,
@@ -33,6 +34,7 @@ UPSTOX_TOKEN_CHECK_HOUR = 3
 UPSTOX_TOKEN_CHECK_MINUTE = 30
 UPSTOX_REMINDER_INTERVAL_SECONDS = 60 * 60
 UPSTOX_TOKEN_EXPIRY_WARNING_DAYS = 1
+UPSTOX_ANALYTICAL_TOKEN_VALIDITY_DAYS = 365
 
 _connection_scheduler_thread = None
 _connection_scheduler_stop_event = threading.Event()
@@ -75,6 +77,22 @@ def parse_jwt_expiry(token: str):
 
     if not token_value:
         return None
+
+
+def get_analytical_token_expiry(token: str, token_updated_at):
+    token_value = safe_strip(token)
+
+    if not token_value:
+        return None
+
+    jwt_expiry = parse_jwt_expiry(token_value)
+
+    if jwt_expiry:
+        return jwt_expiry
+
+    saved_at = parse_db_datetime(token_updated_at) or get_ist_now()
+
+    return saved_at + timedelta(days=UPSTOX_ANALYTICAL_TOKEN_VALIDITY_DAYS)
 
     try:
         parts = token_value.split(".")
@@ -156,8 +174,12 @@ def get_upstox_token_status():
         analytical_token = safe_strip(upstox_connection[5])
         access_token = safe_strip(upstox_connection[6])
         access_expiry_value = upstox_connection[7]
+        analytical_token_updated_at = upstox_connection[12]
         access_expiry_date = parse_db_datetime(access_expiry_value)
-        analytical_expiry_date = parse_jwt_expiry(analytical_token)
+        analytical_expiry_date = get_analytical_token_expiry(
+            token=analytical_token,
+            token_updated_at=analytical_token_updated_at
+        )
         now = get_ist_now()
 
         access_state = get_token_expiry_state(
@@ -204,10 +226,14 @@ def notify_admin_super_admins_upstox_token_expiry_service():
         analytical_token = safe_strip(upstox_connection[5])
         access_token = safe_strip(upstox_connection[6])
         access_expiry_value = upstox_connection[7]
+        analytical_token_updated_at = upstox_connection[12]
 
         now = get_ist_now()
         access_expiry_date = parse_db_datetime(access_expiry_value)
-        analytical_expiry_date = parse_jwt_expiry(analytical_token)
+        analytical_expiry_date = get_analytical_token_expiry(
+            token=analytical_token,
+            token_updated_at=analytical_token_updated_at
+        )
 
         access_state = get_token_expiry_state(
             token=access_token,
@@ -234,23 +260,41 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 "token_valid": True
             }
 
-        last_sent_value = get_app_metadata_value(
+        access_last_sent_value = get_app_metadata_value(
             conn,
             "upstox_access_token_reminder_last_sent_at"
         )
-        last_sent_at = parse_db_datetime(last_sent_value)
+        access_last_sent_at = parse_db_datetime(access_last_sent_value)
 
-        if last_sent_at and now - last_sent_at < timedelta(hours=1):
+        analytical_last_sent_value = get_app_metadata_value(
+            conn,
+            "upstox_analytical_token_reminder_last_sent_at"
+        )
+        analytical_last_sent_at = parse_db_datetime(analytical_last_sent_value)
+
+        access_should_send = access_needs_reminder and not (
+            access_last_sent_at
+            and now - access_last_sent_at < timedelta(hours=1)
+        )
+
+        analytical_should_send = analytical_needs_reminder and not (
+            analytical_last_sent_at
+            and now - analytical_last_sent_at < timedelta(hours=1)
+        )
+
+        if not access_should_send and not analytical_should_send:
+            conn.commit()
+
             return {
                 "status": "skipped",
-                "message": "Upstox access token reminder already sent within the last hour.",
+                "message": "Upstox token reminder already sent within the last hour.",
                 "token_valid": False
             }
 
         auto_request_status = "skipped"
         auto_request_message = "Upstox API key or API secret is missing."
 
-        if api_key and api_secret:
+        if access_should_send and api_key and api_secret:
             try:
                 token_request_response = upstox_access_token_request_post(
                     client_id=api_key,
@@ -286,12 +330,6 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 auto_request_status = "failed"
                 auto_request_message = str(request_error)
 
-        set_app_metadata_value(
-            conn,
-            "upstox_access_token_reminder_last_sent_at",
-            now.strftime("%Y-%m-%d %H:%M:%S")
-        )
-
         try:
             bot_token = get_telegram_bot_token(conn)
         except HTTPException:
@@ -299,7 +337,7 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
             return {
                 "status": "skipped",
-                "message": "Telegram bot is not configured. Upstox auto request check was still processed.",
+                "message": "Telegram bot is not configured. Upstox token reminder check was still processed.",
                 "token_valid": False
             }
 
@@ -314,61 +352,79 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 "token_valid": False
             }
 
-        token_status_lines = [
-            format_token_status(
+        reminder_messages = []
+
+        if access_should_send:
+            access_status_text = format_token_status(
                 label="Access token",
                 state=access_state,
                 expiry_date=access_expiry_date
             )
-        ]
 
-        if analytical_token:
-            token_status_lines.append(
-                format_token_status(
-                    label="Analytical token",
-                    state=analytical_state,
-                    expiry_date=analytical_expiry_date
+            if auto_request_status == "success":
+                approval_text = (
+                    "Backend has triggered the Upstox access token approval request. "
+                    "Please approve it from Upstox app/web or WhatsApp."
+                )
+            else:
+                approval_text = (
+                    "Backend could not trigger the Upstox approval request automatically. "
+                    "Please open Open Analytics > Connections and generate the Upstox access token."
+                )
+
+            reminder_messages.append(
+                build_upstox_access_token_reminder_message(
+                    token_status_text=access_status_text,
+                    approval_text=approval_text,
+                    auto_request_status=auto_request_status,
+                    auto_request_message=auto_request_message
                 )
             )
 
-        token_status_text = "\n".join(token_status_lines)
-
-        if auto_request_status == "success":
-            approval_text = (
-                "Backend has triggered the Upstox access token approval request. "
-                "Please approve it from Upstox app/web or WhatsApp."
-            )
-        else:
-            approval_text = (
-                "Backend could not trigger the Upstox approval request automatically. "
-                "Please open Open Analytics > Connections and generate the Upstox access token."
+            set_app_metadata_value(
+                conn,
+                "upstox_access_token_reminder_last_sent_at",
+                now.strftime("%Y-%m-%d %H:%M:%S")
             )
 
-        message = build_upstox_access_token_reminder_message(
-            token_status_text=token_status_text,
-            approval_text=approval_text,
-            auto_request_status=auto_request_status,
-            auto_request_message=auto_request_message
-        )
+        if analytical_should_send:
+            analytical_status_text = format_token_status(
+                label="Analytical token",
+                state=analytical_state,
+                expiry_date=analytical_expiry_date
+            )
+
+            reminder_messages.append(
+                build_upstox_analytical_token_reminder_message(
+                    token_status_text=analytical_status_text
+                )
+            )
+
+            set_app_metadata_value(
+                conn,
+                "upstox_analytical_token_reminder_last_sent_at",
+                now.strftime("%Y-%m-%d %H:%M:%S")
+            )
 
         sent_count = 0
 
-        for chat_id in chat_ids:
-            try:
-                send_telegram_message(
-                    bot_token=bot_token,
-                    chat_id=chat_id,
-                    message=message
-                )
-                sent_count += 1
-            except Exception as error:
-                print(f"Unable to send Upstox token Telegram reminder: {error}")
+        for message in reminder_messages:
+            for chat_id in chat_ids:
+                try:
+                    send_telegram_message(
+                        bot_token=bot_token,
+                        chat_id=chat_id,
+                        message=message
+                    )
+                    sent_count += 1
+                except Exception as error:
+                    print(f"Unable to send Upstox token Telegram reminder: {error}")
 
         conn.commit()
 
         return {
             "status": "success",
-            "message": f"Upstox access token reminder sent to {sent_count} admin/super admin user(s).",
+            "message": f"Upstox token reminder sent to {sent_count} admin/super admin delivery target(s).",
             "token_valid": False
         }
 

@@ -364,6 +364,7 @@ def init_database():
                 api_secret VARCHAR,
                 redirect_url VARCHAR,
                 analytical_token VARCHAR,
+                analytical_token_updated_at TIMESTAMP,
                 access_token VARCHAR,
                 refresh_token VARCHAR,
                 token_type VARCHAR,
@@ -384,6 +385,7 @@ def init_database():
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_secret VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN redirect_url VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN analytical_token VARCHAR;")
+        safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN analytical_token_updated_at TIMESTAMP;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN refresh_token VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN token_type VARCHAR;")
@@ -395,6 +397,14 @@ def init_database():
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN created_by VARCHAR;")
         safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN updated_by VARCHAR;")
+
+        conn.execute("""
+            UPDATE external_connections
+            SET analytical_token_updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+            WHERE analytical_token IS NOT NULL
+              AND TRIM(analytical_token) <> ''
+              AND analytical_token_updated_at IS NULL;
+        """)
 
         # -----------------------------
         # User Telegram connections

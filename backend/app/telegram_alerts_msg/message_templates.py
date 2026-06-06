@@ -124,9 +124,20 @@ def build_upstox_access_token_reminder_message(
 ) -> str:
     return (
         f"{APP_NAME} reminder\n\n"
-        f"Upstox token status:\n{format_display_value(token_status_text)}\n\n"
+        f"Upstox access token status:\n"
+        f"{format_display_value(token_status_text)}\n\n"
         f"{format_display_value(approval_text)}\n\n"
         f"Auto request status: {format_display_value(auto_request_status)}\n"
         f"Details: {format_display_value(auto_request_message)}\n\n"
         "This reminder repeats every 1 hour until tokens are valid."
+    )
+
+
+def build_upstox_analytical_token_reminder_message(token_status_text: str) -> str:
+    return (
+        f"{APP_NAME} reminder\n\n"
+        f"Upstox analytical token status:\n"
+        f"{format_display_value(token_status_text)}\n\n"
+        "Please open Open Analytics > Connections and save a fresh analytical token.\n\n"
+        "This reminder repeats every 1 hour until the analytical token is valid."
     )

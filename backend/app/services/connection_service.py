@@ -174,7 +174,8 @@ def connection_to_response(row):
         connection_status,
         last_tested_at,
         created_at,
-        updated_at
+        updated_at,
+        analytical_token_updated_at
     ) = row
 
     return {
@@ -209,7 +210,8 @@ def get_connection_raw_by_provider(conn, provider: str):
             connection_status,
             last_tested_at,
             created_at,
-            updated_at
+            updated_at,
+            analytical_token_updated_at
         FROM external_connections
         WHERE provider = ?
           AND record_status = 'S'
@@ -289,7 +291,8 @@ def list_connections_service():
                 connection_status,
                 last_tested_at,
                 created_at,
-                updated_at
+                updated_at,
+                analytical_token_updated_at
             FROM external_connections
             WHERE record_status = 'S'
             ORDER BY provider;
@@ -812,6 +815,10 @@ def save_upstox_connection_service(request, current_user):
                     api_secret = ?,
                     redirect_url = ?,
                     analytical_token = ?,
+                    analytical_token_updated_at = CASE
+                        WHEN ? IS NOT NULL AND TRIM(?) <> '' THEN CURRENT_TIMESTAMP
+                        ELSE analytical_token_updated_at
+                    END,
                     access_token = ?,
                     access_token_expires_at = ?,
                     token_updated_at = CASE
@@ -829,6 +836,8 @@ def save_upstox_connection_service(request, current_user):
                 next_api_secret,
                 next_redirect_url,
                 next_analytical_token,
+                analytical_token,
+                analytical_token,
                 next_access_token,
                 next_access_token_expires_at,
                 access_token,
@@ -851,6 +860,7 @@ def save_upstox_connection_service(request, current_user):
                     api_secret,
                     redirect_url,
                     analytical_token,
+                    analytical_token_updated_at,
                     access_token,
                     access_token_expires_at,
                     token_updated_at,
@@ -861,7 +871,7 @@ def save_upstox_connection_service(request, current_user):
                     created_by,
                     updated_by
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?);
             """, [
                 connection_id,
                 UPSTOX_PROVIDER,
@@ -1461,6 +1471,7 @@ def clear_upstox_expiry_notification_marker(conn):
         WHERE key IN (
             'upstox_analytics_token_expiry_notified_date',
             'upstox_analytics_token_expiry_notified_expiry',
+            'upstox_analytical_token_reminder_last_sent_at',
             'upstox_access_token_reminder_last_sent_at',
             'upstox_access_token_request_last_triggered_at'
         );
