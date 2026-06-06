@@ -1,6 +1,7 @@
 import gzip
 import json
 import time
+from collections import deque
 import uuid
 import urllib.request
 from datetime import datetime
@@ -24,6 +25,10 @@ UPSTOX_CURRENT_MASTER_URL = (
 )
 
 REQUEST_TIMEOUT_SECONDS = 180
+UPSTOX_STANDARD_MAX_REQUESTS_PER_SECOND = 45
+UPSTOX_STANDARD_MAX_REQUESTS_PER_MINUTE = 450
+UPSTOX_STANDARD_MAX_REQUESTS_PER_30_MINUTES = 1800
+UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS = 0.05
 STALE_RUNNING_RUN_HOURS = 2
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4
 
@@ -41,6 +46,86 @@ DEFAULT_EXPIRED_UNDERLYING_TYPES = ["INDEX", "EQUITY"]
 
 EXPIRED_SOURCE_OPTION = "expired_option_contract"
 EXPIRED_SOURCE_FUTURE = "expired_future_contract"
+
+
+class UpstoxRollingRateLimiter:
+    def __init__(
+        self,
+        max_per_second: int = UPSTOX_STANDARD_MAX_REQUESTS_PER_SECOND,
+        max_per_minute: int = UPSTOX_STANDARD_MAX_REQUESTS_PER_MINUTE,
+        max_per_30_minutes: int = UPSTOX_STANDARD_MAX_REQUESTS_PER_30_MINUTES
+    ):
+        self.max_per_second = max(1, int(max_per_second))
+        self.max_per_minute = max(1, int(max_per_minute))
+        self.max_per_30_minutes = max(1, int(max_per_30_minutes))
+        self.request_times = deque()
+
+    def wait_for_slot(self):
+        while True:
+            now = time.monotonic()
+
+            while self.request_times and now - self.request_times[0] >= 1800:
+                self.request_times.popleft()
+
+            requests_last_second = 0
+            requests_last_minute = 0
+            requests_last_30_minutes = len(self.request_times)
+
+            for request_time in reversed(self.request_times):
+                age = now - request_time
+
+                if age <= 1:
+                    requests_last_second += 1
+
+                if age <= 60:
+                    requests_last_minute += 1
+                else:
+                    break
+
+            if (
+                requests_last_second < self.max_per_second
+                and requests_last_minute < self.max_per_minute
+                and requests_last_30_minutes < self.max_per_30_minutes
+            ):
+                self.request_times.append(now)
+                return
+
+            sleep_seconds = UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS
+
+            if requests_last_30_minutes >= self.max_per_30_minutes and self.request_times:
+                sleep_seconds = max(
+                    sleep_seconds,
+                    1800 - (now - self.request_times[0]) + UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS
+                )
+            elif requests_last_minute >= self.max_per_minute:
+                minute_window_start = None
+
+                for request_time in self.request_times:
+                    if now - request_time <= 60:
+                        minute_window_start = request_time
+                        break
+
+                if minute_window_start is not None:
+                    sleep_seconds = max(
+                        sleep_seconds,
+                        60 - (now - minute_window_start) + UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS
+                    )
+            elif requests_last_second >= self.max_per_second:
+                second_window_start = None
+
+                for request_time in self.request_times:
+                    if now - request_time <= 1:
+                        second_window_start = request_time
+                        break
+
+                if second_window_start is not None:
+                    sleep_seconds = max(
+                        sleep_seconds,
+                        1 - (now - second_window_start) + UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS
+                    )
+
+            print(f"Upstox API rate limit guard sleeping {round(sleep_seconds, 2)} seconds.")
+            time.sleep(sleep_seconds)
 
 
 class SyncCancelled(Exception):
@@ -994,7 +1079,7 @@ def normalize_sync_expired_config(payload: Optional[dict]) -> dict:
         max_expiries = None
 
     try:
-        request_pause_seconds = float(payload.get("request_pause_seconds", 0.05))
+        request_pause_seconds = float(payload.get("request_pause_seconds", 0.15))
     except Exception:
         request_pause_seconds = 0.05
 
@@ -1209,6 +1294,7 @@ def download_expired_instruments_with_sdk(
     config = normalize_sync_expired_config(config)
 
     expired_api = create_expired_instrument_api(access_token)
+    rate_limiter = UpstoxRollingRateLimiter()
 
     underlying_keys = config["underlying_keys"]
 
@@ -1299,6 +1385,7 @@ def download_expired_instruments_with_sdk(
             )
 
             try:
+                rate_limiter.wait_for_slot()
                 expiries_response = expired_api.get_expiries(underlying_key)
                 expiries = normalize_expiry_list(expiries_response)
             except Exception as error:
@@ -1364,6 +1451,7 @@ def download_expired_instruments_with_sdk(
                         )
                     else:
                         try:
+                            rate_limiter.wait_for_slot()
                             options_response = expired_api.get_expired_option_contracts(
                                 underlying_key,
                                 expiry_date
@@ -1434,6 +1522,7 @@ def download_expired_instruments_with_sdk(
                         )
                     else:
                         try:
+                            rate_limiter.wait_for_slot()
                             futures_response = expired_api.get_expired_future_contracts(
                                 underlying_key,
                                 expiry_date
