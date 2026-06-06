@@ -1969,10 +1969,37 @@ def import_expired_instruments_from_local_file(conn, sync_id: str, local_file: P
 
 
 def safe_table_count(conn, table_name: str) -> int:
+    if not table_name:
+        return 0
+
     try:
         return int(conn.execute(f"SELECT COUNT(*) FROM {table_name};").fetchone()[0] or 0)
-    except Exception:
+    except Exception as error:
+        print(f"Data collection count unavailable for {table_name}: {error}")
         return 0
+
+
+def safe_fetchone(conn, query: str, params: Optional[List[Any]] = None):
+    try:
+        return conn.execute(query, params or []).fetchone()
+    except Exception as error:
+        print(f"Data collection query unavailable: {error}")
+        return None
+
+
+def safe_fetchall(conn, query: str, params: Optional[List[Any]] = None):
+    try:
+        return conn.execute(query, params or []).fetchall()
+    except Exception as error:
+        print(f"Data collection query unavailable: {error}")
+        return []
+
+
+def safe_mark_stale_sync_runs(conn):
+    try:
+        mark_stale_sync_runs(conn)
+    except Exception as error:
+        print(f"Data collection stale run cleanup skipped: {error}")
 
 
 def safe_last_success_run(conn, sync_type: str):
@@ -2019,7 +2046,7 @@ def get_data_collection_summary_service():
     conn = get_connection()
 
     try:
-        mark_stale_sync_runs(conn)
+        safe_mark_stale_sync_runs(conn)
         connection_status = get_upstox_connection_status(conn)
 
         current_count = safe_table_count(conn, "upstox_instruments")
@@ -2031,7 +2058,7 @@ def get_data_collection_summary_service():
         corporate_actions_count = safe_table_count(conn, "corporate_actions")
         fii_dii_count = safe_table_count(conn, "fii_dii_activity")
 
-        total_runs = conn.execute("""
+        total_runs_row = safe_fetchone(conn, """
             SELECT COUNT(*)
             FROM upstox_sync_runs
             WHERE sync_type IN (
@@ -2040,9 +2067,10 @@ def get_data_collection_summary_service():
                 'upstox_equity_instruments',
                 'upstox_ohlcv_daily'
             );
-        """).fetchone()[0]
+        """)
+        total_runs = int(total_runs_row[0] or 0) if total_runs_row else 0
 
-        last_run = conn.execute("""
+        last_run = safe_fetchone(conn, """
             SELECT
                 sync_type,
                 status,
@@ -2059,20 +2087,20 @@ def get_data_collection_summary_service():
             )
             ORDER BY started_at DESC
             LIMIT 1;
-        """).fetchone()
+        """)
 
         current_run = safe_last_success_run(conn, "upstox_current_instruments")
         expired_run = safe_last_success_run(conn, "upstox_expired_instruments")
         equity_run = safe_last_success_run(conn, "upstox_equity_instruments")
         ohlcv_run = safe_last_success_run(conn, "upstox_ohlcv_daily")
 
-        active_run = conn.execute("""
+        active_run = safe_fetchone(conn, """
             SELECT sync_type, status, started_at
             FROM upstox_sync_runs
             WHERE status IN ('running', 'cancel_requested')
             ORDER BY started_at DESC
             LIMIT 1;
-        """).fetchone()
+        """)
 
         active_job = active_run[0] if active_run else None
         active_job_started_at = active_run[2] if active_run and active_run[2] else None
@@ -2129,7 +2157,7 @@ def get_data_collection_runs_service():
     conn = get_connection()
 
     try:
-        rows = conn.execute("""
+        rows = safe_fetchall(conn, """
             SELECT
                 sync_id,
                 sync_type,
@@ -2152,7 +2180,7 @@ def get_data_collection_runs_service():
             )
             ORDER BY started_at DESC
             LIMIT 25;
-        """).fetchall()
+        """)
 
         return [
             {

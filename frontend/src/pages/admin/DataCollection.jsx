@@ -9,7 +9,6 @@ import {
   Play,
   Power,
   RefreshCcw,
-  Search,
   Trash2,
   X,
   XCircle
@@ -23,6 +22,7 @@ import Select from "../../components/common/Select";
 import Tooltip from "../../components/common/Tooltip";
 import Modal from "../../components/common/Modal";
 import DataTable from "../../components/tables/DataTable";
+import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
@@ -129,36 +129,36 @@ const instrumentTypeOptions = [
 ];
 
 const dumpJobColumns = [
-  { key: "source", label: "Source", filterable: false },
-  { key: "saved", label: "Saved", filterable: false },
-  { key: "updated", label: "Updated", filterable: false },
-  { key: "triggered_by", label: "Scheduled By", filterable: false },
-  { key: "time", label: "Time", filterable: false },
-  { key: "last_update_status", label: "Last Update Status", filterable: false }
+  { key: "source", label: "Source" },
+  { key: "saved", label: "Saved" },
+  { key: "updated", label: "Updated" },
+  { key: "triggered_by", label: "Scheduled By" },
+  { key: "time", label: "Time" },
+  { key: "last_update_status", label: "Last Update Status" }
 ];
 
 const dumpJobGridTemplateColumns =
   "1.2fr 0.85fr 0.75fr 0.75fr 0.45fr 0.7fr 152px";
 
 const scheduleColumns = [
-  { key: "schedule_time", label: "Time", filterable: false },
-  { key: "next_run_at", label: "Next Run", filterable: false },
-  { key: "is_active", label: "Status", filterable: false }
+  { key: "schedule_time", label: "Time" },
+  { key: "next_run_at", label: "Next Run" },
+  { key: "is_active", label: "Status" }
 ];
 
 const scheduleGridTemplateColumns = "1fr 1.35fr 0.75fr 112px";
 
 const previewColumns = [
-  { key: "instrument_key", label: "Instrument Key", filterable: false },
-  { key: "trading_symbol", label: "Trading Symbol", filterable: false },
-  { key: "name", label: "Name", filterable: false },
-  { key: "segment", label: "Segment", filterable: false },
-  { key: "exchange", label: "Exchange", filterable: false },
-  { key: "instrument_type", label: "Type", filterable: false },
-  { key: "expiry", label: "Expiry", filterable: false },
-  { key: "strike_price", label: "Strike", filterable: false },
-  { key: "source_type", label: "Source", filterable: false },
-  { key: "synced_at", label: "Synced At", filterable: false }
+  { key: "instrument_key", label: "Instrument Key" },
+  { key: "trading_symbol", label: "Trading Symbol" },
+  { key: "name", label: "Name" },
+  { key: "segment", label: "Segment" },
+  { key: "exchange", label: "Exchange" },
+  { key: "instrument_type", label: "Type" },
+  { key: "expiry", label: "Expiry" },
+  { key: "strike_price", label: "Strike" },
+  { key: "source_type", label: "Source" },
+  { key: "synced_at", label: "Synced At" }
 ];
 
 const previewGridTemplateColumns =
@@ -248,6 +248,111 @@ function formatDateTime(value) {
   });
 }
 
+
+function normalizeCellValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
+  }
+
+  return String(value);
+}
+
+function getFilterValues(rows, key, getValue) {
+  const valueMap = new Map();
+
+  rows.forEach((row) => {
+    const value = normalizeCellValue(getValue(row, key));
+    valueMap.set(value, (valueMap.get(value) || 0) + 1);
+  });
+
+  return Array.from(valueMap.entries())
+    .map(([value, count]) => ({
+      label: value,
+      value,
+      count
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function applyColumnFilters(rows, columnFilters, getValue) {
+  return rows.filter((row) => {
+    return Object.entries(columnFilters).every(([key, selectedValues]) => {
+      if (!selectedValues || selectedValues.length === 0) {
+        return true;
+      }
+
+      const value = normalizeCellValue(getValue(row, key));
+      return selectedValues.includes(value);
+    });
+  });
+}
+
+function applySort(rows, sortConfig, getValue) {
+  if (!sortConfig.key || !sortConfig.direction) {
+    return rows;
+  }
+
+  return [...rows].sort((firstRow, secondRow) => {
+    const firstValue = normalizeCellValue(
+      getValue(firstRow, sortConfig.key)
+    ).toLowerCase();
+
+    const secondValue = normalizeCellValue(
+      getValue(secondRow, sortConfig.key)
+    ).toLowerCase();
+
+    if (firstValue < secondValue) {
+      return sortConfig.direction === "asc" ? -1 : 1;
+    }
+
+    if (firstValue > secondValue) {
+      return sortConfig.direction === "asc" ? 1 : -1;
+    }
+
+    return 0;
+  });
+}
+
+function getDumpJobColumnValue(row, key) {
+  if (key === "source") {
+    return row.title;
+  }
+
+  if (key === "saved") {
+    return formatNumber(row.records);
+  }
+
+  if (key === "updated") {
+    return formatDateTime(row.lastSyncedAt);
+  }
+
+  if (key === "triggered_by") {
+    return row.triggerSource === "system" ? "System" : row.triggeredBy || "Manual";
+  }
+
+  if (key === "time") {
+    return formatDuration(row.duration);
+  }
+
+  if (key === "last_update_status") {
+    return getStatusLabel(row.lastStatus);
+  }
+
+  return row[key];
+}
+
+function getPreviewColumnValue(row, key) {
+  if (key === "synced_at") {
+    return formatDateTime(row.synced_at);
+  }
+
+  if (key === "source_type") {
+    return getSyncTypeLabel(row.source_type);
+  }
+
+  return row[key];
+}
+
 function getElapsedSecondsFromDate(value) {
   if (!value) {
     return 0;
@@ -290,6 +395,14 @@ function getApiErrorMessage(error, fallbackMessage) {
 
   if (error?.response?.status) {
     return `${fallbackMessage} (HTTP ${error.response.status})`;
+  }
+
+  if (error?.code === "ERR_NETWORK" || error?.message === "Network Error") {
+    return `${fallbackMessage} Backend is not reachable. Check that the backend is running on port 8000 and that the request URL is correct.`;
+  }
+
+  if (error?.code === "ECONNABORTED") {
+    return `${fallbackMessage} Request timed out. Please refresh after a few seconds.`;
   }
 
   return error?.message || fallbackMessage;
@@ -881,58 +994,40 @@ function MonitorContent({
   onSearchChange,
   onSearchSubmit,
   onClearSearch,
+  searchActive,
+  hasActiveFilter,
+  onClearAll,
   rows,
   loading,
   onRefresh,
   renderCell,
-  renderActions
+  renderActions,
+  filterConfig
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
-        <form
-          onSubmit={onSearchSubmit}
-          className="flex items-center gap-2 overflow-x-auto"
-        >
-          <div className="relative w-full md:w-80">
-            <Input
-              value={searchValue}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Search collection monitor"
-              className="pr-9"
-            />
-
-            {searchValue ? (
-              <button
-                type="button"
-                onClick={onClearSearch}
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                aria-label="Clear search"
-              >
-                <X size={13} />
-              </button>
-            ) : null}
-          </div>
-
-          <Tooltip text="Search collection monitor" side="top">
-            <button
-              type="submit"
-              className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
-              aria-label="Search collection monitor"
-            >
-              <Search size={14} />
-            </button>
-          </Tooltip>
-
-          <IconButton
-            icon={RefreshCcw}
-            label="Refresh"
-            variant="refresh"
-            disabled={loading}
-            onClick={onRefresh}
-            tooltipSide="top"
-          />
-        </form>
+      <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder="Search collection monitor"
+          filters={[]}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            }
+          ]}
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
@@ -947,6 +1042,7 @@ function MonitorContent({
           getRowKey={(row) => row.id}
           renderCell={renderCell}
           renderActions={renderActions}
+          filterConfig={filterConfig}
         />
       </div>
     </div>
@@ -959,20 +1055,28 @@ function DbPreviewContent({
   onSearchChange,
   onSearchSubmit,
   onClearSearch,
+  searchActive,
   sourceType,
   onSourceTypeChange,
+  onClearSourceType,
   segment,
   onSegmentChange,
+  onClearSegment,
   instrumentType,
   onInstrumentTypeChange,
+  onClearInstrumentType,
   previewData,
+  rows,
   loading,
   runPreviewDisabled,
   onRefresh,
   onRunPreview,
   onPreviousPage,
   onNextPage,
-  onPageChange
+  onPageChange,
+  hasActiveFilter,
+  onClearAll,
+  filterConfig
 }) {
   const isExpired = previewMode === "expired";
   const title = isExpired ? "Expired Instruments" : "Current Instruments";
@@ -1028,86 +1132,63 @@ function DbPreviewContent({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
-        <form
-          onSubmit={onSearchSubmit}
-          className="flex flex-wrap items-center gap-2"
-        >
-          <div className="relative w-full md:w-80">
-            <Input
-              value={searchValue}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder={`Search ${title.toLowerCase()}`}
-              className="pr-9"
-            />
-
-            {searchValue ? (
-              <button
-                type="button"
-                onClick={onClearSearch}
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                aria-label="Clear search"
-              >
-                <X size={13} />
-              </button>
-            ) : null}
-          </div>
-
-          <Select
-            value={sourceType}
-            onChange={(event) => onSourceTypeChange(event.target.value)}
-            options={sourceOptions}
-            ariaLabel="Source type"
-            minWidth="w-40"
-          />
-
-          <Select
-            value={segment}
-            onChange={(event) => onSegmentChange(event.target.value)}
-            options={segmentOptions}
-            ariaLabel="Segment"
-            minWidth="w-36"
-          />
-
-          <Select
-            value={instrumentType}
-            onChange={(event) => onInstrumentTypeChange(event.target.value)}
-            options={instrumentTypeOptions}
-            ariaLabel="Instrument type"
-            minWidth="w-36"
-          />
-
-          <Tooltip text="Search" side="top">
-            <button
-              type="submit"
-              className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
-              aria-label="Search"
-            >
-              <Search size={14} />
-            </button>
-          </Tooltip>
-
-          <IconButton
-            icon={RefreshCcw}
-            label="Refresh"
-            variant="refresh"
-            disabled={loading}
-            onClick={onRefresh}
-            tooltipSide="top"
-          />
-
-          <Tooltip text={`Run ${title}`} side="top">
-            <button
-              type="button"
-              disabled={runPreviewDisabled}
-              onClick={onRunPreview}
-              className="flex h-8 w-8 items-center justify-center rounded border border-emerald-500/30 bg-emerald-950/20 text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label={`Run ${title}`}
-            >
-              <Play size={14} />
-            </button>
-          </Tooltip>
-        </form>
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder={`Search ${title.toLowerCase()}`}
+          filters={[
+            {
+              value: sourceType,
+              onChange: (event) => onSourceTypeChange(event.target.value),
+              options: sourceOptions,
+              onClear: onClearSourceType,
+              showClear: sourceType !== "all",
+              ariaLabel: "Source type",
+              minWidth: "w-40"
+            },
+            {
+              value: segment,
+              onChange: (event) => onSegmentChange(event.target.value),
+              options: segmentOptions,
+              onClear: onClearSegment,
+              showClear: segment !== "all",
+              ariaLabel: "Segment",
+              minWidth: "w-36"
+            },
+            {
+              value: instrumentType,
+              onChange: (event) => onInstrumentTypeChange(event.target.value),
+              options: instrumentTypeOptions,
+              onClear: onClearInstrumentType,
+              showClear: instrumentType !== "all",
+              ariaLabel: "Instrument type",
+              minWidth: "w-36"
+            }
+          ]}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            },
+            {
+              icon: Play,
+              label: `Run ${title}`,
+              variant: "add",
+              disabled: runPreviewDisabled,
+              onClick: onRunPreview
+            }
+          ]}
+        />
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
@@ -1124,7 +1205,7 @@ function DbPreviewContent({
 
         <DataTable
           columns={previewColumns}
-          rows={previewData.rows}
+          rows={rows}
           loading={false}
           loadingMessage={`Loading ${title.toLowerCase()}`}
           emptyMessage="No records found."
@@ -1134,6 +1215,7 @@ function DbPreviewContent({
             `${row.instrument_key || row.trading_symbol || index}-${index}`
           }
           renderCell={renderPreviewCell}
+          filterConfig={filterConfig}
         />
       </div>
 
@@ -1218,6 +1300,13 @@ function DataCollection() {
 
   const [monitorSearch, setMonitorSearch] = useState("");
   const [appliedMonitorSearch, setAppliedMonitorSearch] = useState("");
+  const [monitorColumnFilters, setMonitorColumnFilters] = useState({});
+  const [draftMonitorColumnFilters, setDraftMonitorColumnFilters] = useState({});
+  const [activeMonitorFilter, setActiveMonitorFilter] = useState(null);
+  const [monitorSortConfig, setMonitorSortConfig] = useState({
+    key: null,
+    direction: null
+  });
 
   const [selectedScheduleJob, setSelectedScheduleJob] = useState(null);
   const [scheduleFormMode, setScheduleFormMode] = useState("add");
@@ -1228,6 +1317,13 @@ function DataCollection() {
 
   const [previewSearch, setPreviewSearch] = useState("");
   const [appliedPreviewSearch, setAppliedPreviewSearch] = useState("");
+  const [previewColumnFilters, setPreviewColumnFilters] = useState({});
+  const [draftPreviewColumnFilters, setDraftPreviewColumnFilters] = useState({});
+  const [activePreviewFilter, setActivePreviewFilter] = useState(null);
+  const [previewSortConfig, setPreviewSortConfig] = useState({
+    key: null,
+    direction: null
+  });
   const [previewSourceType, setPreviewSourceType] = useState("all");
   const [previewSegment, setPreviewSegment] = useState("all");
   const [previewInstrumentType, setPreviewInstrumentType] = useState("all");
@@ -1368,26 +1464,65 @@ function DataCollection() {
     shouldShowCancelButton
   ]);
 
+  const monitorHeaderValues = useMemo(() => {
+    return dumpJobColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        dumpJobRows,
+        column.key,
+        getDumpJobColumnValue
+      );
+      return result;
+    }, {});
+  }, [dumpJobRows]);
+
   const filteredDumpJobRows = useMemo(() => {
+    let result = dumpJobRows;
     const query = appliedMonitorSearch.trim().toLowerCase();
 
-    if (!query) {
-      return dumpJobRows;
+    if (query) {
+      result = result.filter((row) => {
+        const values = dumpJobColumns.map((column) =>
+          getDumpJobColumnValue(row, column.key)
+        );
+
+        return values.some((value) => String(value).toLowerCase().includes(query));
+      });
     }
 
-    return dumpJobRows.filter((row) => {
-      const values = [
-        row.title,
-        formatNumber(row.records),
-        formatDateTime(row.lastSyncedAt),
-        row.triggerSource === "system" ? "System" : row.triggeredBy || "Manual",
-        formatDuration(row.duration),
-        getStatusLabel(row.lastStatus)
-      ];
+    result = applyColumnFilters(
+      result,
+      monitorColumnFilters,
+      getDumpJobColumnValue
+    );
 
-      return values.some((value) => String(value).toLowerCase().includes(query));
-    });
-  }, [dumpJobRows, appliedMonitorSearch]);
+    return applySort(result, monitorSortConfig, getDumpJobColumnValue);
+  }, [
+    dumpJobRows,
+    appliedMonitorSearch,
+    monitorColumnFilters,
+    monitorSortConfig
+  ]);
+
+  const previewHeaderValues = useMemo(() => {
+    return previewColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        previewData.rows,
+        column.key,
+        getPreviewColumnValue
+      );
+      return result;
+    }, {});
+  }, [previewData.rows]);
+
+  const filteredPreviewRows = useMemo(() => {
+    let result = applyColumnFilters(
+      previewData.rows,
+      previewColumnFilters,
+      getPreviewColumnValue
+    );
+
+    return applySort(result, previewSortConfig, getPreviewColumnValue);
+  }, [previewData.rows, previewColumnFilters, previewSortConfig]);
 
   async function loadPreview(customPage = previewPage) {
     const previewMode = getPreviewMode(activeView);
@@ -1472,16 +1607,41 @@ function DataCollection() {
     }
 
     try {
-      const [summaryResponse, runsResponse] = await Promise.all([
+      const [summaryResult, runsResult] = await Promise.allSettled([
         getUpstoxDataCollectionSummary(),
         getUpstoxDataCollectionRuns()
       ]);
 
-      const nextSummary =
-        summaryResponse.data.data || summaryResponse.data || emptySummary;
+      let nextSummary = summary;
+      let nextRuns = runs;
+      const errors = [];
 
-      setSummary(nextSummary);
-      setRuns(runsResponse.data.data || runsResponse.data || []);
+      if (summaryResult.status === "fulfilled") {
+        nextSummary =
+          summaryResult.value.data.data ||
+          summaryResult.value.data ||
+          emptySummary;
+        setSummary(nextSummary);
+      } else {
+        errors.push(summaryResult.reason);
+
+        if (showLoading) {
+          nextSummary = emptySummary;
+          setSummary(emptySummary);
+        }
+      }
+
+      if (runsResult.status === "fulfilled") {
+        nextRuns = runsResult.value.data.data || runsResult.value.data || [];
+        setRuns(nextRuns);
+      } else {
+        errors.push(runsResult.reason);
+
+        if (showLoading) {
+          nextRuns = [];
+          setRuns([]);
+        }
+      }
 
       if (nextSummary.active_job_started_at) {
         setElapsedSeconds(
@@ -1494,6 +1654,17 @@ function DataCollection() {
       if (!nextSummary.active_job) {
         setRunningJob(null);
         setCancelRequested(false);
+      }
+
+      if (errors.length > 0) {
+        showToast(
+          getApiErrorMessage(
+            errors[0],
+            "Unable to fully load data collection status."
+          ),
+          "warning"
+        );
+        return;
       }
 
       if (showRefreshToast) {
@@ -1859,6 +2030,164 @@ function DataCollection() {
     setPreviewPage(1);
   }
 
+  function clearPreviewSourceType() {
+    setPreviewSourceType("all");
+    setPreviewPage(1);
+  }
+
+  function clearPreviewSegment() {
+    setPreviewSegment("all");
+    setPreviewPage(1);
+  }
+
+  function clearPreviewInstrumentType() {
+    setPreviewInstrumentType("all");
+    setPreviewPage(1);
+  }
+
+  function hasAnyActiveMonitorFilter() {
+    return (
+      appliedMonitorSearch.trim() !== "" ||
+      monitorSortConfig.key !== null ||
+      Object.values(monitorColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllMonitorFilters() {
+    setMonitorSearch("");
+    setAppliedMonitorSearch("");
+    setMonitorColumnFilters({});
+    setDraftMonitorColumnFilters({});
+    setMonitorSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveMonitorFilter(null);
+  }
+
+  function hasAnyActivePreviewFilter() {
+    return (
+      appliedPreviewSearch.trim() !== "" ||
+      previewSourceType !== "all" ||
+      previewSegment !== "all" ||
+      previewInstrumentType !== "all" ||
+      previewSortConfig.key !== null ||
+      Object.values(previewColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllPreviewFilters() {
+    setPreviewSearch("");
+    setAppliedPreviewSearch("");
+    setPreviewSourceType("all");
+    setPreviewSegment("all");
+    setPreviewInstrumentType("all");
+    setPreviewColumnFilters({});
+    setDraftPreviewColumnFilters({});
+    setPreviewSortConfig({
+      key: null,
+      direction: null
+    });
+    setActivePreviewFilter(null);
+    setPreviewPage(1);
+  }
+
+  function openMonitorColumnFilter(key) {
+    setDraftMonitorColumnFilters((previous) => ({
+      ...previous,
+      [key]: monitorColumnFilters[key] || []
+    }));
+
+    setActiveMonitorFilter((previous) => (previous === key ? null : key));
+  }
+
+  function applyMonitorColumnFilter(key) {
+    setMonitorColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftMonitorColumnFilters[key] || []
+    }));
+
+    setActiveMonitorFilter(null);
+  }
+
+  function clearMonitorColumnFilter(key) {
+    setMonitorColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftMonitorColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveMonitorFilter(null);
+  }
+
+  function handleMonitorSort(key, direction) {
+    setMonitorSortConfig({
+      key,
+      direction
+    });
+
+    setActiveMonitorFilter(null);
+  }
+
+  function isMonitorColumnFilterActive(key) {
+    const selectedValues = monitorColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
+  function openPreviewColumnFilter(key) {
+    setDraftPreviewColumnFilters((previous) => ({
+      ...previous,
+      [key]: previewColumnFilters[key] || []
+    }));
+
+    setActivePreviewFilter((previous) => (previous === key ? null : key));
+  }
+
+  function applyPreviewColumnFilter(key) {
+    setPreviewColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftPreviewColumnFilters[key] || []
+    }));
+
+    setActivePreviewFilter(null);
+  }
+
+  function clearPreviewColumnFilter(key) {
+    setPreviewColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftPreviewColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActivePreviewFilter(null);
+  }
+
+  function handlePreviewSort(key, direction) {
+    setPreviewSortConfig({
+      key,
+      direction
+    });
+
+    setActivePreviewFilter(null);
+  }
+
+  function isPreviewColumnFilterActive(key) {
+    const selectedValues = previewColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
   function handleViewChange(nextView) {
     setActiveView(nextView);
 
@@ -1868,6 +2197,13 @@ function DataCollection() {
       setPreviewSourceType("all");
       setPreviewSegment("all");
       setPreviewInstrumentType("all");
+      setPreviewColumnFilters({});
+      setDraftPreviewColumnFilters({});
+      setPreviewSortConfig({
+        key: null,
+        direction: null
+      });
+      setActivePreviewFilter(null);
       setPreviewPage(1);
       setPreviewData(emptyPreviewData);
     }
@@ -2057,11 +2393,32 @@ function DataCollection() {
                   onSearchChange={setMonitorSearch}
                   onSearchSubmit={handleMonitorSearchSubmit}
                   onClearSearch={handleClearMonitorSearch}
+                  searchActive={appliedMonitorSearch.trim() !== ""}
+                  hasActiveFilter={hasAnyActiveMonitorFilter()}
+                  onClearAll={clearAllMonitorFilters}
                   rows={filteredDumpJobRows}
                   loading={loading}
                   onRefresh={() => loadData(true)}
                   renderCell={renderDumpJobCell}
                   renderActions={renderDumpJobActions}
+                  filterConfig={{
+                    activeFilter: activeMonitorFilter,
+                    headerValues: monitorHeaderValues,
+                    columnFilters: monitorColumnFilters,
+                    draftColumnFilters: draftMonitorColumnFilters,
+                    rightAlignedKeys: ["saved", "updated", "time", "last_update_status"],
+                    isColumnFilterActive: isMonitorColumnFilterActive,
+                    onOpen: openMonitorColumnFilter,
+                    onClose: () => setActiveMonitorFilter(null),
+                    onChange: (key, values) =>
+                      setDraftMonitorColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyMonitorColumnFilter,
+                    onSort: handleMonitorSort,
+                    onClear: clearMonitorColumnFilter
+                  }}
                 />
               ) : null}
 
@@ -2072,22 +2429,27 @@ function DataCollection() {
                   onSearchChange={setPreviewSearch}
                   onSearchSubmit={handlePreviewSearchSubmit}
                   onClearSearch={handleClearPreviewSearch}
+                  searchActive={appliedPreviewSearch.trim() !== ""}
                   sourceType={previewSourceType}
                   onSourceTypeChange={(value) => {
                     setPreviewSourceType(value);
                     setPreviewPage(1);
                   }}
+                  onClearSourceType={clearPreviewSourceType}
                   segment={previewSegment}
                   onSegmentChange={(value) => {
                     setPreviewSegment(value);
                     setPreviewPage(1);
                   }}
+                  onClearSegment={clearPreviewSegment}
                   instrumentType={previewInstrumentType}
                   onInstrumentTypeChange={(value) => {
                     setPreviewInstrumentType(value);
                     setPreviewPage(1);
                   }}
+                  onClearInstrumentType={clearPreviewInstrumentType}
                   previewData={previewData}
+                  rows={filteredPreviewRows}
                   loading={previewLoading}
                   runPreviewDisabled={
                     !isAdminControlAllowed ||
@@ -2110,6 +2472,34 @@ function DataCollection() {
                     )
                   }
                   onPageChange={(page) => setPreviewPage(page)}
+                  hasActiveFilter={hasAnyActivePreviewFilter()}
+                  onClearAll={clearAllPreviewFilters}
+                  filterConfig={{
+                    activeFilter: activePreviewFilter,
+                    headerValues: previewHeaderValues,
+                    columnFilters: previewColumnFilters,
+                    draftColumnFilters: draftPreviewColumnFilters,
+                    rightAlignedKeys: [
+                      "segment",
+                      "exchange",
+                      "instrument_type",
+                      "expiry",
+                      "strike_price",
+                      "source_type",
+                      "synced_at"
+                    ],
+                    isColumnFilterActive: isPreviewColumnFilterActive,
+                    onOpen: openPreviewColumnFilter,
+                    onClose: () => setActivePreviewFilter(null),
+                    onChange: (key, values) =>
+                      setDraftPreviewColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyPreviewColumnFilter,
+                    onSort: handlePreviewSort,
+                    onClear: clearPreviewColumnFilter
+                  }}
                 />
               ) : null}
             </DataCollectionShell>

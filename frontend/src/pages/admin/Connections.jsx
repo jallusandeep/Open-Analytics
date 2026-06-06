@@ -8,7 +8,6 @@ import {
   Plus,
   PlugZap,
   RefreshCcw,
-  Search,
   Send,
   Trash2,
   X
@@ -22,6 +21,7 @@ import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
 import DataTable from "../../components/tables/DataTable";
+import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
@@ -79,15 +79,40 @@ const providerOptions = [
   }))
 ];
 
+const providerFilterOptions = [
+  { value: "all", label: "All Providers" },
+  ...brokers.map((broker) => ({
+    value: broker.id,
+    label: broker.name
+  }))
+];
+
+const statusFilterOptions = [
+  { value: "all", label: "All Status" },
+  { value: "connected", label: "Connected" },
+  { value: "limited", label: "Limited" },
+  { value: "failed", label: "Failed" },
+  { value: "saved", label: "Saved" },
+  { value: "not_connected", label: "Not Connected" }
+];
+
 const connectionColumns = [
-  { key: "provider", label: "Provider", filterable: false },
-  { key: "status", label: "Status", filterable: false },
-  { key: "updated_at", label: "Updated At", filterable: false },
-  { key: "token_expiry", label: "Token Expiry", filterable: false },
-  { key: "updated_by", label: "Updated By", filterable: false }
+  { key: "provider", label: "Provider" },
+  { key: "status", label: "Status" },
+  { key: "updated_at", label: "Updated At" },
+  { key: "token_expiry", label: "Token Expiry" },
+  { key: "updated_by", label: "Updated By" }
 ];
 
 const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 168px";
+
+function normalizeCellValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
+  }
+
+  return String(value);
+}
 
 function getStoredCurrentUser() {
   try {
@@ -233,6 +258,35 @@ function getErrorMessage(error, fallback) {
   }
 
   return fallback;
+}
+
+function getColumnValue(row, key) {
+  if (key === "status") {
+    return getStatusLabel(row.status);
+  }
+
+  if (key === "updated_at") {
+    return formatDateTime(row.updated_at);
+  }
+
+  return row[key];
+}
+
+function getFilterValues(rows, key) {
+  const valueMap = new Map();
+
+  rows.forEach((row) => {
+    const value = normalizeCellValue(getColumnValue(row, key));
+    valueMap.set(value, (valueMap.get(value) || 0) + 1);
+  });
+
+  return Array.from(valueMap.entries())
+    .map(([value, count]) => ({
+      label: value,
+      value,
+      count
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function StatusBadge({ status }) {
@@ -522,6 +576,17 @@ function Connections() {
 
   const [searchValue, setSearchValue] = useState("");
   const [appliedSearchValue, setAppliedSearchValue] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const [columnFilters, setColumnFilters] = useState({});
+  const [draftColumnFilters, setDraftColumnFilters] = useState({});
+  const [activeFilter, setActiveFilter] = useState(null);
+
+  const [sortConfig, setSortConfig] = useState({
+    key: null,
+    direction: null
+  });
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -560,6 +625,7 @@ function Connections() {
           broker,
           connection,
           provider: broker.name,
+          provider_id: broker.id,
           description: broker.description,
           status: getConnectionStatus(connection),
           updated_at: getLastUpdated(connection),
@@ -570,26 +636,85 @@ function Connections() {
       .filter(Boolean);
   }, [connections, currentUser]);
 
+  const headerValues = useMemo(() => {
+    return connectionColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(rows, column.key);
+      return result;
+    }, {});
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
+    let result = rows;
+
     const query = appliedSearchValue.trim().toLowerCase();
 
-    if (!query) {
-      return rows;
+    if (query) {
+      result = result.filter((row) => {
+        const values = [
+          row.provider,
+          row.description,
+          getStatusLabel(row.status),
+          formatDateTime(row.updated_at),
+          row.token_expiry,
+          row.updated_by
+        ];
+
+        return values.some((value) =>
+          String(value).toLowerCase().includes(query)
+        );
+      });
     }
 
-    return rows.filter((row) => {
-      const values = [
-        row.provider,
-        row.description,
-        getStatusLabel(row.status),
-        formatDateTime(row.updated_at),
-        row.token_expiry,
-        row.updated_by
-      ];
+    if (providerFilter !== "all") {
+      result = result.filter((row) => row.provider_id === providerFilter);
+    }
 
-      return values.some((value) => String(value).toLowerCase().includes(query));
+    if (statusFilter !== "all") {
+      result = result.filter((row) => row.status === statusFilter);
+    }
+
+    result = result.filter((row) => {
+      return Object.entries(columnFilters).every(([key, selectedValues]) => {
+        if (!selectedValues || selectedValues.length === 0) {
+          return true;
+        }
+
+        const value = normalizeCellValue(getColumnValue(row, key));
+        return selectedValues.includes(value);
+      });
     });
-  }, [rows, appliedSearchValue]);
+
+    if (sortConfig.key && sortConfig.direction) {
+      result = [...result].sort((a, b) => {
+        const firstValue = normalizeCellValue(
+          getColumnValue(a, sortConfig.key)
+        ).toLowerCase();
+
+        const secondValue = normalizeCellValue(
+          getColumnValue(b, sortConfig.key)
+        ).toLowerCase();
+
+        if (firstValue < secondValue) {
+          return sortConfig.direction === "asc" ? -1 : 1;
+        }
+
+        if (firstValue > secondValue) {
+          return sortConfig.direction === "asc" ? 1 : -1;
+        }
+
+        return 0;
+      });
+    }
+
+    return result;
+  }, [
+    rows,
+    appliedSearchValue,
+    providerFilter,
+    statusFilter,
+    columnFilters,
+    sortConfig
+  ]);
 
   const formBroker = useMemo(() => {
     return brokers.find((item) => item.id === formData.provider) || null;
@@ -600,6 +725,97 @@ function Connections() {
     : null;
 
   const formOpen = formMode !== "closed";
+
+  function hasAnyActiveFilter() {
+    return (
+      appliedSearchValue.trim() !== "" ||
+      providerFilter !== "all" ||
+      statusFilter !== "all" ||
+      sortConfig.key !== null ||
+      Object.values(columnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllFilters() {
+    setSearchValue("");
+    setAppliedSearchValue("");
+    setProviderFilter("all");
+    setStatusFilter("all");
+    setColumnFilters({});
+    setDraftColumnFilters({});
+    setSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveFilter(null);
+  }
+
+  function clearSearchFilter() {
+    setSearchValue("");
+    setAppliedSearchValue("");
+  }
+
+  function clearProviderFilter() {
+    setProviderFilter("all");
+  }
+
+  function clearStatusFilter() {
+    setStatusFilter("all");
+  }
+
+  function openColumnFilter(key) {
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: columnFilters[key] || []
+    }));
+
+    setActiveFilter((previous) => {
+      if (previous === key) {
+        return null;
+      }
+
+      return key;
+    });
+  }
+
+  function applyColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftColumnFilters[key] || []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function clearColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function handleSort(key, direction) {
+    setSortConfig({
+      key,
+      direction
+    });
+
+    setActiveFilter(null);
+  }
+
+  function isColumnFilterActive(key) {
+    const selectedValues = columnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
 
   async function loadConnections(showRefreshToast = false) {
     setLoading(true);
@@ -683,11 +899,6 @@ function Connections() {
   function handleSearchSubmit(event) {
     event.preventDefault();
     setAppliedSearchValue(searchValue.trim());
-  }
-
-  function handleClearSearch() {
-    setSearchValue("");
-    setAppliedSearchValue("");
   }
 
   async function handleSave() {
@@ -1080,53 +1291,54 @@ function Connections() {
               <h2 className={oaCardStyles.headerTitle}>Connections</h2>
             </div>
 
-            <div className="relative z-30 border-b border-oa-border bg-black px-3 py-1.5">
-              <form
-                onSubmit={handleSearchSubmit}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <div className="relative w-full md:w-80">
-                  <Input
-                    value={searchValue}
-                    onChange={(event) => setSearchValue(event.target.value)}
-                    placeholder="Search connections"
-                    className="pr-9"
-                  />
-
-                  {searchValue ? (
-                    <ClearInputButton
-                      label="Clear search"
-                      onClick={handleClearSearch}
-                    />
-                  ) : null}
-                </div>
-
-                <IconButton
-                  icon={Search}
-                  label="Search connections"
-                  type="submit"
-                  variant="search"
-                  tooltipSide="top"
-                />
-
-                <IconButton
-                  icon={Plus}
-                  label="Add connection"
-                  variant="default"
-                  disabled={!isAdminControlAllowed}
-                  onClick={openAddForm}
-                  tooltipSide="top"
-                />
-
-                <IconButton
-                  icon={RefreshCcw}
-                  label="Refresh"
-                  variant="refresh"
-                  disabled={loading}
-                  onClick={() => loadConnections(true)}
-                  tooltipSide="top"
-                />
-              </form>
+            <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+              <TableToolbar
+                searchValue={searchValue}
+                onSearchChange={setSearchValue}
+                onSearchClear={clearSearchFilter}
+                onSearchSubmit={handleSearchSubmit}
+                searchActive={appliedSearchValue.trim() !== ""}
+                searchPlaceholder="Search connections"
+                filters={[
+                  {
+                    value: providerFilter,
+                    onChange: (event) => setProviderFilter(event.target.value),
+                    options: providerFilterOptions,
+                    onClear: clearProviderFilter,
+                    showClear: providerFilter !== "all",
+                    ariaLabel: "Provider filter",
+                    minWidth: "w-40"
+                  },
+                  {
+                    value: statusFilter,
+                    onChange: (event) => setStatusFilter(event.target.value),
+                    options: statusFilterOptions,
+                    onClear: clearStatusFilter,
+                    showClear: statusFilter !== "all",
+                    ariaLabel: "Status filter",
+                    minWidth: "w-40"
+                  }
+                ]}
+                hasActiveFilter={hasAnyActiveFilter()}
+                onClearAll={clearAllFilters}
+                loading={loading}
+                rightActions={[
+                  {
+                    icon: RefreshCcw,
+                    label: "Refresh",
+                    variant: "refresh",
+                    disabled: loading,
+                    onClick: () => loadConnections(true)
+                  },
+                  {
+                    icon: Plus,
+                    label: "Add connection",
+                    variant: "add",
+                    disabled: !isAdminControlAllowed,
+                    onClick: openAddForm
+                  }
+                ]}
+              />
             </div>
 
             <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
@@ -1141,6 +1353,24 @@ function Connections() {
                 getRowKey={(row) => row.id}
                 renderCell={renderCell}
                 renderActions={renderActions}
+                filterConfig={{
+                  activeFilter,
+                  headerValues,
+                  columnFilters,
+                  draftColumnFilters,
+                  rightAlignedKeys: ["status", "updated_at", "token_expiry"],
+                  isColumnFilterActive,
+                  onOpen: openColumnFilter,
+                  onClose: () => setActiveFilter(null),
+                  onChange: (key, values) =>
+                    setDraftColumnFilters((previous) => ({
+                      ...previous,
+                      [key]: values
+                    })),
+                  onApply: applyColumnFilter,
+                  onSort: handleSort,
+                  onClear: clearColumnFilter
+                }}
               />
             </div>
           </div>

@@ -11,7 +11,6 @@ import {
   Mail,
   Pencil,
   Phone,
-  PlugZap,
   RefreshCcw,
   Send,
   Shield,
@@ -25,6 +24,8 @@ import IconButton from "../../components/common/IconButton";
 import FloatingInput from "../../components/common/FloatingInput";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
+import DataTable from "../../components/tables/DataTable";
+import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
@@ -43,6 +44,37 @@ import {
   testMyTelegramConnection,
   verifyMyTelegramConnection
 } from "../../api/connectionApi";
+
+const settingsColumns = [
+  { key: "field", label: "Field" },
+  { key: "value", label: "Value" },
+  { key: "group", label: "Group" }
+];
+
+const settingsGridTemplateColumns = "220px minmax(360px,1fr) 160px";
+
+const groupFilterOptions = [
+  { value: "all", label: "All Groups" },
+  { value: "profile", label: "Profile" },
+  { value: "access", label: "Access" },
+  { value: "integrations", label: "Integrations" },
+  { value: "system", label: "System" }
+];
+
+const telegramFilterOptions = [
+  { value: "all", label: "All Telegram" },
+  { value: "connected", label: "Connected" },
+  { value: "pending", label: "Pending" },
+  { value: "not_connected", label: "Not Connected" }
+];
+
+function normalizeCellValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
+  }
+
+  return String(value);
+}
 
 function formatRoleLabel(role) {
   if (!role) {
@@ -142,6 +174,27 @@ function getErrorMessage(error, fallback) {
   return fallback;
 }
 
+function getColumnValue(row, key) {
+  return row[key];
+}
+
+function getFilterValues(rows, key) {
+  const valueMap = new Map();
+
+  rows.forEach((row) => {
+    const value = normalizeCellValue(getColumnValue(row, key));
+    valueMap.set(value, (valueMap.get(value) || 0) + 1);
+  });
+
+  return Array.from(valueMap.entries())
+    .map(([value, count]) => ({
+      label: value,
+      value,
+      count
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 function PasswordFloatingInput({
   name,
   label,
@@ -179,17 +232,11 @@ function PasswordFloatingInput({
   );
 }
 
-function ProfileRow({ icon: Icon, label, children }) {
+function FieldLabel({ icon: Icon, label }) {
   return (
-    <div className="grid grid-cols-[150px_1fr] items-center border-b border-oa-border px-3 py-2 text-[13px] last:border-b-0 hover:bg-oa-panel/60">
-      <div className="flex min-w-0 items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-oa-muted">
-        <Icon size={14} className="shrink-0 text-zinc-300" />
-        <span className="truncate">{label}</span>
-      </div>
-
-      <div className="min-w-0 text-[13px] font-semibold text-oa-text">
-        {children}
-      </div>
+    <div className="flex min-w-0 items-center gap-2">
+      <Icon size={14} className="shrink-0 text-zinc-300" />
+      <span className="truncate">{label}</span>
     </div>
   );
 }
@@ -208,6 +255,20 @@ function Settings() {
   });
   const [telegramLink, setTelegramLink] = useState("");
   const [telegramBotUsername, setTelegramBotUsername] = useState("");
+
+  const [searchText, setSearchText] = useState("");
+  const [appliedSearchText, setAppliedSearchText] = useState("");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [telegramFilter, setTelegramFilter] = useState("all");
+
+  const [columnFilters, setColumnFilters] = useState({});
+  const [draftColumnFilters, setDraftColumnFilters] = useState({});
+  const [activeFilter, setActiveFilter] = useState(null);
+
+  const [sortConfig, setSortConfig] = useState({
+    key: null,
+    direction: null
+  });
 
   const [loading, setLoading] = useState(false);
   const [loadingTelegram, setLoadingTelegram] = useState(false);
@@ -243,6 +304,178 @@ function Settings() {
   const telegramConnected = telegramStatus === "connected";
   const updatedAtValue =
     profile?.updated_at || profile?.modified_at || profile?.created_at;
+
+  const settingsRows = useMemo(() => {
+    const telegramName = telegram?.telegram_username
+      ? `@${telegram.telegram_username}`
+      : telegram?.telegram_first_name || "";
+
+    return [
+      {
+        id: "full_name",
+        icon: User,
+        field: "Full Name",
+        value: profile?.full_name || "--",
+        group: "Profile",
+        groupKey: "profile",
+        type: "text"
+      },
+      {
+        id: "email",
+        icon: Mail,
+        field: "Email ID",
+        value: profile?.email || "--",
+        group: "Profile",
+        groupKey: "profile",
+        type: "text"
+      },
+      {
+        id: "mobile_number",
+        icon: Phone,
+        field: "Mobile",
+        value: profile?.mobile_number || "--",
+        group: "Profile",
+        groupKey: "profile",
+        type: "text"
+      },
+      {
+        id: "role",
+        icon: Shield,
+        field: "Role",
+        value: formatRoleLabel(profile?.role),
+        group: "Access",
+        groupKey: "access",
+        type: "role",
+        rawRole: profile?.role
+      },
+      {
+        id: "status",
+        icon: Check,
+        field: "Status",
+        value: profile?.is_active === false ? "inactive" : "active",
+        group: "Access",
+        groupKey: "access",
+        type: "status",
+        isActive: profile?.is_active !== false
+      },
+      {
+        id: "telegram",
+        icon: Send,
+        field: "Telegram",
+        value: getTelegramStatusLabel(telegramStatus),
+        group: "Integrations",
+        groupKey: "integrations",
+        type: "telegram",
+        telegramName,
+        telegramUpdatedAt: telegram?.updated_at || ""
+      },
+      {
+        id: "login_id",
+        icon: KeyRound,
+        field: "Login ID",
+        value: profile?.login_id || "--",
+        group: "System",
+        groupKey: "system",
+        type: "text"
+      },
+      {
+        id: "updated_at",
+        icon: RefreshCcw,
+        field: "Updated At",
+        value: formatDateTime(updatedAtValue),
+        group: "System",
+        groupKey: "system",
+        type: "text"
+      }
+    ];
+  }, [profile, telegram, telegramStatus, updatedAtValue]);
+
+  const headerValues = useMemo(() => {
+    return settingsColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(settingsRows, column.key);
+      return result;
+    }, {});
+  }, [settingsRows]);
+
+  const filteredRows = useMemo(() => {
+    let result = settingsRows;
+    const query = appliedSearchText.trim().toLowerCase();
+
+    if (query) {
+      result = result.filter((row) => {
+        const values = [
+          row.field,
+          row.value,
+          row.group,
+          row.telegramName,
+          row.telegramUpdatedAt
+        ];
+
+        return values.some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(query)
+        );
+      });
+    }
+
+    if (groupFilter !== "all") {
+      result = result.filter((row) => row.groupKey === groupFilter);
+    }
+
+    if (telegramFilter !== "all") {
+      result = result.filter((row) => {
+        if (row.id !== "telegram") {
+          return false;
+        }
+
+        return telegramStatus === telegramFilter;
+      });
+    }
+
+    result = result.filter((row) => {
+      return Object.entries(columnFilters).every(([key, selectedValues]) => {
+        if (!selectedValues || selectedValues.length === 0) {
+          return true;
+        }
+
+        const value = normalizeCellValue(getColumnValue(row, key));
+        return selectedValues.includes(value);
+      });
+    });
+
+    if (sortConfig.key && sortConfig.direction) {
+      result = [...result].sort((a, b) => {
+        const firstValue = normalizeCellValue(
+          getColumnValue(a, sortConfig.key)
+        ).toLowerCase();
+
+        const secondValue = normalizeCellValue(
+          getColumnValue(b, sortConfig.key)
+        ).toLowerCase();
+
+        if (firstValue < secondValue) {
+          return sortConfig.direction === "asc" ? -1 : 1;
+        }
+
+        if (firstValue > secondValue) {
+          return sortConfig.direction === "asc" ? 1 : -1;
+        }
+
+        return 0;
+      });
+    }
+
+    return result;
+  }, [
+    settingsRows,
+    appliedSearchText,
+    groupFilter,
+    telegramFilter,
+    telegramStatus,
+    columnFilters,
+    sortConfig
+  ]);
 
   function saveUserToStorage(user) {
     if (!user) {
@@ -341,6 +574,102 @@ function Settings() {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function hasAnyActiveFilter() {
+    return (
+      appliedSearchText.trim() !== "" ||
+      groupFilter !== "all" ||
+      telegramFilter !== "all" ||
+      sortConfig.key !== null ||
+      Object.values(columnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllFilters() {
+    setSearchText("");
+    setAppliedSearchText("");
+    setGroupFilter("all");
+    setTelegramFilter("all");
+    setColumnFilters({});
+    setDraftColumnFilters({});
+    setSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveFilter(null);
+  }
+
+  function clearSearchFilter() {
+    setSearchText("");
+    setAppliedSearchText("");
+  }
+
+  function clearGroupFilter() {
+    setGroupFilter("all");
+  }
+
+  function clearTelegramFilter() {
+    setTelegramFilter("all");
+  }
+
+  function openColumnFilter(key) {
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: columnFilters[key] || []
+    }));
+
+    setActiveFilter((previous) => {
+      if (previous === key) {
+        return null;
+      }
+
+      return key;
+    });
+  }
+
+  function applyColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftColumnFilters[key] || []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function clearColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function handleSort(key, direction) {
+    setSortConfig({
+      key,
+      direction
+    });
+
+    setActiveFilter(null);
+  }
+
+  function isColumnFilterActive(key) {
+    const selectedValues = columnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
+  function handleSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedSearchText(searchText.trim());
+  }
 
   function openDetailsModal() {
     setActionMessage("");
@@ -641,6 +970,96 @@ function Settings() {
     }
   }
 
+  function renderCell(row, column) {
+    if (column.key === "field") {
+      return <FieldLabel icon={row.icon} label={row.field} />;
+    }
+
+    if (column.key === "group") {
+      return <span className="truncate text-oa-muted">{row.group}</span>;
+    }
+
+    if (row.type === "role") {
+      return (
+        <span className={`${oaPillStyles.base} ${getRolePill(row.rawRole)}`}>
+          {row.value}
+        </span>
+      );
+    }
+
+    if (row.type === "status") {
+      return (
+        <span className={`${oaPillStyles.base} ${getStatusPill(row.isActive)}`}>
+          {row.value}
+        </span>
+      );
+    }
+
+    if (row.type === "telegram") {
+      return (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className={`${oaPillStyles.base} ${getTelegramPill(telegramStatus)}`}>
+            {getTelegramStatusLabel(telegramStatus)}
+          </span>
+
+          {loadingTelegram ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-normal text-oa-muted">
+              <Spinner size="xs" color="light" />
+              checking
+            </span>
+          ) : null}
+
+          {row.telegramName ? (
+            <span className="truncate text-[12px] font-normal text-oa-muted">
+              {row.telegramName}
+            </span>
+          ) : null}
+
+          {row.telegramUpdatedAt ? (
+            <span className="truncate text-[11px] font-normal text-oa-muted">
+              {formatDateTime(row.telegramUpdatedAt)}
+            </span>
+          ) : null}
+
+          {telegramBotUsername && !telegramConnected ? (
+            <span className="truncate text-[11px] font-normal text-oa-muted">
+              Bot: @{telegramBotUsername}
+            </span>
+          ) : null}
+
+          <button
+            type="button"
+            disabled={startingTelegram}
+            onClick={handleStartTelegram}
+            className="ml-1 rounded border border-sky-500/30 bg-sky-950/20 px-2.5 py-1 text-[11px] font-semibold text-sky-300 transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {startingTelegram ? "Opening..." : telegramConnected ? "Reconnect" : "Connect"}
+          </button>
+
+          <button
+            type="button"
+            disabled={verifyingTelegram}
+            onClick={handleVerifyTelegram}
+            className="rounded border border-emerald-500/30 bg-emerald-950/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {verifyingTelegram ? "Verifying..." : "Verify"}
+          </button>
+
+          <button
+            type="button"
+            disabled={!telegramConnected || testingTelegram}
+            onClick={handleTestTelegram}
+            className="rounded border border-oa-border bg-black px-2.5 py-1 text-[11px] font-semibold text-oa-muted transition hover:bg-oa-card hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {testingTelegram ? "Testing..." : "Test"}
+          </button>
+        </div>
+      );
+    }
+
+    return <span className="truncate text-oa-text">{row.value}</span>;
+  }
+
   return (
     <MainLayout>
       <section className="min-h-screen bg-black p-3">
@@ -650,34 +1069,60 @@ function Settings() {
               <h2 className={oaCardStyles.headerTitle}>Settings</h2>
             </div>
 
-            <div className="border-b border-oa-border bg-black px-3 py-1.5">
-              <div className="flex items-center justify-start gap-2">
-                <IconButton
-                  icon={RefreshCcw}
-                  label="Refresh"
-                  variant="refresh"
-                  disabled={loading || loadingTelegram}
-                  onClick={() => loadAll()}
-                  tooltipSide="right"
-                />
-
-                <IconButton
-                  icon={Pencil}
-                  label="Edit Details"
-                  variant="default"
-                  disabled={loading || !profile}
-                  onClick={openDetailsModal}
-                  tooltipSide="right"
-                />
-
-                <IconButton
-                  icon={LockKeyhole}
-                  label="Change Password"
-                  variant="add"
-                  onClick={openPasswordModal}
-                  tooltipSide="right"
-                />
-              </div>
+            <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+              <TableToolbar
+                searchValue={searchText}
+                onSearchChange={setSearchText}
+                onSearchClear={clearSearchFilter}
+                onSearchSubmit={handleSearchSubmit}
+                searchActive={appliedSearchText.trim() !== ""}
+                searchPlaceholder="Search settings"
+                filters={[
+                  {
+                    value: groupFilter,
+                    onChange: (event) => setGroupFilter(event.target.value),
+                    options: groupFilterOptions,
+                    onClear: clearGroupFilter,
+                    showClear: groupFilter !== "all",
+                    ariaLabel: "Group filter",
+                    minWidth: "w-40"
+                  },
+                  {
+                    value: telegramFilter,
+                    onChange: (event) => setTelegramFilter(event.target.value),
+                    options: telegramFilterOptions,
+                    onClear: clearTelegramFilter,
+                    showClear: telegramFilter !== "all",
+                    ariaLabel: "Telegram filter",
+                    minWidth: "w-40"
+                  }
+                ]}
+                hasActiveFilter={hasAnyActiveFilter()}
+                onClearAll={clearAllFilters}
+                loading={loading || loadingTelegram}
+                rightActions={[
+                  {
+                    icon: RefreshCcw,
+                    label: "Refresh",
+                    variant: "refresh",
+                    disabled: loading || loadingTelegram,
+                    onClick: () => loadAll()
+                  },
+                  {
+                    icon: Pencil,
+                    label: "Edit Details",
+                    variant: "default",
+                    disabled: loading || !profile,
+                    onClick: openDetailsModal
+                  },
+                  {
+                    icon: LockKeyhole,
+                    label: "Change Password",
+                    variant: "add",
+                    onClick: openPasswordModal
+                  }
+                ]}
+              />
             </div>
 
             {actionMessage && (
@@ -728,144 +1173,36 @@ function Settings() {
               </div>
             ) : null}
 
-            <div className="overflow-x-auto bg-black oa-table-font [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-              <div className="min-w-[900px]">
-                <div className="grid rounded-t border-b border-oa-border bg-oa-panel px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-oa-muted">
-                  <span>User Details</span>
-                </div>
-
-                {loading && !profile ? (
-                  <div className="flex min-h-[230px] items-center justify-center gap-2 border-b border-oa-border text-[12px] text-oa-muted">
-                    <Spinner size="xs" color="light" />
-                    <span>Loading user details</span>
-                  </div>
-                ) : (
-                  <div className="bg-black">
-                    <ProfileRow icon={User} label="Full Name">
-                      <span className="truncate">
-                        {profile?.full_name || "--"}
-                      </span>
-                    </ProfileRow>
-
-                    <ProfileRow icon={Mail} label="Email ID">
-                      <span className="truncate">{profile?.email || "--"}</span>
-                    </ProfileRow>
-
-                    <ProfileRow icon={Phone} label="Mobile">
-                      <span className="truncate">
-                        {profile?.mobile_number || "--"}
-                      </span>
-                    </ProfileRow>
-
-                    <ProfileRow icon={Shield} label="Role">
-                      <span
-                        className={`${oaPillStyles.base} ${getRolePill(
-                          profile?.role
-                        )}`}
-                      >
-                        {formatRoleLabel(profile?.role)}
-                      </span>
-                    </ProfileRow>
-
-                    <ProfileRow icon={Check} label="Status">
-                      <span
-                        className={`${oaPillStyles.base} ${getStatusPill(
-                          profile?.is_active !== false
-                        )}`}
-                      >
-                        {profile?.is_active === false ? "inactive" : "active"}
-                      </span>
-                    </ProfileRow>
-
-                    <ProfileRow icon={Send} label="Telegram">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span
-                          className={`${oaPillStyles.base} ${getTelegramPill(
-                            telegramStatus
-                          )}`}
-                        >
-                          {getTelegramStatusLabel(telegramStatus)}
-                        </span>
-
-                        {loadingTelegram ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-normal text-oa-muted">
-                            <Spinner size="xs" color="light" />
-                            checking
-                          </span>
-                        ) : null}
-
-                        {telegram?.telegram_username ? (
-                          <span className="truncate text-[12px] font-normal text-oa-muted">
-                            @{telegram.telegram_username}
-                          </span>
-                        ) : null}
-
-                        {!telegram?.telegram_username &&
-                        telegram?.telegram_first_name ? (
-                          <span className="truncate text-[12px] font-normal text-oa-muted">
-                            {telegram.telegram_first_name}
-                          </span>
-                        ) : null}
-
-                        {telegram?.updated_at ? (
-                          <span className="truncate text-[11px] font-normal text-oa-muted">
-                            {formatDateTime(telegram.updated_at)}
-                          </span>
-                        ) : null}
-
-                        {telegramBotUsername && !telegramConnected ? (
-                          <span className="truncate text-[11px] font-normal text-oa-muted">
-                            Bot: @{telegramBotUsername}
-                          </span>
-                        ) : null}
-
-                        <button
-                          type="button"
-                          disabled={startingTelegram}
-                          onClick={handleStartTelegram}
-                          className="ml-1 rounded border border-sky-500/30 bg-sky-950/20 px-2.5 py-1 text-[11px] font-semibold text-sky-300 transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {startingTelegram
-                            ? "Opening..."
-                            : telegramConnected
-                              ? "Reconnect"
-                              : "Connect"}
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={verifyingTelegram}
-                          onClick={handleVerifyTelegram}
-                          className="rounded border border-emerald-500/30 bg-emerald-950/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {verifyingTelegram ? "Verifying..." : "Verify"}
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={!telegramConnected || testingTelegram}
-                          onClick={handleTestTelegram}
-                          className="rounded border border-oa-border bg-black px-2.5 py-1 text-[11px] font-semibold text-oa-muted transition hover:bg-oa-card hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {testingTelegram ? "Testing..." : "Test"}
-                        </button>
-                      </div>
-                    </ProfileRow>
-
-                    <ProfileRow icon={KeyRound} label="Login ID">
-                      <span className="truncate">
-                        {profile?.login_id || "--"}
-                      </span>
-                    </ProfileRow>
-
-                    <ProfileRow icon={RefreshCcw} label="Updated At">
-                      <span className="truncate">
-                        {formatDateTime(updatedAtValue)}
-                      </span>
-                    </ProfileRow>
-                  </div>
-                )}
-              </div>
+            <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+              <DataTable
+                columns={settingsColumns}
+                rows={filteredRows}
+                loading={loading && !profile}
+                loadingMessage="Loading user details"
+                emptyMessage="No settings found."
+                gridTemplateColumns={settingsGridTemplateColumns}
+                minWidth="min-w-[900px]"
+                getRowKey={(row) => row.id}
+                renderCell={renderCell}
+                filterConfig={{
+                  activeFilter,
+                  headerValues,
+                  columnFilters,
+                  draftColumnFilters,
+                  rightAlignedKeys: ["group"],
+                  isColumnFilterActive,
+                  onOpen: openColumnFilter,
+                  onClose: () => setActiveFilter(null),
+                  onChange: (key, values) =>
+                    setDraftColumnFilters((previous) => ({
+                      ...previous,
+                      [key]: values
+                    })),
+                  onApply: applyColumnFilter,
+                  onSort: handleSort,
+                  onClear: clearColumnFilter
+                }}
+              />
             </div>
           </div>
         </div>
