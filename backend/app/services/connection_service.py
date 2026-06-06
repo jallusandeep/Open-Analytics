@@ -224,11 +224,56 @@ def get_upstox_connection_raw(conn):
 def get_telegram_connection_raw(conn):
     return get_connection_raw_by_provider(conn, TELEGRAM_PROVIDER)
 
+def refresh_connection_statuses_for_list(conn):
+    now_time = get_ist_now()
+
+    upstox_row = get_upstox_connection_raw(conn)
+
+    if upstox_row:
+        connection_id = upstox_row[0]
+        api_key = safe_strip(upstox_row[2])
+        api_secret = safe_strip(upstox_row[3])
+        redirect_url = safe_strip(upstox_row[4])
+        analytical_token = normalize_upstox_token(upstox_row[5])
+        access_token = normalize_upstox_token(upstox_row[6])
+        access_token_expires_at = parse_db_datetime(upstox_row[7])
+        current_status = safe_strip(upstox_row[8]) or "saved"
+
+        next_status = current_status
+
+        if current_status != "disconnected":
+            if access_token and access_token_expires_at and access_token_expires_at <= now_time:
+                next_status = "failed"
+            else:
+                next_status = get_upstox_save_status(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    redirect_url=redirect_url,
+                    analytical_token=analytical_token,
+                    access_token=access_token
+                )
+
+        if next_status != current_status:
+            conn.execute("""
+                UPDATE external_connections
+                SET
+                    connection_status = ?,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = 'system_refresh'
+                WHERE connection_id = ?;
+            """, [
+                next_status,
+                connection_id
+            ])
+
+            conn.commit()
 
 def list_connections_service():
     conn = get_connection()
 
     try:
+        refresh_connection_statuses_for_list(conn)
+
         rows = conn.execute("""
             SELECT
                 connection_id,
@@ -254,7 +299,6 @@ def list_connections_service():
 
     finally:
         conn.close()
-
 
 def parse_upstox_error(error_body: str):
     try:
