@@ -41,11 +41,12 @@ const tableColumns = [
   { key: "mobile_number", label: "Mobile" },
   { key: "role", label: "Role" },
   { key: "status", label: "Status" },
+  { key: "session_status", label: "Login Status" },
   { key: "access", label: "Access" }
 ];
 
 const gridTemplateColumns =
-  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 160px 86px";
+  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 125px 160px 86px";
 
 const emptyFormData = {
   login_id: "",
@@ -76,6 +77,26 @@ function formatRoleLabel(role) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatSessionLabel(value) {
+  return String(value || "offline").toLowerCase() === "online"
+    ? "Online"
+    : "Offline";
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "--";
+  }
+
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return String(value);
+  }
+
+  return parsedDate.toLocaleString();
+}
+
 function accessTextForUser(user) {
   return user.role === "user"
     ? user.access_restrictions || "[]"
@@ -85,6 +106,10 @@ function accessTextForUser(user) {
 function getColumnValue(user, key) {
   if (key === "status") {
     return user.is_active ? "active" : "inactive";
+  }
+
+  if (key === "session_status") {
+    return formatSessionLabel(user.session_status);
   }
 
   if (key === "role") {
@@ -294,8 +319,63 @@ function UserAccounts() {
     }
   }
 
+  async function refreshLoginStatuses() {
+    try {
+      const params = {
+        page,
+        page_size: pageSize,
+        search: appliedSearchText.trim(),
+        role: roleFilter
+      };
+
+      if (statusFilter !== "all") {
+        params.is_active = statusFilter === "active";
+      }
+
+      const response = await getAdminUsers(params);
+      const freshUsers = response.data.users || [];
+
+      setUsers((previousUsers) => {
+        const freshStatusMap = new Map(
+          freshUsers.map((user) => [
+            user.user_id,
+            {
+              session_status: user.session_status,
+              last_seen_at: user.last_seen_at
+            }
+          ])
+        );
+
+        return previousUsers.map((user) => {
+          const freshStatus = freshStatusMap.get(user.user_id);
+
+          if (!freshStatus) {
+            return user;
+          }
+
+          return {
+            ...user,
+            session_status: freshStatus.session_status,
+            last_seen_at: freshStatus.last_seen_at
+          };
+        });
+      });
+    } catch {
+      // Silent refresh should not disturb the current table.
+    }
+  }
+
   useEffect(() => {
     loadUsers(1);
+
+    const intervalId = window.setInterval(() => {
+      refreshLoginStatuses();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -630,18 +710,24 @@ function UserAccounts() {
 
     setUpdating(true);
 
+    const payload = {
+      full_name: editFormData.full_name,
+      email: editFormData.email,
+      mobile_number: editFormData.mobile_number,
+      role: isCurrentUser(editUser) ? editUser.role : editFormData.role,
+      is_active: isCurrentUser(editUser)
+        ? Boolean(editUser.is_active)
+        : editFormData.is_active,
+      access_restrictions:
+        editFormData.role === "user" ? editFormData.access_restrictions : []
+    };
+
+    if (editFormData.password.trim()) {
+      payload.password = editFormData.password.trim();
+    }
+
     try {
-      await updateAdminUser(editUser.user_id, {
-        full_name: editFormData.full_name,
-        email: editFormData.email,
-        mobile_number: editFormData.mobile_number,
-        role: isCurrentUser(editUser) ? editUser.role : editFormData.role,
-        is_active: isCurrentUser(editUser)
-          ? Boolean(editUser.is_active)
-          : editFormData.is_active,
-        access_restrictions:
-          editFormData.role === "user" ? editFormData.access_restrictions : []
-      });
+      await updateAdminUser(editUser.user_id, payload);
 
       setEditUser(null);
       setEditFormData(emptyFormData);
@@ -697,6 +783,12 @@ function UserAccounts() {
       : "border-red-500/40 bg-red-950/50 text-red-200";
   }
 
+  function getSessionPill(sessionStatus) {
+    return String(sessionStatus || "offline").toLowerCase() === "online"
+      ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-200"
+      : "border-zinc-600 bg-zinc-900 text-zinc-300";
+  }
+
   function renderUserCell(user, column) {
     const accessText = accessTextForUser(user);
 
@@ -733,6 +825,23 @@ function UserAccounts() {
         <span className={`${oaPillStyles.base} ${getStatusPill(user.is_active)}`}>
           {user.is_active ? "active" : "inactive"}
         </span>
+      );
+    }
+
+    if (column.key === "session_status") {
+      return (
+        <Tooltip
+          text={`Last seen: ${formatDateTime(user.last_seen_at)}`}
+          side="left"
+        >
+          <span
+            className={`${oaPillStyles.base} ${getSessionPill(
+              user.session_status
+            )}`}
+          >
+            {formatSessionLabel(user.session_status)}
+          </span>
+        </Tooltip>
       );
     }
 
@@ -773,7 +882,8 @@ function UserAccounts() {
             <div className={oaCardStyles.header}>
               <h2 className={oaCardStyles.headerTitle}>User Accounts</h2>
               <p className={oaCardStyles.headerSubtitle}>
-                Manage users, roles, restrictions, and active status.
+                Manage users, passwords, roles, restrictions, account status,
+                and login status.
               </p>
             </div>
 
@@ -841,7 +951,12 @@ function UserAccounts() {
                   headerValues,
                   columnFilters,
                   draftColumnFilters,
-                  rightAlignedKeys: ["role", "status", "access"],
+                  rightAlignedKeys: [
+                    "role",
+                    "status",
+                    "session_status",
+                    "access"
+                  ],
                   isColumnFilterActive,
                   onOpen: openColumnFilter,
                   onClose: () => setActiveFilter(null),
@@ -990,7 +1105,7 @@ function UserAccounts() {
       <Modal
         open={Boolean(editUser)}
         title="Edit User"
-        subtitle="Update user account details, role, and active status."
+        subtitle="Update user account details, password, role, and active status."
         onClose={closeEditModal}
         width="max-w-2xl"
         closeOnOverlay={!updating}
@@ -1059,6 +1174,15 @@ function UserAccounts() {
               autoComplete="tel"
             />
 
+            <FloatingInput
+              name="password"
+              label="New Password"
+              type="password"
+              value={editFormData.password}
+              onChange={handleEditInputChange}
+              autoComplete="new-password"
+            />
+
             <div>
               <label className={oaFormTextStyles.label}>Role</label>
               <div className="mt-1">
@@ -1100,6 +1224,10 @@ function UserAccounts() {
               </div>
             </div>
           </div>
+
+          <p className="mt-3 rounded border border-oa-border bg-black px-3 py-2 text-[11px] text-oa-muted">
+            Leave New Password empty to keep the current password.
+          </p>
 
           {currentUserRole === "admin" && editUser?.role === "admin" && (
             <p className="mt-3 rounded border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">

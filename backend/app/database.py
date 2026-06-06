@@ -316,9 +316,28 @@ def init_database():
                 session_id VARCHAR PRIMARY KEY,
                 user_id VARCHAR NOT NULL,
                 access_token VARCHAR NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP
+                last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                logged_out_at TIMESTAMP
             );
+        """)
+
+        safe_execute(conn, "ALTER TABLE user_sessions ADD COLUMN is_active BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE user_sessions ADD COLUMN last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE user_sessions ADD COLUMN logged_out_at TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE user_sessions
+            SET is_active = TRUE
+            WHERE is_active IS NULL;
+        """)
+
+        conn.execute("""
+            UPDATE user_sessions
+            SET last_seen_at = COALESCE(last_seen_at, created_at, CURRENT_TIMESTAMP)
+            WHERE last_seen_at IS NULL;
         """)
 
         # -----------------------------

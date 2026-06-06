@@ -16,6 +16,7 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     mobile_number: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=6)
     role: str = "user"
     is_active: bool = True
     access_restrictions: Optional[List[str]] = []
@@ -30,6 +31,8 @@ class AdminUserResponse(BaseModel):
     role: str
     access_restrictions: Optional[str]
     is_active: bool
+    session_status: str = "offline"
+    last_seen_at: Optional[str] = None
     created_at: str
     updated_at: str
 

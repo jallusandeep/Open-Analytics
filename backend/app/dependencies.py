@@ -9,6 +9,28 @@ from app.database import get_connection
 security = HTTPBearer()
 
 
+def safe_touch_session_last_seen(session_id: str):
+    conn = get_connection()
+
+    try:
+        conn.execute(
+            """
+            UPDATE user_sessions
+            SET last_seen_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            [session_id]
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
@@ -37,25 +59,50 @@ def get_current_user(
 
     conn = get_connection()
 
-    user = conn.execute(
-        """
-        SELECT
-            user_id,
-            login_id,
-            full_name,
-            email,
-            mobile_number,
-            role,
-            access_restrictions,
-            is_active,
-            created_at
-        FROM users
-        WHERE user_id = ?
-        """,
-        [user_id]
-    ).fetchone()
+    try:
+        session = conn.execute(
+            """
+            SELECT session_id
+            FROM user_sessions
+            WHERE user_id = ?
+              AND access_token = ?
+              AND COALESCE(is_active, TRUE) = TRUE
+              AND (
+                expires_at IS NULL
+                OR expires_at >= CURRENT_TIMESTAMP
+              )
+            LIMIT 1
+            """,
+            [user_id, token]
+        ).fetchone()
 
-    conn.close()
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired or logged out"
+            )
+
+        user = conn.execute(
+            """
+            SELECT
+                user_id,
+                login_id,
+                full_name,
+                email,
+                mobile_number,
+                role,
+                access_restrictions,
+                is_active,
+                created_at
+            FROM users
+            WHERE user_id = ?
+              AND COALESCE(record_status, 'S') != 'D'
+            """,
+            [user_id]
+        ).fetchone()
+
+    finally:
+        conn.close()
 
     if not user:
         raise HTTPException(
@@ -80,6 +127,8 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
         )
+
+    safe_touch_session_last_seen(session[0])
 
     return {
         "user_id": user_id,

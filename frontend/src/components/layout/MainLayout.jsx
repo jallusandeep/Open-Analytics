@@ -11,6 +11,7 @@ import {
   Users
 } from "lucide-react";
 
+import axiosClient from "../../api/axiosClient";
 import Tooltip from "../common/Tooltip";
 
 function MainLayout({ children }) {
@@ -24,11 +25,21 @@ function MainLayout({ children }) {
   const user = savedUser ? JSON.parse(savedUser) : null;
   const isAdminUser = ["admin", "super_admin"].includes(user?.role);
 
-  function handleLogout() {
+  function clearOpenAnalyticsSession() {
     localStorage.removeItem("open_analytics_token");
     localStorage.removeItem("open_analytics_user");
     localStorage.removeItem("open_analytics_current_user");
-    navigate("/login");
+  }
+
+  async function handleLogout() {
+    try {
+      await axiosClient.post("/auth/logout");
+    } catch {
+      // Still clear local session even if backend logout fails.
+    } finally {
+      clearOpenAnalyticsSession();
+      navigate("/login");
+    }
   }
 
   const menuItems = [

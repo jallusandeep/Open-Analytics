@@ -16,6 +16,7 @@ from app.schemas.auth_schema import (
 from app.services.auth_service import (
     change_password_service,
     login_user,
+    logout_user_service,
     register_user,
     request_forgot_password_otp_service,
     reset_password_with_otp_service,
@@ -49,6 +50,13 @@ def get_my_profile(current_user: dict = Depends(get_current_user)):
         "status": "success",
         "user": current_user
     }
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(current_user: dict = Depends(get_current_user)):
+    return logout_user_service(
+        user_id=current_user["user_id"]
+    )
 
 
 @router.put("/me", response_model=ProfileUpdateResponse)

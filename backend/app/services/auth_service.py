@@ -70,6 +70,33 @@ def generate_forgot_password_otp() -> str:
     )
 
 
+def create_user_session(conn, user_id: str, access_token: str):
+    session_id = str(uuid.uuid4())
+
+    conn.execute(
+        """
+        INSERT INTO user_sessions (
+            session_id,
+            user_id,
+            access_token,
+            is_active,
+            created_at,
+            last_seen_at,
+            expires_at,
+            logged_out_at
+        )
+        VALUES (?, ?, ?, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL)
+        """,
+        [
+            session_id,
+            user_id,
+            access_token
+        ]
+    )
+
+    return session_id
+
+
 def get_user_profile_by_id(user_id: str):
     conn = get_connection()
 
@@ -87,6 +114,7 @@ def get_user_profile_by_id(user_id: str):
             created_at
         FROM users
         WHERE user_id = ?
+          AND COALESCE(record_status, 'S') != 'D'
         """,
         [user_id]
     ).fetchone()
@@ -190,117 +218,212 @@ def register_user(full_name: str, email: str, password: str):
 
     conn = get_connection()
 
-    existing_user = conn.execute(
-        """
-        SELECT user_id
-        FROM users
-        WHERE LOWER(email) = ?
-        """,
-        [clean_email]
-    ).fetchone()
+    try:
+        existing_user = conn.execute(
+            """
+            SELECT user_id
+            FROM users
+            WHERE LOWER(email) = ?
+              AND COALESCE(record_status, 'S') != 'D'
+            """,
+            [clean_email]
+        ).fetchone()
 
-    if existing_user:
-        conn.close()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+
+        user_id = str(uuid.uuid4())
+        login_id = generate_unique_login_id(conn)
+        password_hash = hash_password(password)
+
+        conn.execute(
+            """
+            INSERT INTO users (
+                user_id,
+                login_id,
+                full_name,
+                email,
+                password_hash,
+                role,
+                is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                user_id,
+                login_id,
+                full_name.strip(),
+                clean_email,
+                password_hash,
+                "user",
+                True
+            ]
         )
 
-    user_id = str(uuid.uuid4())
-    login_id = generate_unique_login_id(conn)
-    password_hash = hash_password(password)
-
-    conn.execute(
-        """
-        INSERT INTO users (
-            user_id,
-            login_id,
-            full_name,
-            email,
-            password_hash,
-            role,
-            is_active
+        access_token = create_access_token(
+            data={
+                "sub": user_id,
+                "login_id": login_id,
+                "email": clean_email,
+                "role": "user"
+            }
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            user_id,
-            login_id,
-            full_name.strip(),
-            clean_email,
-            password_hash,
-            "user",
-            True
-        ]
-    )
 
-    conn.close()
+        create_user_session(
+            conn=conn,
+            user_id=user_id,
+            access_token=access_token
+        )
 
-    access_token = create_access_token(
-        data={
-            "sub": user_id,
+        conn.commit()
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_id": user_id,
             "login_id": login_id,
+            "full_name": full_name.strip(),
             "email": clean_email,
             "role": "user"
         }
-    )
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user_id": user_id,
-        "login_id": login_id,
-        "full_name": full_name.strip(),
-        "email": clean_email,
-        "role": "user"
-    }
+    except HTTPException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to register user: {e}"
+        )
+
+    finally:
+        conn.close()
 
 
 def login_user(login_identifier: str, password: str):
     conn = get_connection()
 
-    user = get_user_by_login_identifier(conn, login_identifier)
+    try:
+        user = get_user_by_login_identifier(conn, login_identifier)
 
-    conn.close()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid login ID, mobile, email, or password"
+            )
 
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid login ID, mobile, email, or password"
+        user_data = user_row_to_dict(user)
+
+        if not user_data["is_active"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is inactive"
+            )
+
+        if not verify_password(password, user_data["password_hash"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid login ID, mobile, email, or password"
+            )
+
+        access_token = create_access_token(
+            data={
+                "sub": user_data["user_id"],
+                "login_id": user_data["login_id"],
+                "email": user_data["email"],
+                "role": user_data["role"]
+            }
         )
 
-    user_data = user_row_to_dict(user)
-
-    if not user_data["is_active"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive"
+        create_user_session(
+            conn=conn,
+            user_id=user_data["user_id"],
+            access_token=access_token
         )
 
-    if not verify_password(password, user_data["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid login ID, mobile, email, or password"
-        )
+        conn.commit()
 
-    access_token = create_access_token(
-        data={
-            "sub": user_data["user_id"],
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_id": user_data["user_id"],
             "login_id": user_data["login_id"],
+            "full_name": user_data["full_name"],
             "email": user_data["email"],
             "role": user_data["role"]
         }
-    )
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user_id": user_data["user_id"],
-        "login_id": user_data["login_id"],
-        "full_name": user_data["full_name"],
-        "email": user_data["email"],
-        "role": user_data["role"]
-    }
+    except HTTPException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to login: {e}"
+        )
+
+    finally:
+        conn.close()
+
+
+def logout_user_service(user_id: str):
+    conn = get_connection()
+
+    try:
+        conn.execute(
+            """
+            UPDATE user_sessions
+            SET
+                is_active = FALSE,
+                logged_out_at = CURRENT_TIMESTAMP,
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+              AND COALESCE(is_active, TRUE) = TRUE
+            """,
+            [user_id]
+        )
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Logged out successfully"
+        }
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to logout: {e}"
+        )
+
+    finally:
+        conn.close()
 
 
 def update_profile_service(
@@ -326,6 +449,7 @@ def update_profile_service(
         SELECT user_id, is_active
         FROM users
         WHERE user_id = ?
+          AND COALESCE(record_status, 'S') != 'D'
         """,
         [user_id]
     ).fetchone()
@@ -350,7 +474,9 @@ def update_profile_service(
         """
         SELECT user_id
         FROM users
-        WHERE LOWER(email) = ? AND user_id != ?
+        WHERE LOWER(email) = ?
+          AND user_id != ?
+          AND COALESCE(record_status, 'S') != 'D'
         """,
         [clean_email, user_id]
     ).fetchone()
@@ -367,7 +493,9 @@ def update_profile_service(
             """
             SELECT user_id
             FROM users
-            WHERE mobile_number = ? AND user_id != ?
+            WHERE mobile_number = ?
+              AND user_id != ?
+              AND COALESCE(record_status, 'S') != 'D'
             """,
             [clean_mobile_number, user_id]
         ).fetchone()
@@ -434,6 +562,7 @@ def change_password_service(
         SELECT password_hash, is_active
         FROM users
         WHERE user_id = ?
+          AND COALESCE(record_status, 'S') != 'D'
         """,
         [user_id]
     ).fetchone()
