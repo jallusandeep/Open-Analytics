@@ -256,6 +256,8 @@ def create_user_service(request, current_user):
         ]
     )
 
+    conn.commit()
+
     created_user = conn.execute(
         """
         SELECT
@@ -453,6 +455,8 @@ def update_user_service(user_id: str, request, current_user: dict):
             [user_id]
         )
 
+    conn.commit()
+
     updated_user = conn.execute(
         """
         WITH active_sessions AS (
@@ -553,6 +557,8 @@ def delete_user_service(user_id: str, current_user: dict):
         """,
         [user_id]
     )
+
+    conn.commit()
 
     conn.close()
 

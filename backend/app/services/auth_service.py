@@ -521,6 +521,7 @@ def update_profile_service(
         [clean_full_name, clean_email, clean_mobile_number, user_id, user_id]
     )
 
+    conn.commit()
     conn.close()
 
     updated_user = get_user_profile_by_id(user_id)
@@ -604,6 +605,7 @@ def change_password_service(
         [new_password_hash, user_id, user_id]
     )
 
+    conn.commit()
     conn.close()
 
     updated_user = get_user_profile_by_id(user_id)

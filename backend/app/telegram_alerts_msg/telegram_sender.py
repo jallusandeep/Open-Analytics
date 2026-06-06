@@ -1,4 +1,5 @@
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +12,8 @@ from app.database import get_connection
 TELEGRAM_BASE_URL = "https://api.telegram.org"
 TELEGRAM_PROVIDER = "telegram"
 REQUEST_TIMEOUT_SECONDS = 30
+REQUEST_RETRY_COUNT = 3
+REQUEST_RETRY_BACKOFF_SECONDS = 1
 
 
 def safe_strip(value):
@@ -39,7 +42,17 @@ def get_telegram_connection_raw(conn):
     """, [TELEGRAM_PROVIDER]).fetchone()
 
 
-def telegram_api_request(bot_token: str, method_name: str, payload=None, query_params=None):
+def parse_telegram_error_body(error):
+    error_body = error.read().decode("utf-8", errors="ignore")
+
+    try:
+        payload = json.loads(error_body)
+        return payload.get("description") or str(payload)
+    except Exception:
+        return error_body or str(error)
+
+
+def build_telegram_request(bot_token: str, method_name: str, payload=None, query_params=None):
     clean_bot_token = safe_strip(bot_token)
 
     if not clean_bot_token:
@@ -64,58 +77,77 @@ def telegram_api_request(bot_token: str, method_name: str, payload=None, query_p
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
-    request = urllib.request.Request(
+    return urllib.request.Request(
         url,
         data=data,
         method="POST" if payload is not None else "GET",
         headers=headers
     )
 
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=REQUEST_TIMEOUT_SECONDS
-        ) as response:
-            content = response.read().decode("utf-8")
 
-            if not content:
-                return {}
+def telegram_api_request(bot_token: str, method_name: str, payload=None, query_params=None):
+    request = build_telegram_request(
+        bot_token=bot_token,
+        method_name=method_name,
+        payload=payload,
+        query_params=query_params
+    )
 
-            result = json.loads(content)
+    last_network_error = None
 
-            if not result.get("ok", False):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=result.get("description") or "Telegram API request failed."
-                )
-
-            return result
-
-    except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="ignore")
-
+    for attempt in range(REQUEST_RETRY_COUNT):
         try:
-            payload = json.loads(error_body)
-            message = payload.get("description") or str(payload)
-        except Exception:
-            message = error_body or str(error)
+            with urllib.request.urlopen(
+                request,
+                timeout=REQUEST_TIMEOUT_SECONDS
+            ) as response:
+                content = response.read().decode("utf-8")
 
-        raise HTTPException(
-            status_code=error.code,
-            detail=f"Telegram API error: {message}"
-        )
+                if not content:
+                    return {}
 
-    except urllib.error.URLError as error:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to reach Telegram API: {error}"
-        )
+                result = json.loads(content)
 
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Invalid JSON response received from Telegram API."
-        )
+                if not result.get("ok", False):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=result.get("description") or "Telegram API request failed."
+                    )
+
+                return result
+
+        except urllib.error.HTTPError as error:
+            message = parse_telegram_error_body(error)
+
+            raise HTTPException(
+                status_code=error.code,
+                detail=f"Telegram API error: {message}"
+            )
+
+        except urllib.error.URLError as error:
+            last_network_error = error
+
+            if attempt < REQUEST_RETRY_COUNT - 1:
+                time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+
+        except TimeoutError as error:
+            last_network_error = error
+
+            if attempt < REQUEST_RETRY_COUNT - 1:
+                time.sleep(REQUEST_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Invalid JSON response received from Telegram API."
+            )
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Unable to reach Telegram API after {REQUEST_RETRY_COUNT} attempts: {last_network_error}"
+    )
 
 
 def validate_telegram_bot_token(bot_token: str):
@@ -286,7 +318,8 @@ def send_user_telegram_alert(user_id: str, message: str) -> bool:
     except HTTPException as error:
         if error.status_code in (
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_502_BAD_GATEWAY
         ):
             return False
 
@@ -321,7 +354,8 @@ def send_admin_super_admin_telegram_alert(message: str) -> int:
     except HTTPException as error:
         if error.status_code in (
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_502_BAD_GATEWAY
         ):
             return 0
 

@@ -45,6 +45,11 @@ def is_transient_duckdb_lock_error(error: Exception) -> bool:
             "unique file handle conflict" in message
             and "already attached" in message
         )
+        or (
+            "failed to delete file" in message
+            and ".wal" in message
+            and "access is denied" in message
+        )
     )
 
 
@@ -283,8 +288,14 @@ def init_database():
                         WHEN login_id IS NULL OR login_id = '' THEN 'jallusandeep0902'
                         ELSE login_id
                     END,
-                    full_name = 'Sandeep Jallu',
-                    mobile_number = ?,
+                    full_name = CASE
+                        WHEN full_name IS NULL OR TRIM(full_name) = '' THEN 'Sandeep Jallu'
+                        ELSE full_name
+                    END,
+                    mobile_number = CASE
+                        WHEN mobile_number IS NULL OR TRIM(mobile_number) = '' THEN ?
+                        ELSE mobile_number
+                    END,
                     role = 'super_admin',
                     is_active = TRUE,
                     record_status = 'S',
