@@ -148,12 +148,43 @@ function parseAccessRestrictions(value) {
   }
 }
 
+const validationFieldLabels = {
+  email: "Email ID",
+  full_name: "Full Name",
+  mobile_number: "Mobile Number",
+  password: "Password",
+  role: "Role"
+};
+
+function getValidationFieldLabel(item) {
+  const fieldName = Array.isArray(item?.loc)
+    ? item.loc[item.loc.length - 1]
+    : null;
+
+  return validationFieldLabels[fieldName] || "Field";
+}
+
+function formatValidationMessage(item, fallbackMessage) {
+  const message = item.msg || item.message || fallbackMessage;
+  const fieldLabel = getValidationFieldLabel(item);
+
+  if (message.startsWith("String should")) {
+    return `${fieldLabel} should${message.slice("String should".length)}`;
+  }
+
+  if (message.startsWith("Value error,")) {
+    return message.replace("Value error,", fieldLabel).trim();
+  }
+
+  return message;
+}
+
 function getErrorMessage(error, fallbackMessage) {
   const detail = error.response?.data?.detail;
 
   if (Array.isArray(detail)) {
     return detail
-      .map((item) => item.msg || item.message || fallbackMessage)
+      .map((item) => formatValidationMessage(item, fallbackMessage))
       .join(" ");
   }
 
@@ -188,7 +219,6 @@ function UserAccounts() {
   const [totalRecords, setTotalRecords] = useState(0);
 
   const [loading, setLoading] = useState(false);
-  const [actionMessage, setActionMessage] = useState("");
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -226,7 +256,6 @@ function UserAccounts() {
 
   async function loadUsers(customPage = page, overrides = {}) {
     setLoading(true);
-    setActionMessage("");
 
     const effectiveSearchText =
       overrides.searchText !== undefined ? overrides.searchText : searchText;
@@ -259,7 +288,6 @@ function UserAccounts() {
       setTotalRecords(response.data.total_records);
     } catch (error) {
       const message = getErrorMessage(error, "Unable to load user accounts.");
-      setActionMessage(message);
       showToast(message, "error");
     } finally {
       setLoading(false);
@@ -436,7 +464,6 @@ function UserAccounts() {
   }
 
   function openCreateModal() {
-    setActionMessage("");
     setShowAddModal(true);
   }
 
@@ -497,12 +524,9 @@ function UserAccounts() {
   }
 
   function openEditModal(user) {
-    setActionMessage("");
-
     if (!canEditUser(user)) {
       const message = "You do not have permission to edit this user.";
 
-      setActionMessage(message);
       showToast(message, "warning");
       return;
     }
@@ -530,15 +554,12 @@ function UserAccounts() {
   }
 
   function openDeleteModal(user) {
-    setActionMessage("");
-
     if (!canDeleteUser(user)) {
       const message =
         user.user_id === currentUser?.user_id
           ? "You cannot delete your own account from User Accounts."
           : "You do not have permission to delete this user.";
 
-      setActionMessage(message);
       showToast(message, "warning");
       return;
     }
@@ -575,7 +596,6 @@ function UserAccounts() {
   async function handleCreateUser(event) {
     event.preventDefault();
     setSaving(true);
-    setActionMessage("");
 
     try {
       await createAdminUser({
@@ -595,7 +615,6 @@ function UserAccounts() {
       loadUsers(1);
     } catch (error) {
       const message = getErrorMessage(error, "Unable to create user.");
-      setActionMessage(message);
       showToast(message, "error");
     } finally {
       setSaving(false);
@@ -610,7 +629,6 @@ function UserAccounts() {
     }
 
     setUpdating(true);
-    setActionMessage("");
 
     try {
       await updateAdminUser(editUser.user_id, {
@@ -631,7 +649,6 @@ function UserAccounts() {
       loadUsers(page);
     } catch (error) {
       const message = getErrorMessage(error, "Unable to update user.");
-      setActionMessage(message);
       showToast(message, "error");
     } finally {
       setUpdating(false);
@@ -644,7 +661,6 @@ function UserAccounts() {
     }
 
     setDeleting(true);
-    setActionMessage("");
 
     try {
       await deleteAdminUser(deleteUser.user_id);
@@ -653,7 +669,6 @@ function UserAccounts() {
       loadUsers(page);
     } catch (error) {
       const message = getErrorMessage(error, "Unable to delete user.");
-      setActionMessage(message);
       showToast(message, "error");
     } finally {
       setDeleting(false);
@@ -809,14 +824,6 @@ function UserAccounts() {
                 ]}
               />
             </div>
-
-            {actionMessage && (
-              <div
-                className={`border-b border-oa-border bg-black px-3 py-2 ${oaTableStyles.mutedText}`}
-              >
-                {actionMessage}
-              </div>
-            )}
 
             <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
               <DataTable

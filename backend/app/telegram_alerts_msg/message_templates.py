@@ -35,6 +35,25 @@ def build_profile_updated_message(user: dict) -> str:
     )
 
 
+def build_user_account_updated_message(user: dict) -> str:
+    full_name = format_display_value(user.get("full_name"))
+    email = format_display_value(user.get("email"))
+    mobile_number = format_display_value(user.get("mobile_number"))
+    role = format_display_value(user.get("role")).replace("_", " ").title()
+    status = "Active" if user.get("is_active") else "Inactive"
+
+    return (
+        f"{APP_NAME} user account updated.\n\n"
+        f"Name: {full_name}\n"
+        f"Email: {email}\n"
+        f"Mobile: {mobile_number}\n"
+        f"Role: {role}\n"
+        f"Status: {status}\n"
+        f"Time: {get_current_timestamp_label()}\n\n"
+        "If this was not done by you, please contact admin immediately."
+    )
+
+
 def build_password_changed_message(user: dict) -> str:
     full_name = format_display_value(user.get("full_name"))
     email = format_display_value(user.get("email"))

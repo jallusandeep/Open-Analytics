@@ -8,6 +8,8 @@ from fastapi import HTTPException, status
 
 from app.database import get_connection
 from app.security import hash_password
+from app.telegram_alerts_msg.message_templates import build_user_account_updated_message
+from app.telegram_alerts_msg.telegram_sender import send_user_telegram_alert
 
 
 VALID_ROLES = ["user", "admin", "super_admin"]
@@ -401,6 +403,11 @@ def update_user_service(user_id: str, request, current_user: dict):
     ).fetchone()
 
     conn.close()
+
+    send_user_telegram_alert(
+        user_id=user_id,
+        message=build_user_account_updated_message(serialize_user_row(updated_user))
+    )
 
     return serialize_user_row(updated_user)
 
