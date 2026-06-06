@@ -753,6 +753,8 @@ function Connections() {
           analytical_token: formData.analytical_token.trim() || null,
           access_token: formData.access_token.trim() || null
         });
+
+        response = await testUpstoxConnection();
       }
 
       if (formBroker.id === "telegram") {
