@@ -4,20 +4,6 @@ set -e
 cd /app/backend
 
 echo "==========================================="
-echo "  INITIALIZING DATABASE..."
-echo "==========================================="
-
-# Get admin credentials from environment variables (if provided)
-ADMIN_USERNAME=${ADMIN_USERNAME:-}
-ADMIN_EMAIL=${ADMIN_EMAIL:-}
-ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-
-# Run database initialization
-# Run database initialization
-echo "[INFO] initializing database (running init_db.py)..."
-python init_db.py
-
-echo "==========================================="
 echo "  STARTING OPEN ANALYTICS BACKEND"
 echo "==========================================="
 # Remove stale PID file to prevent "Backend Already Running" errors in Docker
