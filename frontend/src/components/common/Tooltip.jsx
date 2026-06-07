@@ -1,71 +1,98 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 function Tooltip({ text, children, side = "top" }) {
+  const triggerRef = useRef(null);
+  const tooltipRef = useRef(null);
+
   const [position, setPosition] = useState({
     top: 0,
     left: 0,
-    visible: false
+    visible: false,
+    ready: false
   });
 
-  function showTooltip(event) {
-    const rect = event.currentTarget.getBoundingClientRect();
-
-    const width = Math.min(120, Math.max(54, text.length * 6 + 16));
-    const height = 22;
+  function getTooltipPosition(triggerRect, tooltipRect) {
     const gap = 6;
+    const screenPadding = 6;
 
-    let top = rect.top - height - gap;
-    let left = rect.left + rect.width / 2 - width / 2;
+    let top = triggerRect.top - tooltipRect.height - gap;
+    let left = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
 
     if (side === "right") {
-      top = rect.top + rect.height / 2 - height / 2;
-      left = rect.right + gap;
+      top = triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2;
+      left = triggerRect.right + gap;
     }
 
     if (side === "left") {
-      top = rect.top + rect.height / 2 - height / 2;
-      left = rect.left - width - gap;
+      top = triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2;
+      left = triggerRect.left - tooltipRect.width - gap;
     }
 
     if (side === "bottom") {
-      top = rect.bottom + gap;
-      left = rect.left + rect.width / 2 - width / 2;
+      top = triggerRect.bottom + gap;
+      left = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
     }
 
-    if (left + width > window.innerWidth - 6) {
-      left = window.innerWidth - width - 6;
+    if (left + tooltipRect.width > window.innerWidth - screenPadding) {
+      left = window.innerWidth - tooltipRect.width - screenPadding;
     }
 
-    if (left < 6) {
-      left = 6;
+    if (left < screenPadding) {
+      left = screenPadding;
     }
 
-    if (top < 6) {
-      top = rect.bottom + gap;
+    if (top < screenPadding) {
+      top = triggerRect.bottom + gap;
     }
 
-    if (top + height > window.innerHeight - 6) {
-      top = window.innerHeight - height - 6;
+    if (top + tooltipRect.height > window.innerHeight - screenPadding) {
+      top = triggerRect.top - tooltipRect.height - gap;
     }
 
-    setPosition({
-      top,
-      left,
+    if (top < screenPadding) {
+      top = screenPadding;
+    }
+
+    return { top, left };
+  }
+
+  function showTooltip() {
+    if (!text) return;
+
+    setPosition((previous) => ({
+      ...previous,
       visible: true,
-      width
-    });
+      ready: false
+    }));
   }
 
   function hideTooltip() {
     setPosition((previous) => ({
       ...previous,
-      visible: false
+      visible: false,
+      ready: false
     }));
   }
+
+  useLayoutEffect(() => {
+    if (!position.visible || !triggerRef.current || !tooltipRef.current) return;
+
+    const triggerRect = triggerRef.current.getBoundingClientRect();
+    const tooltipRect = tooltipRef.current.getBoundingClientRect();
+    const nextPosition = getTooltipPosition(triggerRect, tooltipRect);
+
+    setPosition({
+      top: nextPosition.top,
+      left: nextPosition.left,
+      visible: true,
+      ready: true
+    });
+  }, [position.visible, text, side]);
 
   return (
     <>
       <span
+        ref={triggerRef}
         className="inline-flex"
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
@@ -77,11 +104,12 @@ function Tooltip({ text, children, side = "top" }) {
 
       {position.visible && text && (
         <span
-          className="pointer-events-none fixed z-[9999] truncate rounded border border-oa-border bg-[#151518] px-1.5 py-1 text-center text-[10px] leading-none text-oa-text shadow-xl"
+          ref={tooltipRef}
+          className="pointer-events-none fixed z-[9999] max-w-[280px] whitespace-normal break-words rounded border border-oa-border bg-[#151518] px-2 py-1.5 text-center text-[10px] leading-snug text-oa-text shadow-xl"
           style={{
             top: `${position.top}px`,
             left: `${position.left}px`,
-            width: `${position.width}px`
+            opacity: position.ready ? 1 : 0
           }}
         >
           {text}

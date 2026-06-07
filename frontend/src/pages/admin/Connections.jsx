@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
-  CheckCircle2,
   Edit3,
+  ExternalLink,
+  KeyRound,
   Plus,
   PlugZap,
   RefreshCcw,
-  Search,
+  Send,
   Trash2,
   X
 } from "lucide-react";
@@ -15,10 +16,12 @@ import {
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
+import Tooltip from "../../components/common/Tooltip";
 import Input from "../../components/common/Input";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
 import DataTable from "../../components/tables/DataTable";
+import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
@@ -26,40 +29,90 @@ import {
   oaPillStyles
 } from "../../components/common/uiStyles";
 import {
+  disconnectTelegramConnection,
   disconnectUpstoxConnection,
   getConnections,
+  getUpstoxAuthorizeUrl,
+  saveTelegramConnection,
   saveUpstoxConnection,
+  testTelegramConnection,
   testUpstoxConnection
 } from "../../api/connectionApi";
 
+const UPSTOX_REDIRECT_URL = "http://localhost:5173/connections/upstox/callback";
+
 const emptyFormData = {
-  provider: "upstox",
-  access_token: ""
+  provider: "",
+  api_key: "",
+  api_secret: "",
+  redirect_url: "",
+  analytical_token: "",
+  access_token: "",
+  bot_token: ""
 };
 
 const brokers = [
   {
     id: "upstox",
     name: "Upstox",
-    description: "Token based broker connection.",
-    apiSupported: true
+    description: "Broker connection.",
+    apiSupported: true,
+    icon: PlugZap
+  },
+  {
+    id: "telegram",
+    name: "Telegram",
+    description: "Bot alert connection.",
+    apiSupported: true,
+    icon: Send
   }
 ];
 
-const providerOptions = brokers.map((broker) => ({
-  value: broker.id,
-  label: broker.name
-}));
-
-const connectionColumns = [
-  { key: "provider", label: "Provider", filterable: false },
-  { key: "status", label: "Status", filterable: false },
-  { key: "updated_at", label: "Updated At", filterable: false },
-  { key: "token_expiry", label: "Token Expiry", filterable: false },
-  { key: "updated_by", label: "Updated By", filterable: false }
+const providerOptions = [
+  {
+    value: "",
+    label: "Select provider"
+  },
+  ...brokers.map((broker) => ({
+    value: broker.id,
+    label: broker.name
+  }))
 ];
 
-const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 132px";
+const providerFilterOptions = [
+  { value: "all", label: "All Providers" },
+  ...brokers.map((broker) => ({
+    value: broker.id,
+    label: broker.name
+  }))
+];
+
+const statusFilterOptions = [
+  { value: "all", label: "All Status" },
+  { value: "connected", label: "Connected" },
+  { value: "limited", label: "Limited" },
+  { value: "failed", label: "Failed" },
+  { value: "saved", label: "Saved" },
+  { value: "not_connected", label: "Not Connected" }
+];
+
+const connectionColumns = [
+  { key: "provider", label: "Provider" },
+  { key: "status", label: "Status" },
+  { key: "updated_at", label: "Updated At" },
+  { key: "token_expiry", label: "Token Expiry" },
+  { key: "updated_by", label: "Updated By" }
+];
+
+const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 168px";
+
+function normalizeCellValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
+  }
+
+  return String(value);
+}
 
 function getStoredCurrentUser() {
   try {
@@ -98,6 +151,10 @@ function getStatusLabel(status) {
     return "Connected";
   }
 
+  if (status === "limited") {
+    return "Limited";
+  }
+
   if (status === "failed") {
     return "Failed";
   }
@@ -112,6 +169,10 @@ function getStatusLabel(status) {
 function getStatusClass(status) {
   if (status === "connected") {
     return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
+  }
+
+  if (status === "limited") {
+    return "border-amber-500/40 bg-amber-950/40 text-amber-200";
   }
 
   if (status === "failed") {
@@ -146,21 +207,6 @@ function formatDateTime(value) {
   });
 }
 
-function addOneYear(value) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  date.setFullYear(date.getFullYear() + 1);
-  return date;
-}
-
 function getLastUpdated(connection) {
   return (
     connection?.updated_at ||
@@ -171,36 +217,98 @@ function getLastUpdated(connection) {
   );
 }
 
-function getTokenExpiry(connection) {
+function getTokenExpiry(connection, provider) {
   if (!connection) {
     return "--";
   }
 
+  if (provider === "telegram") {
+    return "Bot token";
+  }
+
   const explicitExpiry =
-    connection?.token_expires_at ||
     connection?.access_token_expires_at ||
+    connection?.token_expires_at ||
     connection?.expires_at;
 
   if (explicitExpiry) {
     return formatDateTime(explicitExpiry);
   }
 
-  const lastUpdated = getLastUpdated(connection);
-  const calculatedExpiry = addOneYear(lastUpdated);
-
-  if (calculatedExpiry) {
-    return formatDateTime(calculatedExpiry);
+  if (connection?.has_access_token) {
+    return "Expiry calculating";
   }
 
-  return "Valid for 1 year";
+  return "--";
+}
+
+function getErrorMessage(error, fallback) {
+  const detail = error.response?.data?.detail;
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  if (detail?.message) {
+    return detail.message;
+  }
+
+  if (detail?.raw?.message) {
+    return detail.raw.message;
+  }
+
+  return fallback;
+}
+
+function getColumnValue(row, key) {
+  if (key === "status") {
+    return getStatusLabel(row.status);
+  }
+
+  if (key === "updated_at") {
+    return formatDateTime(row.updated_at);
+  }
+
+  return row[key];
+}
+
+function getFilterValues(rows, key) {
+  const valueMap = new Map();
+
+  rows.forEach((row) => {
+    const value = normalizeCellValue(getColumnValue(row, key));
+    valueMap.set(value, (valueMap.get(value) || 0) + 1);
+  });
+
+  return Array.from(valueMap.entries())
+    .map(([value, count]) => ({
+      label: value,
+      value,
+      count
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function StatusBadge({ status }) {
   return (
     <span className={`${oaPillStyles.base} ${getStatusClass(status)}`}>
-      {status === "connected" && <CheckCircle2 size={12} />}
       {getStatusLabel(status)}
     </span>
+  );
+}
+
+function ClearInputButton({ label, onClick }) {
+  return (
+    <Tooltip text={label} side="top">
+      <button
+        type="button"
+        onClick={onClick}
+        className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+        aria-label={label}
+      >
+        <X size={13} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -213,13 +321,18 @@ function ConnectionFormModal({
   isAdminControlAllowed,
   onClose,
   onSave,
-  onInputChange
+  onInputChange,
+  onClearField,
+  onUseDefaultRedirectUrl
 }) {
+  const selectedBroker =
+    brokers.find((broker) => broker.id === formData.provider) || null;
+
+  const isUpstox = formData.provider === "upstox";
+  const isTelegram = formData.provider === "telegram";
+  const hasProviderSelected = Boolean(selectedBroker);
+
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
-  const subtitle =
-    mode === "edit"
-      ? "Replace the saved provider token. Existing token number will not be shown."
-      : "Select provider and enter token number to save a new connection.";
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -230,9 +343,9 @@ function ConnectionFormModal({
     <Modal
       open={open}
       title={title}
-      subtitle={subtitle}
+      subtitle=""
       onClose={onClose}
-      width="max-w-lg"
+      width="max-w-xl"
       footer={
         <div className="flex items-center justify-end gap-2">
           <IconButton
@@ -248,9 +361,7 @@ function ConnectionFormModal({
             icon={Check}
             label={mode === "edit" ? "Update connection" : "Save connection"}
             variant="default"
-            disabled={
-              saving || !isAdminControlAllowed || !formData.access_token.trim()
-            }
+            disabled={saving || !isAdminControlAllowed || !hasProviderSelected}
             onClick={onSave}
             tooltipSide="top"
           />
@@ -279,45 +390,179 @@ function ConnectionFormModal({
           </div>
         </div>
 
-        <div>
-          <label className={oaFormTextStyles.label}>Token Number</label>
-          <div className="relative mt-1">
-            <Input
-              name="access_token"
-              type="password"
-              value={formData.access_token}
-              onChange={onInputChange}
-              placeholder={
-                selectedConnection
-                  ? "Token saved - enter new token to replace"
-                  : "Enter token number"
-              }
-              className="pr-9"
-              autoFocus
-            />
+        {isUpstox ? (
+          <div className="space-y-3">
+            <div>
+              <label className={oaFormTextStyles.label}>API Key</label>
+              <div className="relative mt-1">
+                <Input
+                  name="api_key"
+                  value={formData.api_key}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.api_key
+                      ? "Saved - enter to replace"
+                      : "Enter Upstox API key"
+                  }
+                  className="pr-9"
+                  autoFocus
+                />
 
-            {formData.access_token ? (
-              <button
-                type="button"
-                onClick={() =>
-                  onInputChange({
-                    target: {
-                      name: "access_token",
-                      value: ""
-                    }
-                  })
-                }
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                aria-label="Clear token number"
-              >
-                <X size={13} />
-              </button>
-            ) : null}
+                {formData.api_key ? (
+                  <ClearInputButton
+                    label="Clear API key"
+                    onClick={() => onClearField("api_key")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>API Secret</label>
+              <div className="relative mt-1">
+                <Input
+                  name="api_secret"
+                  type="password"
+                  value={formData.api_secret}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_api_secret
+                      ? "Saved - enter to replace"
+                      : "Enter Upstox API secret"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.api_secret ? (
+                  <ClearInputButton
+                    label="Clear API secret"
+                    onClick={() => onClearField("api_secret")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <label className={oaFormTextStyles.label}>Redirect URL</label>
+
+                <Tooltip text="Use app redirect URL" side="top">
+                  <button
+                    type="button"
+                    onClick={onUseDefaultRedirectUrl}
+                    className="inline-flex items-center gap-1 rounded-sm border border-oa-border bg-black px-2 py-1 text-[11px] text-sky-300 transition hover:border-sky-500/50 hover:bg-sky-950/30 hover:text-sky-200"
+                    aria-label="Use app redirect URL"
+                  >
+                    <ExternalLink size={12} />
+                    Use app URL
+                  </button>
+                </Tooltip>
+              </div>
+
+              <div className="relative mt-1">
+                <Input
+                  name="redirect_url"
+                  value={formData.redirect_url}
+                  onChange={onInputChange}
+                  placeholder="Enter Upstox redirect URL"
+                  className="pr-9"
+                />
+
+                {formData.redirect_url ? (
+                  <ClearInputButton
+                    label="Clear redirect URL"
+                    onClick={() => onClearField("redirect_url")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>
+                Analytical Token
+              </label>
+              <div className="relative mt-1">
+                <Input
+                  name="analytical_token"
+                  type="password"
+                  value={formData.analytical_token}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_analytical_token
+                      ? "Saved - enter to replace"
+                      : "Enter analytical token"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.analytical_token ? (
+                  <ClearInputButton
+                    label="Clear analytical token"
+                    onClick={() => onClearField("analytical_token")}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>
+                Manual Access Token
+              </label>
+              <div className="relative mt-1">
+                <Input
+                  name="access_token"
+                  type="password"
+                  value={formData.access_token}
+                  onChange={onInputChange}
+                  placeholder={
+                    selectedConnection?.has_access_token
+                      ? "Saved - enter to replace"
+                      : "Paste access token"
+                  }
+                  className="pr-9"
+                />
+
+                {formData.access_token ? (
+                  <ClearInputButton
+                    label="Clear manual access token"
+                    onClick={() => onClearField("access_token")}
+                  />
+                ) : null}
+              </div>
+            </div>
           </div>
-        </div>
+        ) : null}
+
+        {isTelegram ? (
+          <div>
+            <label className={oaFormTextStyles.label}>Bot Token</label>
+            <div className="relative mt-1">
+              <Input
+                name="bot_token"
+                type="password"
+                value={formData.bot_token}
+                onChange={onInputChange}
+                placeholder={
+                  selectedConnection?.has_access_token
+                    ? "Saved - enter to replace"
+                    : "Enter Telegram bot token"
+                }
+                className="pr-9"
+                autoFocus
+              />
+
+              {formData.bot_token ? (
+                <ClearInputButton
+                  label="Clear bot token"
+                  onClick={() => onClearField("bot_token")}
+                />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         <button type="submit" className="hidden" aria-hidden="true">
-          Submit
+          Submit {selectedBroker?.name || "connection"}
         </button>
       </form>
     </Modal>
@@ -331,11 +576,23 @@ function Connections() {
 
   const [searchValue, setSearchValue] = useState("");
   const [appliedSearchValue, setAppliedSearchValue] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const [columnFilters, setColumnFilters] = useState({});
+  const [draftColumnFilters, setDraftColumnFilters] = useState({});
+  const [activeFilter, setActiveFilter] = useState(null);
+
+  const [sortConfig, setSortConfig] = useState({
+    key: null,
+    direction: null
+  });
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingProvider, setTestingProvider] = useState("");
   const [disconnectingProvider, setDisconnectingProvider] = useState("");
+  const [authorizingProvider, setAuthorizingProvider] = useState("");
 
   const { showToast } = useToast();
 
@@ -346,56 +603,219 @@ function Connections() {
 
   const connectionsByProvider = useMemo(() => {
     return connections.reduce((accumulator, item) => {
-      accumulator[item.provider] = item;
+      if (item?.provider) {
+        accumulator[item.provider] = item;
+      }
+
       return accumulator;
     }, {});
   }, [connections]);
 
   const rows = useMemo(() => {
-    return brokers.map((broker) => {
-      const connection = connectionsByProvider[broker.id] || null;
+    return connections
+      .map((connection) => {
+        const broker = brokers.find((item) => item.id === connection.provider);
 
-      return {
-        id: broker.id,
-        broker,
-        connection,
-        provider: broker.name,
-        description: broker.description,
-        status: getConnectionStatus(connection),
-        updated_at: getLastUpdated(connection),
-        token_expiry: getTokenExpiry(connection),
-        updated_by: connection ? formatUserName(currentUser) : "--"
-      };
-    });
-  }, [connectionsByProvider, currentUser]);
+        if (!broker) {
+          return null;
+        }
+
+        return {
+          id: connection.provider,
+          broker,
+          connection,
+          provider: broker.name,
+          provider_id: broker.id,
+          description: broker.description,
+          status: getConnectionStatus(connection),
+          updated_at: getLastUpdated(connection),
+          token_expiry: getTokenExpiry(connection, broker.id),
+          updated_by: formatUserName(currentUser)
+        };
+      })
+      .filter(Boolean);
+  }, [connections, currentUser]);
+
+  const headerValues = useMemo(() => {
+    return connectionColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(rows, column.key);
+      return result;
+    }, {});
+  }, [rows]);
 
   const filteredRows = useMemo(() => {
+    let result = rows;
+
     const query = appliedSearchValue.trim().toLowerCase();
 
-    if (!query) {
-      return rows;
+    if (query) {
+      result = result.filter((row) => {
+        const values = [
+          row.provider,
+          row.description,
+          getStatusLabel(row.status),
+          formatDateTime(row.updated_at),
+          row.token_expiry,
+          row.updated_by
+        ];
+
+        return values.some((value) =>
+          String(value).toLowerCase().includes(query)
+        );
+      });
     }
 
-    return rows.filter((row) => {
-      const values = [
-        row.provider,
-        row.description,
-        getStatusLabel(row.status),
-        formatDateTime(row.updated_at),
-        row.token_expiry,
-        row.updated_by
-      ];
+    if (providerFilter !== "all") {
+      result = result.filter((row) => row.provider_id === providerFilter);
+    }
 
-      return values.some((value) => String(value).toLowerCase().includes(query));
+    if (statusFilter !== "all") {
+      result = result.filter((row) => row.status === statusFilter);
+    }
+
+    result = result.filter((row) => {
+      return Object.entries(columnFilters).every(([key, selectedValues]) => {
+        if (!selectedValues || selectedValues.length === 0) {
+          return true;
+        }
+
+        const value = normalizeCellValue(getColumnValue(row, key));
+        return selectedValues.includes(value);
+      });
     });
-  }, [rows, appliedSearchValue]);
+
+    if (sortConfig.key && sortConfig.direction) {
+      result = [...result].sort((a, b) => {
+        const firstValue = normalizeCellValue(
+          getColumnValue(a, sortConfig.key)
+        ).toLowerCase();
+
+        const secondValue = normalizeCellValue(
+          getColumnValue(b, sortConfig.key)
+        ).toLowerCase();
+
+        if (firstValue < secondValue) {
+          return sortConfig.direction === "asc" ? -1 : 1;
+        }
+
+        if (firstValue > secondValue) {
+          return sortConfig.direction === "asc" ? 1 : -1;
+        }
+
+        return 0;
+      });
+    }
+
+    return result;
+  }, [
+    rows,
+    appliedSearchValue,
+    providerFilter,
+    statusFilter,
+    columnFilters,
+    sortConfig
+  ]);
 
   const formBroker = useMemo(() => {
-    return brokers.find((item) => item.id === formData.provider) || brokers[0];
+    return brokers.find((item) => item.id === formData.provider) || null;
   }, [formData.provider]);
 
-  const selectedConnection = connectionsByProvider[formData.provider] || null;
+  const selectedConnection = formData.provider
+    ? connectionsByProvider[formData.provider] || null
+    : null;
+
   const formOpen = formMode !== "closed";
+
+  function hasAnyActiveFilter() {
+    return (
+      appliedSearchValue.trim() !== "" ||
+      providerFilter !== "all" ||
+      statusFilter !== "all" ||
+      sortConfig.key !== null ||
+      Object.values(columnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllFilters() {
+    setSearchValue("");
+    setAppliedSearchValue("");
+    setProviderFilter("all");
+    setStatusFilter("all");
+    setColumnFilters({});
+    setDraftColumnFilters({});
+    setSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveFilter(null);
+  }
+
+  function clearSearchFilter() {
+    setSearchValue("");
+    setAppliedSearchValue("");
+  }
+
+  function clearProviderFilter() {
+    setProviderFilter("all");
+  }
+
+  function clearStatusFilter() {
+    setStatusFilter("all");
+  }
+
+  function openColumnFilter(key) {
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: columnFilters[key] || []
+    }));
+
+    setActiveFilter((previous) => {
+      if (previous === key) {
+        return null;
+      }
+
+      return key;
+    });
+  }
+
+  function applyColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftColumnFilters[key] || []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function clearColumnFilter(key) {
+    setColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveFilter(null);
+  }
+
+  function handleSort(key, direction) {
+    setSortConfig({
+      key,
+      direction
+    });
+
+    setActiveFilter(null);
+  }
+
+  function isColumnFilterActive(key) {
+    const selectedValues = columnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
 
   async function loadConnections(showRefreshToast = false) {
     setLoading(true);
@@ -408,10 +828,7 @@ function Connections() {
         showToast("Connections refreshed successfully.", "success");
       }
     } catch (error) {
-      showToast(
-        error.response?.data?.detail || "Unable to load connections.",
-        "error"
-      );
+      showToast(getErrorMessage(error, "Unable to load connections."), "error");
     } finally {
       setLoading(false);
     }
@@ -428,10 +845,14 @@ function Connections() {
   }
 
   function openEditForm(provider) {
+    const connection = connectionsByProvider[provider] || null;
+
     setFormMode("edit");
     setFormData({
+      ...emptyFormData,
       provider,
-      access_token: ""
+      api_key: connection?.api_key || "",
+      redirect_url: connection?.redirect_url || ""
     });
   }
 
@@ -447,9 +868,31 @@ function Connections() {
   function handleInputChange(event) {
     const { name, value } = event.target;
 
+    if (name === "provider") {
+      setFormData({
+        ...emptyFormData,
+        provider: value
+      });
+      return;
+    }
+
     setFormData((previous) => ({
       ...previous,
       [name]: value
+    }));
+  }
+
+  function handleClearField(fieldName) {
+    setFormData((previous) => ({
+      ...previous,
+      [fieldName]: ""
+    }));
+  }
+
+  function handleUseDefaultRedirectUrl() {
+    setFormData((previous) => ({
+      ...previous,
+      redirect_url: UPSTOX_REDIRECT_URL
     }));
   }
 
@@ -458,14 +901,9 @@ function Connections() {
     setAppliedSearchValue(searchValue.trim());
   }
 
-  function handleClearSearch() {
-    setSearchValue("");
-    setAppliedSearchValue("");
-  }
-
   async function handleSave() {
     if (!formBroker) {
-      showToast("Select a provider before saving token.", "warning");
+      showToast("Select a provider before saving connection.", "warning");
       return;
     }
 
@@ -479,35 +917,111 @@ function Connections() {
       return;
     }
 
-    if (!formData.access_token.trim()) {
-      showToast("Enter token number before saving connection.", "warning");
+    if (formBroker.id === "upstox") {
+      const apiKey = formData.api_key.trim();
+      const apiSecret = formData.api_secret.trim();
+      const redirectUrl = formData.redirect_url.trim();
+      const analyticalToken = formData.analytical_token.trim();
+      const accessToken = formData.access_token.trim();
+
+      const hasAnyValue =
+        apiKey || apiSecret || redirectUrl || analyticalToken || accessToken;
+      const hasPartialApiCredential = apiKey || apiSecret || redirectUrl;
+      const hasCompleteApiCredential = apiKey && apiSecret && redirectUrl;
+
+      if (!hasAnyValue) {
+        showToast(
+          "Enter Upstox API key, API secret, redirect URL, analytical token, or manual access token.",
+          "warning"
+        );
+        return;
+      }
+
+      if (hasPartialApiCredential && !hasCompleteApiCredential) {
+        showToast(
+          "Upstox API key, API secret, and redirect URL are required together.",
+          "warning"
+        );
+        return;
+      }
+    }
+
+    if (formBroker.id === "telegram" && !formData.bot_token.trim()) {
+      showToast("Telegram bot token is required.", "warning");
       return;
     }
 
     setSaving(true);
 
     try {
+      let response = null;
+
       if (formBroker.id === "upstox") {
-        await saveUpstoxConnection({
-          api_key: "",
-          api_secret: "",
-          redirect_url: "",
-          access_token: formData.access_token.trim()
+        response = await saveUpstoxConnection({
+          api_key: formData.api_key.trim() || null,
+          api_secret: formData.api_secret.trim() || null,
+          redirect_url: formData.redirect_url.trim() || null,
+          analytical_token: formData.analytical_token.trim() || null,
+          access_token: formData.access_token.trim() || null
+        });
+
+        response = await testUpstoxConnection();
+      }
+
+      if (formBroker.id === "telegram") {
+        response = await saveTelegramConnection({
+          bot_token: formData.bot_token.trim()
         });
       }
 
-      showToast(`${formBroker.name} token saved successfully.`, "success");
       await loadConnections(false);
+
+      showToast(
+        response?.data?.message ||
+          `${formBroker.name} connection saved successfully.`,
+        response?.data?.status === "limited" ? "warning" : "success"
+      );
+
       setFormMode("closed");
       setFormData(emptyFormData);
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to save ${formBroker.name} token.`,
+        getErrorMessage(error, `Unable to save ${formBroker.name} connection.`),
         "error"
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleGenerateUpstoxAccessToken() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to generate access token.", "error");
+      return;
+    }
+
+    setAuthorizingProvider("upstox");
+
+    try {
+      const response = await getUpstoxAuthorizeUrl();
+      const authorizeUrl = response.data?.authorize_url;
+
+      if (!authorizeUrl) {
+        showToast("Unable to get Upstox authorization URL.", "error");
+        return;
+      }
+
+      window.location.href = authorizeUrl;
+    } catch (error) {
+      showToast(
+        getErrorMessage(
+          error,
+          "Save Upstox API key, API secret, and redirect URL first."
+        ),
+        "error"
+      );
+    } finally {
+      setAuthorizingProvider("");
     }
   }
 
@@ -538,18 +1052,22 @@ function Connections() {
         response = await testUpstoxConnection();
       }
 
+      if (broker.id === "telegram") {
+        response = await testTelegramConnection();
+      }
+
       showToast(
         response?.data?.message ||
           `${broker.name} connection tested successfully.`,
-        "success"
+        response?.data?.status === "limited" ? "warning" : "success"
       );
       await loadConnections(false);
     } catch (error) {
       showToast(
-        error.response?.data?.detail ||
-          `Unable to test ${broker.name} connection.`,
+        getErrorMessage(error, `Unable to test ${broker.name} connection.`),
         "error"
       );
+      await loadConnections(false);
     } finally {
       setTestingProvider("");
     }
@@ -580,6 +1098,10 @@ function Connections() {
         await disconnectUpstoxConnection();
       }
 
+      if (broker.id === "telegram") {
+        await disconnectTelegramConnection();
+      }
+
       setConnections((previous) =>
         previous.filter((item) => item.provider !== provider)
       );
@@ -592,7 +1114,7 @@ function Connections() {
       showToast(`${broker.name} connection deleted successfully.`, "success");
     } catch (error) {
       showToast(
-        error.response?.data?.detail || `Unable to delete ${broker.name}.`,
+        getErrorMessage(error, `Unable to delete ${broker.name}.`),
         "error"
       );
     } finally {
@@ -644,12 +1166,13 @@ function Connections() {
     const hasConnection = Boolean(row.connection);
     const isTesting = testingProvider === row.broker.id;
     const isDeleting = disconnectingProvider === row.broker.id;
+    const isAuthorizing = authorizingProvider === row.broker.id;
 
     return (
       <div className="flex justify-end gap-2">
         <IconButton
           icon={Edit3}
-          label="Edit token"
+          label="Edit connection"
           variant="default"
           disabled={
             !hasConnection || !row.broker.apiSupported || !isAdminControlAllowed
@@ -658,45 +1181,85 @@ function Connections() {
           tooltipSide="left"
         />
 
-        <button
-          type="button"
-          disabled={
-            isTesting ||
-            !hasConnection ||
-            !row.broker.apiSupported ||
-            !isAdminControlAllowed
-          }
-          onClick={() => handleTest(row.broker.id)}
-          className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={isTesting ? "Testing connection" : "Test connection"}
-          title={isTesting ? "Testing connection" : "Test connection"}
-        >
-          {isTesting ? (
-            <Spinner size="xs" color="light" />
-          ) : (
-            <PlugZap size={15} />
-          )}
-        </button>
+        {row.broker.id === "upstox" ? (
+          <Tooltip
+            text={
+              isAuthorizing ? "Generating access token" : "Generate access token"
+            }
+            side="left"
+          >
+            <button
+              type="button"
+              disabled={
+                isAuthorizing ||
+                !hasConnection ||
+                !row.broker.apiSupported ||
+                !isAdminControlAllowed
+              }
+              onClick={handleGenerateUpstoxAccessToken}
+              className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label={
+                isAuthorizing
+                  ? "Generating access token"
+                  : "Generate access token"
+              }
+            >
+              {isAuthorizing ? (
+                <Spinner size="xs" color="light" />
+              ) : (
+                <KeyRound size={15} />
+              )}
+            </button>
+          </Tooltip>
+        ) : null}
 
-        <button
-          type="button"
-          disabled={
-            isDeleting ||
-            !hasConnection ||
-            !row.broker.apiSupported ||
-            !isAdminControlAllowed
-          }
-          onClick={() => handleDisconnect(row.broker.id)}
-          className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={isDeleting ? "Deleting connection" : "Delete connection"}
-          title={isDeleting ? "Deleting connection" : "Delete connection"}
+        <Tooltip
+          text={isTesting ? "Testing connection" : "Test connection"}
+          side="left"
         >
-          {isDeleting ? (
-            <Spinner size="xs" color="light" />
-          ) : (
-            <Trash2 size={15} />
-          )}
-        </button>
+          <button
+            type="button"
+            disabled={
+              isTesting ||
+              !hasConnection ||
+              !row.broker.apiSupported ||
+              !isAdminControlAllowed
+            }
+            onClick={() => handleTest(row.broker.id)}
+            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={isTesting ? "Testing connection" : "Test connection"}
+          >
+            {isTesting ? (
+              <Spinner size="xs" color="light" />
+            ) : (
+              <PlugZap size={15} />
+            )}
+          </button>
+        </Tooltip>
+
+        <Tooltip
+          text={isDeleting ? "Deleting connection" : "Delete connection"}
+          side="left"
+        >
+          <button
+            type="button"
+            disabled={
+              isDeleting ||
+              !hasConnection ||
+              !row.broker.apiSupported ||
+              !isAdminControlAllowed
+            }
+            onClick={() => handleDisconnect(row.broker.id)}
+            className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={isDeleting ? "Deleting connection" : "Delete connection"}
+          >
+            {isDeleting ? (
+              <Spinner size="xs" color="light" />
+            ) : (
+              <Trash2 size={15} />
+            )}
+          </button>
+        </Tooltip>
       </div>
     );
   }
@@ -728,58 +1291,54 @@ function Connections() {
               <h2 className={oaCardStyles.headerTitle}>Connections</h2>
             </div>
 
-            <div className="relative z-30 border-b border-oa-border bg-black px-3 py-1.5">
-              <form
-                onSubmit={handleSearchSubmit}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <div className="relative w-full md:w-80">
-                  <Input
-                    value={searchValue}
-                    onChange={(event) => setSearchValue(event.target.value)}
-                    placeholder="Search connections"
-                    className="pr-9"
-                  />
-
-                  {searchValue ? (
-                    <button
-                      type="button"
-                      onClick={handleClearSearch}
-                      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
-                      aria-label="Clear search"
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : null}
-                </div>
-
-                <button
-                  type="submit"
-                  className="flex h-8 w-8 items-center justify-center rounded border border-sky-500/30 bg-sky-950/20 text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
-                  aria-label="Search connections"
-                  title="Search connections"
-                >
-                  <Search size={14} />
-                </button>
-
-                <IconButton
-                  icon={Plus}
-                  label="Add connection"
-                  variant="default"
-                  disabled={!isAdminControlAllowed}
-                  onClick={openAddForm}
-                  tooltipSide="top"
-                />
-
-                <IconButton
-                  icon={RefreshCcw}
-                  label="Refresh"
-                  variant="refresh"
-                  disabled={loading}
-                  onClick={() => loadConnections(true)}
-                  tooltipSide="top"
-                />
-              </form>
+            <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+              <TableToolbar
+                searchValue={searchValue}
+                onSearchChange={setSearchValue}
+                onSearchClear={clearSearchFilter}
+                onSearchSubmit={handleSearchSubmit}
+                searchActive={appliedSearchValue.trim() !== ""}
+                searchPlaceholder="Search connections"
+                filters={[
+                  {
+                    value: providerFilter,
+                    onChange: (event) => setProviderFilter(event.target.value),
+                    options: providerFilterOptions,
+                    onClear: clearProviderFilter,
+                    showClear: providerFilter !== "all",
+                    ariaLabel: "Provider filter",
+                    minWidth: "w-40"
+                  },
+                  {
+                    value: statusFilter,
+                    onChange: (event) => setStatusFilter(event.target.value),
+                    options: statusFilterOptions,
+                    onClear: clearStatusFilter,
+                    showClear: statusFilter !== "all",
+                    ariaLabel: "Status filter",
+                    minWidth: "w-40"
+                  }
+                ]}
+                hasActiveFilter={hasAnyActiveFilter()}
+                onClearAll={clearAllFilters}
+                loading={loading}
+                rightActions={[
+                  {
+                    icon: RefreshCcw,
+                    label: "Refresh",
+                    variant: "refresh",
+                    disabled: loading,
+                    onClick: () => loadConnections(true)
+                  },
+                  {
+                    icon: Plus,
+                    label: "Add connection",
+                    variant: "add",
+                    disabled: !isAdminControlAllowed,
+                    onClick: openAddForm
+                  }
+                ]}
+              />
             </div>
 
             <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
@@ -790,10 +1349,28 @@ function Connections() {
                 loadingMessage="Loading connections"
                 emptyMessage="No provider connections found."
                 gridTemplateColumns={connectionGridTemplateColumns}
-                minWidth="min-w-[1080px]"
+                minWidth="min-w-full"
                 getRowKey={(row) => row.id}
                 renderCell={renderCell}
                 renderActions={renderActions}
+                filterConfig={{
+                  activeFilter,
+                  headerValues,
+                  columnFilters,
+                  draftColumnFilters,
+                  rightAlignedKeys: ["status", "updated_at", "token_expiry"],
+                  isColumnFilterActive,
+                  onOpen: openColumnFilter,
+                  onClose: () => setActiveFilter(null),
+                  onChange: (key, values) =>
+                    setDraftColumnFilters((previous) => ({
+                      ...previous,
+                      [key]: values
+                    })),
+                  onApply: applyColumnFilter,
+                  onSort: handleSort,
+                  onClear: clearColumnFilter
+                }}
               />
             </div>
           </div>
@@ -809,6 +1386,8 @@ function Connections() {
           onClose={closeForm}
           onSave={handleSave}
           onInputChange={handleInputChange}
+          onClearField={handleClearField}
+          onUseDefaultRedirectUrl={handleUseDefaultRedirectUrl}
         />
       </section>
     </MainLayout>

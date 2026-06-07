@@ -9,7 +9,7 @@ function DataTable({
   loadingMessage = "Loading",
   emptyMessage = "No records found.",
   gridTemplateColumns,
-  minWidth = "min-w-[1080px]",
+  minWidth = "min-w-full",
   getRowKey,
   renderCell,
   renderActions,
@@ -51,7 +51,7 @@ function DataTable({
     const isLoading = type === "loading";
 
     return (
-      <div className="sticky left-0 flex min-h-[260px] w-[calc(100vw-96px)] max-w-full items-center justify-center px-3">
+      <div className="sticky left-0 flex min-h-[260px] w-full max-w-full items-center justify-center px-3">
         <div
           className={`flex items-center justify-center gap-2 text-center ${
             isLoading ? oaTableStyles.mutedText : oaTableStyles.emptyText
@@ -65,11 +65,11 @@ function DataTable({
   }
 
   return (
-    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0`}>
-      <div className="min-h-0 overflow-visible rounded">
-        <div className={minWidth}>
+    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0 !rounded-none`}>
+      <div className="min-h-0 overflow-visible !rounded-none">
+        <div className={`w-full ${minWidth}`}>
           <div
-            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 rounded-t border-b border-oa-border`}
+            className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 !rounded-none border-b border-oa-border`}
             style={{ gridTemplateColumns }}
           >
             {columns.map((column) => {

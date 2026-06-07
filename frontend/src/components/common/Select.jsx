@@ -4,12 +4,14 @@ import { Check, ChevronDown } from "lucide-react";
 import { oaSelectStyles } from "./uiStyles";
 
 function Select({
+  name,
   value,
   onChange,
   options = [],
   className = "",
   ariaLabel = "Select",
-  minWidth = "w-36"
+  minWidth = "w-36",
+  disabled = false
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
@@ -31,6 +33,7 @@ function Select({
   function handleSelect(optionValue) {
     onChange({
       target: {
+        name,
         value: optionValue
       }
     });
@@ -46,11 +49,14 @@ function Select({
       <button
         type="button"
         aria-label={ariaLabel}
+        disabled={disabled}
         onClick={() => setOpen((previous) => !previous)}
         className={`${oaSelectStyles.button} ${
           open
             ? `${oaSelectStyles.buttonOpen} !border-sky-500/70 shadow-[0_0_0_1px_rgba(14,165,233,0.25)]`
             : "hover:border-sky-500/40"
+        } ${
+          disabled ? "cursor-not-allowed opacity-60 hover:border-oa-border" : ""
         }`}
       >
         <span className="truncate">{selectedOption?.label || "Select"}</span>

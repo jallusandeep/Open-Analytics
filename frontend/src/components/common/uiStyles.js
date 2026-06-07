@@ -247,5 +247,5 @@ export const oaFormTextStyles = {
 
 export const oaPillStyles = {
   base:
-    "rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-[-0.01em]"
+    "inline-flex h-5 min-w-[54px] items-center justify-center rounded-full border px-2.5 font-mono text-[11px] font-medium leading-none tracking-[-0.01em] align-middle"
 };

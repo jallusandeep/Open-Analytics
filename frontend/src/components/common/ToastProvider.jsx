@@ -126,7 +126,7 @@ function ToastProvider({ children }) {
     <ToastContext.Provider value={value}>
       {children}
 
-      <div className="fixed bottom-3 right-3 z-[9999] flex flex-col-reverse gap-2">
+      <div className="fixed bottom-3 right-3 z-[11000] flex flex-col-reverse gap-2">
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} onClose={removeToast} />
         ))}

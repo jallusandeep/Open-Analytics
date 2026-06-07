@@ -24,18 +24,39 @@ export function syncUpstoxCurrentInstruments(config = {}) {
   return axiosClient.post("/data-collection/upstox/sync-current", null, config);
 }
 
-export function syncUpstoxAllInstruments(config = {}) {
-  return axiosClient.post("/data-collection/upstox/sync-all", null, config);
+export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/sync-expired",
+    payload,
+    config
+  );
 }
 
 export function cancelUpstoxDataCollection() {
   return axiosClient.post("/data-collection/upstox/cancel");
 }
 
-export function syncUpstoxExpiredInstruments(config = {}) {
-  return axiosClient.post(
-    "/data-collection/upstox/sync-expired-default",
-    null,
-    config
+export function getUpstoxDataCollectionSchedules() {
+  return axiosClient.get("/data-collection/upstox/schedules");
+}
+
+export function createUpstoxDataCollectionSchedule(payload) {
+  return axiosClient.post("/data-collection/upstox/schedules", payload);
+}
+
+export function updateUpstoxDataCollectionSchedule(scheduleId, payload) {
+  return axiosClient.put(
+    `/data-collection/upstox/schedules/${scheduleId}`,
+    payload
   );
+}
+
+export function toggleUpstoxDataCollectionSchedule(scheduleId) {
+  return axiosClient.post(
+    `/data-collection/upstox/schedules/${scheduleId}/toggle`
+  );
+}
+
+export function deleteUpstoxDataCollectionSchedule(scheduleId) {
+  return axiosClient.delete(`/data-collection/upstox/schedules/${scheduleId}`);
 }
