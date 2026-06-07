@@ -68,7 +68,7 @@ services:
       - "${FRONTEND_PORT}:3000"
     environment:
       NODE_ENV: ${NODE_ENV}
-      UPSTOX_REDIRECT_UR: ${UPSTOX_REDIRECT_UR}
+      VITE_UPSTOX_REDIRECT_URL: ${VITE_UPSTOX_REDIRECT_URL}
     depends_on:
       backend:
         condition: service_healthy
