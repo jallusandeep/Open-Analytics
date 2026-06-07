@@ -39,7 +39,7 @@ import {
   testUpstoxConnection
 } from "../../api/connectionApi";
 
-const UPSTOX_REDIRECT_URL = "http://localhost:5173/connections/upstox/callback";
+const UPSTOX_REDIRECT_URL = import.meta.env.VITE_UPSTOX_REDIRECT_URL || "http://localhost:5173/connections/upstox/callback";
 
 const emptyFormData = {
   provider: "",
