@@ -917,14 +917,14 @@ function Connections() {
       return;
     }
 
+    const apiKey = formData.api_key.trim();
+    const apiSecret = formData.api_secret.trim();
+    const redirectUrl = formData.redirect_url.trim();
+
+    const analyticalToken = formData.analytical_token.trim();
+    const accessToken = formData.access_token.trim();
+
     if (formBroker.id === "upstox") {
-      const apiKey = formData.api_key.trim();
-      const apiSecret = formData.api_secret.trim();
-      const redirectUrl = formData.redirect_url.trim();
-
-      const analyticalToken = formData.analytical_token.trim();
-      const accessToken = formData.access_token.trim();
-
       const hasStoredApiSecret =
         Boolean(selectedConnection?.has_api_secret);
 
