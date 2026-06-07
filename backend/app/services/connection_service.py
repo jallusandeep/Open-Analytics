@@ -751,11 +751,11 @@ def save_upstox_connection_service(request, current_user):
     has_partial_api_credentials = bool(api_key or api_secret or redirect_url)
     has_complete_api_credentials = bool(api_key and api_secret and redirect_url)
 
-    if has_partial_api_credentials and not has_complete_api_credentials:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox API key, API secret, and redirect URL are required together."
-        )
+    # if has_partial_api_credentials and not has_complete_api_credentials:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail="Upstox API key, API secret, and redirect URL are required together."
+    #     )
 
     saved_at = get_ist_now()
     access_token_expires_at = None
