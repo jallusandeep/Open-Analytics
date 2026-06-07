@@ -6,6 +6,7 @@ __pycache__/
 
 .env
 *.env
+!backend/.env
 
 *.log
 logs/
@@ -16,6 +17,8 @@ build/
 
 *.duckdb
 *.duckdb.wal
+backend/app/data/upstox/*.json
+backend/app/data/upstox/*.download
 
 .DS_Store
 Thumbs.db

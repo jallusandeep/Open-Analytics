@@ -1,4 +1,16 @@
-import { useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+
+function inputMatchesAutofill(input) {
+  if (!input) {
+    return false;
+  }
+
+  try {
+    return input.matches(":-webkit-autofill") || input.matches(":autofill");
+  } catch {
+    return false;
+  }
+}
 
 function FloatingInput({
   id,
@@ -7,6 +19,7 @@ function FloatingInput({
   value,
   onChange,
   icon: Icon,
+  rightElement = null,
   autoComplete,
   disabled = false,
   error = "",
@@ -18,11 +31,10 @@ function FloatingInput({
 }) {
   const generatedId = useId();
   const inputId = id || generatedId;
+  const inputRef = useRef(null);
 
   const [focused, setFocused] = useState(false);
-
-  const hasValue = String(value ?? "").length > 0;
-  const isFloating = focused || hasValue;
+  const [autofilled, setAutofilled] = useState(false);
 
   const isAuth = variant === "auth";
   const isUserModal = variant === "userModal";
@@ -30,17 +42,59 @@ function FloatingInput({
   const wrapperClass = isAuth
     ? "h-12 rounded-lg px-3"
     : isUserModal
-      ? "h-10 rounded px-3"
-      : "h-10 rounded px-3";
+      ? "h-8 rounded px-3"
+      : "h-8 rounded px-3";
 
-  const inputTextClass = isAuth ? "text-sm" : "text-[13px]";
-  const insideLabelClass = isAuth ? "text-xs" : "text-[12px]";
-  const floatingLabelClass = "text-[10px]";
-  const insideLeftClass = Icon ? "left-10" : "left-3";
+  const inputTextClass = isAuth ? "text-sm" : "text-[12px]";
+  const rightPaddingClass = rightElement ? "pr-8" : "";
+
+  const syncAutofillValue = useCallback(
+    (isAutofill, notifyChange = false) => {
+      const input = inputRef.current;
+      const domValue = input?.value ?? "";
+      const detectedAutofill = isAutofill || inputMatchesAutofill(input);
+
+      setAutofilled(Boolean(detectedAutofill && domValue));
+
+      if (notifyChange && domValue && domValue !== String(value ?? "")) {
+        onChange?.({
+          target: input,
+          currentTarget: input
+        });
+      }
+    },
+    [onChange, value]
+  );
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() =>
+      syncAutofillValue(false, true)
+    );
+
+    const timeoutIds = [100, 500, 1000].map((delay) =>
+      window.setTimeout(() => syncAutofillValue(false, true), delay)
+    );
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [syncAutofillValue]);
 
   return (
     <div className={`relative ${className}`}>
+      {label && (
+        <label
+          htmlFor={inputId}
+          className="mb-1.5 block text-[12px] font-medium tracking-wide text-oa-muted"
+        >
+          {label}
+          {required && <span className="ml-1 text-red-400">*</span>}
+        </label>
+      )}
+
       <div
+        data-autofilled={autofilled ? "true" : "false"}
         className={`relative flex ${wrapperClass} items-center gap-2 border bg-black transition-colors duration-200 ${
           error
             ? "border-red-500/70 focus-within:border-red-400"
@@ -57,32 +111,36 @@ function FloatingInput({
         )}
 
         <input
+          ref={inputRef}
           id={inputId}
           name={name}
           type={type}
           value={value}
           onChange={onChange}
+          onInput={() => setAutofilled(false)}
+          onAnimationStart={(event) => {
+            if (event.animationName === "oaAutofillStart") {
+              syncAutofillValue(true, true);
+            }
+
+            if (event.animationName === "oaAutofillCancel") {
+              syncAutofillValue(false);
+            }
+          }}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           autoComplete={autoComplete}
           disabled={disabled}
           required={required}
-          placeholder=" "
-          className={`w-full bg-transparent text-oa-text outline-none placeholder:text-transparent disabled:cursor-not-allowed ${inputTextClass} ${
-            isFloating ? "pt-2" : "pt-0"
-          } ${inputClassName}`}
+          placeholder=""
+          className={`oa-floating-input__control w-full bg-transparent text-oa-text outline-none placeholder:text-oa-muted disabled:cursor-not-allowed ${inputTextClass} ${rightPaddingClass} ${inputClassName}`}
         />
 
-        <label
-          htmlFor={inputId}
-          className={`pointer-events-none absolute z-10 bg-black px-1.5 font-medium tracking-wide text-oa-muted transition-all duration-200 ease-out ${
-            isFloating
-              ? `left-3 top-0 -translate-y-1/2 ${floatingLabelClass}`
-              : `${insideLeftClass} top-1/2 -translate-y-1/2 ${insideLabelClass}`
-          }`}
-        >
-          {label}
-        </label>
+        {rightElement ? (
+          <div className="absolute right-1.5 top-1/2 z-10 flex -translate-y-1/2 items-center">
+            {rightElement}
+          </div>
+        ) : null}
       </div>
 
       {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}

@@ -11,3 +11,11 @@ export function registerUser(payload) {
 export function getCurrentUser() {
   return axiosClient.get("/users/me");
 }
+
+export function requestForgotPasswordOtp(payload) {
+  return axiosClient.post("/auth/forgot-password/otp", payload);
+}
+
+export function resetPasswordWithOtp(payload) {
+  return axiosClient.post("/auth/forgot-password/reset", payload);
+}

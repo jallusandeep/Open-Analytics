@@ -24,6 +24,7 @@ import FloatingInput from "../../components/common/FloatingInput";
 import Select from "../../components/common/Select";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
+import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
   oaFormTextStyles,
@@ -40,11 +41,12 @@ const tableColumns = [
   { key: "mobile_number", label: "Mobile" },
   { key: "role", label: "Role" },
   { key: "status", label: "Status" },
+  { key: "session_status", label: "Login Status" },
   { key: "access", label: "Access" }
 ];
 
 const gridTemplateColumns =
-  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 160px 86px";
+  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 125px 160px 86px";
 
 const emptyFormData = {
   login_id: "",
@@ -75,6 +77,26 @@ function formatRoleLabel(role) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatSessionLabel(value) {
+  return String(value || "offline").toLowerCase() === "online"
+    ? "Online"
+    : "Offline";
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "--";
+  }
+
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return String(value);
+  }
+
+  return parsedDate.toLocaleString();
+}
+
 function accessTextForUser(user) {
   return user.role === "user"
     ? user.access_restrictions || "[]"
@@ -84,6 +106,10 @@ function accessTextForUser(user) {
 function getColumnValue(user, key) {
   if (key === "status") {
     return user.is_active ? "active" : "inactive";
+  }
+
+  if (key === "session_status") {
+    return formatSessionLabel(user.session_status);
   }
 
   if (key === "role") {
@@ -147,7 +173,55 @@ function parseAccessRestrictions(value) {
   }
 }
 
+const validationFieldLabels = {
+  email: "Email ID",
+  full_name: "Full Name",
+  mobile_number: "Mobile Number",
+  password: "Password",
+  role: "Role"
+};
+
+function getValidationFieldLabel(item) {
+  const fieldName = Array.isArray(item?.loc)
+    ? item.loc[item.loc.length - 1]
+    : null;
+
+  return validationFieldLabels[fieldName] || "Field";
+}
+
+function formatValidationMessage(item, fallbackMessage) {
+  const message = item.msg || item.message || fallbackMessage;
+  const fieldLabel = getValidationFieldLabel(item);
+
+  if (message.startsWith("String should")) {
+    return `${fieldLabel} should${message.slice("String should".length)}`;
+  }
+
+  if (message.startsWith("Value error,")) {
+    return message.replace("Value error,", fieldLabel).trim();
+  }
+
+  return message;
+}
+
+function getErrorMessage(error, fallbackMessage) {
+  const detail = error.response?.data?.detail;
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => formatValidationMessage(item, fallbackMessage))
+      .join(" ");
+  }
+
+  if (typeof detail === "string") {
+    return detail;
+  }
+
+  return fallbackMessage;
+}
+
 function UserAccounts() {
+  const { showToast } = useToast();
   const [users, setUsers] = useState([]);
 
   const [searchText, setSearchText] = useState("");
@@ -170,7 +244,6 @@ function UserAccounts() {
   const [totalRecords, setTotalRecords] = useState(0);
 
   const [loading, setLoading] = useState(false);
-  const [actionMessage, setActionMessage] = useState("");
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -200,18 +273,14 @@ function UserAccounts() {
     { value: "inactive", label: "Inactive" }
   ];
 
-  const editRoleOptions =
-    currentUserRole === "admin"
-      ? [{ value: "user", label: "User" }]
-      : [
-          { value: "user", label: "User" },
-          { value: "admin", label: "Admin" },
-          { value: "super_admin", label: "Super Admin" }
-        ];
+  const fullRoleOptions = [
+    { value: "user", label: "User" },
+    { value: "admin", label: "Admin" },
+    { value: "super_admin", label: "Super Admin" }
+  ];
 
   async function loadUsers(customPage = page, overrides = {}) {
     setLoading(true);
-    setActionMessage("");
 
     const effectiveSearchText =
       overrides.searchText !== undefined ? overrides.searchText : searchText;
@@ -243,16 +312,70 @@ function UserAccounts() {
       setTotalPages(response.data.total_pages);
       setTotalRecords(response.data.total_records);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to load user accounts."
-      );
+      const message = getErrorMessage(error, "Unable to load user accounts.");
+      showToast(message, "error");
     } finally {
       setLoading(false);
     }
   }
 
+  async function refreshLoginStatuses() {
+    try {
+      const params = {
+        page,
+        page_size: pageSize,
+        search: appliedSearchText.trim(),
+        role: roleFilter
+      };
+
+      if (statusFilter !== "all") {
+        params.is_active = statusFilter === "active";
+      }
+
+      const response = await getAdminUsers(params);
+      const freshUsers = response.data.users || [];
+
+      setUsers((previousUsers) => {
+        const freshStatusMap = new Map(
+          freshUsers.map((user) => [
+            user.user_id,
+            {
+              session_status: user.session_status,
+              last_seen_at: user.last_seen_at
+            }
+          ])
+        );
+
+        return previousUsers.map((user) => {
+          const freshStatus = freshStatusMap.get(user.user_id);
+
+          if (!freshStatus) {
+            return user;
+          }
+
+          return {
+            ...user,
+            session_status: freshStatus.session_status,
+            last_seen_at: freshStatus.last_seen_at
+          };
+        });
+      });
+    } catch {
+      // Silent refresh should not disturb the current table.
+    }
+  }
+
   useEffect(() => {
     loadUsers(1);
+
+    const intervalId = window.setInterval(() => {
+      refreshLoginStatuses();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -421,7 +544,6 @@ function UserAccounts() {
   }
 
   function openCreateModal() {
-    setActionMessage("");
     setShowAddModal(true);
   }
 
@@ -439,10 +561,6 @@ function UserAccounts() {
       return false;
     }
 
-    if (user.user_id === currentUser?.user_id) {
-      return false;
-    }
-
     if (currentUserRole === "admin" && user.role === "super_admin") {
       return false;
     }
@@ -450,15 +568,46 @@ function UserAccounts() {
     return true;
   }
 
-  function openEditModal(user) {
-    setActionMessage("");
+  function isCurrentUser(user) {
+    return user?.user_id === currentUser?.user_id;
+  }
 
+  function getEditRoleOptions(user) {
+    if (isCurrentUser(user)) {
+      return fullRoleOptions.filter((option) => option.value === user.role);
+    }
+
+    if (currentUserRole === "admin") {
+      return [{ value: "user", label: "User" }];
+    }
+
+    return fullRoleOptions;
+  }
+
+  function canDeleteUser(user) {
+    if (!["admin", "super_admin"].includes(currentUserRole)) {
+      return false;
+    }
+
+    if (user.user_id === currentUser?.user_id) {
+      return false;
+    }
+
+    if (
+      currentUserRole === "admin" &&
+      ["admin", "super_admin"].includes(user.role)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function openEditModal(user) {
     if (!canEditUser(user)) {
-      setActionMessage(
-        user.user_id === currentUser?.user_id
-          ? "You cannot edit your own account from User Accounts."
-          : "You do not have permission to edit this user."
-      );
+      const message = "You do not have permission to edit this user.";
+
+      showToast(message, "warning");
       return;
     }
 
@@ -485,7 +634,16 @@ function UserAccounts() {
   }
 
   function openDeleteModal(user) {
-    setActionMessage("");
+    if (!canDeleteUser(user)) {
+      const message =
+        user.user_id === currentUser?.user_id
+          ? "You cannot delete your own account from User Accounts."
+          : "You do not have permission to delete this user.";
+
+      showToast(message, "warning");
+      return;
+    }
+
     setDeleteUser(user);
   }
 
@@ -518,11 +676,14 @@ function UserAccounts() {
   async function handleCreateUser(event) {
     event.preventDefault();
     setSaving(true);
-    setActionMessage("");
 
     try {
       await createAdminUser({
-        ...formData,
+        full_name: formData.full_name,
+        email: formData.email,
+        mobile_number: formData.mobile_number,
+        password: formData.password,
+        role: formData.role,
         access_restrictions:
           formData.role === "user" ? formData.access_restrictions : []
       });
@@ -530,12 +691,11 @@ function UserAccounts() {
       setShowAddModal(false);
       setFormData(emptyFormData);
 
-      setActionMessage("User created successfully.");
+      showToast("User created successfully.", "success");
       loadUsers(1);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to create user."
-      );
+      const message = getErrorMessage(error, "Unable to create user.");
+      showToast(message, "error");
     } finally {
       setSaving(false);
     }
@@ -549,28 +709,33 @@ function UserAccounts() {
     }
 
     setUpdating(true);
-    setActionMessage("");
+
+    const payload = {
+      full_name: editFormData.full_name,
+      email: editFormData.email,
+      mobile_number: editFormData.mobile_number,
+      role: isCurrentUser(editUser) ? editUser.role : editFormData.role,
+      is_active: isCurrentUser(editUser)
+        ? Boolean(editUser.is_active)
+        : editFormData.is_active,
+      access_restrictions:
+        editFormData.role === "user" ? editFormData.access_restrictions : []
+    };
+
+    if (editFormData.password.trim()) {
+      payload.password = editFormData.password.trim();
+    }
 
     try {
-      await updateAdminUser(editUser.user_id, {
-        login_id: editFormData.login_id,
-        full_name: editFormData.full_name,
-        email: editFormData.email,
-        mobile_number: editFormData.mobile_number,
-        role: editFormData.role,
-        is_active: editFormData.is_active,
-        access_restrictions:
-          editFormData.role === "user" ? editFormData.access_restrictions : []
-      });
+      await updateAdminUser(editUser.user_id, payload);
 
       setEditUser(null);
       setEditFormData(emptyFormData);
-      setActionMessage("User updated successfully.");
+      showToast("User updated successfully.", "success");
       loadUsers(page);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to update user."
-      );
+      const message = getErrorMessage(error, "Unable to update user.");
+      showToast(message, "error");
     } finally {
       setUpdating(false);
     }
@@ -582,17 +747,15 @@ function UserAccounts() {
     }
 
     setDeleting(true);
-    setActionMessage("");
 
     try {
       await deleteAdminUser(deleteUser.user_id);
-      setActionMessage("User deleted successfully.");
+      showToast("User permanently deleted successfully.", "success");
       setDeleteUser(null);
       loadUsers(page);
     } catch (error) {
-      setActionMessage(
-        error.response?.data?.detail || "Unable to deactivate user."
-      );
+      const message = getErrorMessage(error, "Unable to delete user.");
+      showToast(message, "error");
     } finally {
       setDeleting(false);
     }
@@ -618,6 +781,12 @@ function UserAccounts() {
     return isActive
       ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-200"
       : "border-red-500/40 bg-red-950/50 text-red-200";
+  }
+
+  function getSessionPill(sessionStatus) {
+    return String(sessionStatus || "offline").toLowerCase() === "online"
+      ? "border-emerald-500/40 bg-emerald-950/50 text-emerald-200"
+      : "border-zinc-600 bg-zinc-900 text-zinc-300";
   }
 
   function renderUserCell(user, column) {
@@ -659,6 +828,23 @@ function UserAccounts() {
       );
     }
 
+    if (column.key === "session_status") {
+      return (
+        <Tooltip
+          text={`Last seen: ${formatDateTime(user.last_seen_at)}`}
+          side="left"
+        >
+          <span
+            className={`${oaPillStyles.base} ${getSessionPill(
+              user.session_status
+            )}`}
+          >
+            {formatSessionLabel(user.session_status)}
+          </span>
+        </Tooltip>
+      );
+    }
+
     return <span className="truncate">{accessText}</span>;
   }
 
@@ -675,13 +861,15 @@ function UserAccounts() {
           />
         )}
 
-        <IconButton
-          icon={Trash2}
-          label="Delete"
-          variant="danger"
-          tooltipSide="left"
-          onClick={() => openDeleteModal(user)}
-        />
+        {canDeleteUser(user) && (
+          <IconButton
+            icon={Trash2}
+            label="Delete"
+            variant="danger"
+            tooltipSide="left"
+            onClick={() => openDeleteModal(user)}
+          />
+        )}
       </span>
     );
   }
@@ -694,7 +882,8 @@ function UserAccounts() {
             <div className={oaCardStyles.header}>
               <h2 className={oaCardStyles.headerTitle}>User Accounts</h2>
               <p className={oaCardStyles.headerSubtitle}>
-                Manage users, roles, restrictions, and active status.
+                Manage users, passwords, roles, restrictions, account status,
+                and login status.
               </p>
             </div>
 
@@ -746,14 +935,6 @@ function UserAccounts() {
               />
             </div>
 
-            {actionMessage && (
-              <div
-                className={`border-b border-oa-border bg-black px-3 py-2 ${oaTableStyles.mutedText}`}
-              >
-                {actionMessage}
-              </div>
-            )}
-
             <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
               <DataTable
                 columns={tableColumns}
@@ -770,7 +951,12 @@ function UserAccounts() {
                   headerValues,
                   columnFilters,
                   draftColumnFilters,
-                  rightAlignedKeys: ["role", "status", "access"],
+                  rightAlignedKeys: [
+                    "role",
+                    "status",
+                    "session_status",
+                    "access"
+                  ],
                   isColumnFilterActive,
                   onOpen: openColumnFilter,
                   onClose: () => setActiveFilter(null),
@@ -854,15 +1040,7 @@ function UserAccounts() {
         }
       >
         <form id="create-user-form" onSubmit={handleCreateUser}>
-          <div className="grid gap-3 md:grid-cols-3">
-            <FloatingInput
-              name="login_id"
-              label="Login ID"
-              value={formData.login_id}
-              onChange={handleInputChange}
-              required
-            />
-
+          <div className="grid gap-3 md:grid-cols-2">
             <FloatingInput
               name="full_name"
               label="Full Name"
@@ -899,22 +1077,27 @@ function UserAccounts() {
               required
             />
 
-            <Select
-              value={formData.role}
-              onChange={(event) =>
-                setFormData((previous) => ({
-                  ...previous,
-                  role: event.target.value
-                }))
-              }
-              options={[
-                { value: "user", label: "User" },
-                { value: "admin", label: "Admin" },
-                { value: "super_admin", label: "Super Admin" }
-              ]}
-              ariaLabel="New user role"
-              minWidth="w-full"
-            />
+            <div>
+              <label className={oaFormTextStyles.label}>Role</label>
+              <div className="mt-1">
+                <Select
+                  value={formData.role}
+                  onChange={(event) =>
+                    setFormData((previous) => ({
+                      ...previous,
+                      role: event.target.value
+                    }))
+                  }
+                  options={[
+                    { value: "user", label: "User" },
+                    { value: "admin", label: "Admin" },
+                    { value: "super_admin", label: "Super Admin" }
+                  ]}
+                  ariaLabel="New user role"
+                  minWidth="w-full"
+                />
+              </div>
+            </div>
           </div>
         </form>
       </Modal>
@@ -922,7 +1105,7 @@ function UserAccounts() {
       <Modal
         open={Boolean(editUser)}
         title="Edit User"
-        subtitle="Update user account details, role, and active status."
+        subtitle="Update user account details, password, role, and active status."
         onClose={closeEditModal}
         width="max-w-2xl"
         closeOnOverlay={!updating}
@@ -962,7 +1145,7 @@ function UserAccounts() {
               label="Login ID"
               value={editFormData.login_id}
               onChange={handleEditInputChange}
-              required
+              disabled
             />
 
             <FloatingInput
@@ -991,35 +1174,60 @@ function UserAccounts() {
               autoComplete="tel"
             />
 
-            <Select
-              value={editFormData.role}
-              onChange={(event) =>
-                setEditFormData((previous) => ({
-                  ...previous,
-                  role: event.target.value
-                }))
-              }
-              options={editRoleOptions}
-              ariaLabel="Edit user role"
-              minWidth="w-full"
+            <FloatingInput
+              name="password"
+              label="New Password"
+              type="password"
+              value={editFormData.password}
+              onChange={handleEditInputChange}
+              autoComplete="new-password"
             />
 
-            <Select
-              value={editFormData.is_active ? "active" : "inactive"}
-              onChange={(event) =>
-                setEditFormData((previous) => ({
-                  ...previous,
-                  is_active: event.target.value === "active"
-                }))
-              }
-              options={[
-                { value: "active", label: "Active" },
-                { value: "inactive", label: "Inactive" }
-              ]}
-              ariaLabel="Edit user status"
-              minWidth="w-full"
-            />
+            <div>
+              <label className={oaFormTextStyles.label}>Role</label>
+              <div className="mt-1">
+                <Select
+                  value={editFormData.role}
+                  onChange={(event) =>
+                    setEditFormData((previous) => ({
+                      ...previous,
+                      role: event.target.value
+                    }))
+                  }
+                  options={getEditRoleOptions(editUser)}
+                  ariaLabel="Edit user role"
+                  minWidth="w-full"
+                  disabled={isCurrentUser(editUser)}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>Status</label>
+              <div className="mt-1">
+                <Select
+                  value={editFormData.is_active ? "active" : "inactive"}
+                  onChange={(event) =>
+                    setEditFormData((previous) => ({
+                      ...previous,
+                      is_active: event.target.value === "active"
+                    }))
+                  }
+                  options={[
+                    { value: "active", label: "Active" },
+                    { value: "inactive", label: "Inactive" }
+                  ]}
+                  ariaLabel="Edit user status"
+                  minWidth="w-full"
+                  disabled={isCurrentUser(editUser)}
+                />
+              </div>
+            </div>
           </div>
+
+          <p className="mt-3 rounded border border-oa-border bg-black px-3 py-2 text-[11px] text-oa-muted">
+            Leave New Password empty to keep the current password.
+          </p>
 
           {currentUserRole === "admin" && editUser?.role === "admin" && (
             <p className="mt-3 rounded border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
@@ -1031,8 +1239,8 @@ function UserAccounts() {
 
       <Modal
         open={Boolean(deleteUser)}
-        title="Delete User"
-        subtitle="Please confirm before deleting this user."
+        title="Permanently Delete User"
+        subtitle="Please confirm before permanently deleting this user account."
         onClose={closeDeleteModal}
         width="max-w-md"
         closeOnOverlay={!deleting}
@@ -1072,7 +1280,7 @@ function UserAccounts() {
 
           <div className="min-w-0">
             <p className={oaCardStyles.headerTitle}>
-              Are you sure you want to delete this user?
+              Are you sure you want to permanently delete this user?
             </p>
 
             <div className={`mt-2 space-y-1 ${oaFormTextStyles.helper}`}>
@@ -1093,7 +1301,8 @@ function UserAccounts() {
             </div>
 
             <p className="mt-3 text-[11px] text-red-300">
-              This will remove this user from the User Accounts list.
+              This permanently deletes the account and removes it from the User
+              Accounts list.
             </p>
           </div>
         </div>
