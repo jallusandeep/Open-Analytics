@@ -19,6 +19,7 @@ function FloatingInput({
   value,
   onChange,
   icon: Icon,
+  rightElement = null,
   autoComplete,
   disabled = false,
   error = "",
@@ -45,6 +46,7 @@ function FloatingInput({
       : "h-8 rounded px-3";
 
   const inputTextClass = isAuth ? "text-sm" : "text-[12px]";
+  const rightPaddingClass = rightElement ? "pr-8" : "";
 
   const syncAutofillValue = useCallback(
     (isAutofill, notifyChange = false) => {
@@ -131,8 +133,14 @@ function FloatingInput({
           disabled={disabled}
           required={required}
           placeholder=""
-          className={`oa-floating-input__control w-full bg-transparent text-oa-text outline-none placeholder:text-oa-muted disabled:cursor-not-allowed ${inputTextClass} ${inputClassName}`}
+          className={`oa-floating-input__control w-full bg-transparent text-oa-text outline-none placeholder:text-oa-muted disabled:cursor-not-allowed ${inputTextClass} ${rightPaddingClass} ${inputClassName}`}
         />
+
+        {rightElement ? (
+          <div className="absolute right-1.5 top-1/2 z-10 flex -translate-y-1/2 items-center">
+            {rightElement}
+          </div>
+        ) : null}
       </div>
 
       {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}
