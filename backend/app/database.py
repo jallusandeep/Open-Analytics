@@ -68,6 +68,7 @@ def get_connection():
 
             time.sleep(DB_CONNECT_RETRY_DELAY_SECONDS)
 
+
 def get_read_only_connection():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -84,12 +85,43 @@ def get_read_only_connection():
             time.sleep(DB_CONNECT_RETRY_DELAY_SECONDS)
 
 
+DB_SCHEMA_STATS = {
+    "already_exists": 0,
+    "skipped": 0
+}
+
+
+def reset_db_schema_stats():
+    DB_SCHEMA_STATS["already_exists"] = 0
+    DB_SCHEMA_STATS["skipped"] = 0
+
+
+def is_expected_schema_skip(error: Exception) -> bool:
+    message = str(error).lower()
+
+    return (
+        "already exists" in message
+        or "duplicate column" in message
+        or (
+            "column with name" in message
+            and "already exists" in message
+        )
+        or (
+            "index with name" in message
+            and "already exists" in message
+        )
+    )
+
+
 def safe_execute(conn, query: str):
     try:
         conn.execute(query)
     except Exception as e:
-        print(f"Skipped SQL: {query}")
-        print(f"Reason: {e}")
+        if is_expected_schema_skip(e):
+            DB_SCHEMA_STATS["already_exists"] += 1
+        else:
+            DB_SCHEMA_STATS["skipped"] += 1
+
         try:
             conn.rollback()
         except Exception:
@@ -175,8 +207,10 @@ def migrate_fii_dii_activity_table(conn):
 
 def init_database():
     conn = get_connection()
+    reset_db_schema_stats()
 
     try:
+        print("[DB] Schema check started.")
         # -----------------------------
         # App metadata / version table
         # -----------------------------
@@ -294,7 +328,7 @@ def init_database():
                 "system"
             ])
 
-            print("Default super admin user created.")
+            pass
         else:
             conn.execute("""
                 UPDATE users
@@ -319,7 +353,7 @@ def init_database():
                 WHERE email = ?;
             """, [super_admin_mobile_number, super_admin_email])
 
-            print("Default super admin user verified.")
+            pass
 
         # -----------------------------
         # Users history table
@@ -1186,6 +1220,290 @@ def init_database():
         safe_execute(conn, "ALTER TABLE equity_news ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
         # -----------------------------
+        # Upstox company fundamentals
+        # Complete Upstox Company Fundamentals API storage.
+        # Stores every endpoint response as raw_json so no field is lost.
+        # Preview/search columns are duplicated separately for fast UI tables.
+        #
+        # endpoint values:
+        #   company_profile
+        #   balance_sheet
+        #   income_statement
+        #   cash_flow
+        #   share_holdings
+        #   key_ratios
+        #   corporate_actions
+        #   competitors
+        #
+        # statement_type/time_period/include_full_statement are used for:
+        #   balance_sheet, income_statement, cash_flow
+        # Other endpoints keep these as NULL/false.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_company_fundamentals (
+                fundamental_id VARCHAR PRIMARY KEY,
+                provider VARCHAR DEFAULT 'upstox',
+                isin VARCHAR NOT NULL,
+                instrument_key VARCHAR,
+                trading_symbol VARCHAR,
+                company_name VARCHAR,
+                exchange VARCHAR,
+                segment VARCHAR,
+                endpoint VARCHAR NOT NULL,
+                endpoint_label VARCHAR,
+                statement_type VARCHAR,
+                time_period VARCHAR,
+                include_full_statement BOOLEAN DEFAULT FALSE,
+                api_status VARCHAR,
+                data_status VARCHAR DEFAULT 'success',
+                period_label VARCHAR,
+                report_date DATE,
+                sector VARCHAR,
+                company_profile TEXT,
+                market_cap_inr_value DOUBLE,
+                market_cap_inr_unit VARCHAR,
+                market_cap_inr_formatted VARCHAR,
+                market_cap_usd_value DOUBLE,
+                market_cap_usd_unit VARCHAR,
+                market_cap_usd_formatted VARCHAR,
+                total_asset DOUBLE,
+                total_liability DOUBLE,
+                revenue DOUBLE,
+                operating_profit DOUBLE,
+                net_profit DOUBLE,
+                net_profit_growth DOUBLE,
+                operating_cash_flow DOUBLE,
+                operating_cash_flow_pct_change DOUBLE,
+                investing_cash_flow DOUBLE,
+                investing_cash_flow_pct_change DOUBLE,
+                financing_cash_flow DOUBLE,
+                financing_cash_flow_pct_change DOUBLE,
+                promoters_holding DOUBLE,
+                fii_holding DOUBLE,
+                dii_holding DOUBLE,
+                public_holding DOUBLE,
+                other_holding DOUBLE,
+                pe_ratio_company DOUBLE,
+                pe_ratio_sector DOUBLE,
+                pb_ratio_company DOUBLE,
+                pb_ratio_sector DOUBLE,
+                roa_company DOUBLE,
+                roa_sector DOUBLE,
+                roe_company DOUBLE,
+                roe_sector DOUBLE,
+                roce_company DOUBLE,
+                roce_sector DOUBLE,
+                ev_ebitda_company DOUBLE,
+                ev_ebitda_sector DOUBLE,
+                action_type VARCHAR,
+                announcement_date DATE,
+                ex_date DATE,
+                record_date DATE,
+                action_amount DOUBLE,
+                action_ratio VARCHAR,
+                additional_info TEXT,
+                competitor_instrument_key VARCHAR,
+                competitor_isin VARCHAR,
+                competitor_company_profile TEXT,
+                competitor_sector VARCHAR,
+                competitor_market_cap_inr_value DOUBLE,
+                competitor_market_cap_inr_unit VARCHAR,
+                competitor_market_cap_inr_formatted VARCHAR,
+                competitor_market_cap_usd_value DOUBLE,
+                competitor_market_cap_usd_unit VARCHAR,
+                competitor_market_cap_usd_formatted VARCHAR,
+                summary_json JSON,
+                history_json JSON,
+                full_statement_json JSON,
+                raw_json JSON,
+                raw_data_json JSON,
+                source_sync_id VARCHAR,
+                source_provider_version VARCHAR,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN provider VARCHAR DEFAULT 'upstox';")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN company_name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN exchange VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN segment VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN endpoint VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN endpoint_label VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN statement_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN time_period VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN include_full_statement BOOLEAN DEFAULT FALSE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN api_status VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN data_status VARCHAR DEFAULT 'success';")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN period_label VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN report_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN company_profile TEXT;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_inr_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_inr_unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_inr_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_usd_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_usd_unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_usd_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN total_asset DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN total_liability DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN revenue DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN operating_profit DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN net_profit DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN net_profit_growth DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN operating_cash_flow DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN operating_cash_flow_pct_change DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN investing_cash_flow DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN investing_cash_flow_pct_change DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN financing_cash_flow DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN financing_cash_flow_pct_change DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN promoters_holding DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN fii_holding DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN dii_holding DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN public_holding DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN other_holding DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN pe_ratio_company DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN pe_ratio_sector DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN pb_ratio_company DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN pb_ratio_sector DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN roa_company DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN roa_sector DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN roe_company DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN roe_sector DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN roce_company DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN roce_sector DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN ev_ebitda_company DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN ev_ebitda_sector DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN action_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN announcement_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN ex_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN record_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN action_amount DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN action_ratio VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN additional_info TEXT;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_company_profile TEXT;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_sector VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_inr_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_inr_unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_inr_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_usd_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_usd_unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_usd_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN summary_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN history_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN full_statement_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN raw_data_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN source_sync_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN source_provider_version VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE upstox_company_fundamentals
+            SET provider = 'upstox'
+            WHERE provider IS NULL OR TRIM(provider) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_company_fundamentals
+            SET include_full_statement = FALSE
+            WHERE include_full_statement IS NULL;
+        """)
+
+        conn.execute("""
+            UPDATE upstox_company_fundamentals
+            SET data_status = 'success'
+            WHERE data_status IS NULL OR TRIM(data_status) = '';
+        """)
+
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_company_fundamentals_isin_endpoint
+            ON upstox_company_fundamentals (isin, endpoint);
+        """)
+
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_company_fundamentals_endpoint_synced
+            ON upstox_company_fundamentals (endpoint, synced_at);
+        """)
+
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_company_fundamentals_symbol
+            ON upstox_company_fundamentals (trading_symbol);
+        """)
+
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_company_fundamentals_sync
+            ON upstox_company_fundamentals (source_sync_id);
+        """)
+
+        # -----------------------------
+        # Upstox company fundamentals collection status
+        # Tracks checked API request groups, including empty success responses.
+        # This lets the sync skip API calls that were already completed.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_company_fundamentals_sync_status (
+                provider VARCHAR DEFAULT 'upstox',
+                isin VARCHAR NOT NULL,
+                instrument_key VARCHAR,
+                trading_symbol VARCHAR,
+                endpoint VARCHAR NOT NULL,
+                statement_type VARCHAR,
+                time_period VARCHAR,
+                include_full_statement BOOLEAN DEFAULT FALSE,
+                status VARCHAR DEFAULT 'success',
+                record_count BIGINT DEFAULT 0,
+                last_error VARCHAR,
+                source_sync_id VARCHAR,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN provider VARCHAR DEFAULT 'upstox';")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN endpoint VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN statement_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN time_period VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN include_full_statement BOOLEAN DEFAULT FALSE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN status VARCHAR DEFAULT 'success';")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN record_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN last_error VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN source_sync_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals_sync_status ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE upstox_company_fundamentals_sync_status
+            SET provider = 'upstox'
+            WHERE provider IS NULL OR TRIM(provider) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_company_fundamentals_sync_status
+            SET include_full_statement = FALSE
+            WHERE include_full_statement IS NULL;
+        """)
+
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_company_fundamentals_status_isin_endpoint
+            ON upstox_company_fundamentals_sync_status (isin, endpoint, status);
+        """)
+
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_company_fundamentals_status_sync
+            ON upstox_company_fundamentals_sync_status (source_sync_id);
+        """)
+
+        # -----------------------------
         # Fundamentals
         # Company financial data.
         # -----------------------------
@@ -1289,7 +1607,12 @@ def init_database():
         migrate_fii_dii_activity_table(conn)
 
         conn.commit()
-        print(f"Database initialized successfully: {DB_PATH}")
+        print(
+            "[DB] Schema ready. "
+            f"Existing items skipped: {DB_SCHEMA_STATS['already_exists']}, "
+            f"other skipped: {DB_SCHEMA_STATS['skipped']}."
+        )
+        print(f"[DB] Database path: {DB_PATH}")
 
     except Exception as e:
         try:
@@ -1297,8 +1620,7 @@ def init_database():
         except Exception:
             pass
 
-        print("Database initialization failed.")
-        print(e)
+        print(f"[DB] Schema failed: {e}")
         raise e
 
     finally:

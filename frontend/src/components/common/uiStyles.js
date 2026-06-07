@@ -123,6 +123,13 @@ export const oaSelectStyles = {
   optionCheck: "shrink-0 text-sky-300"
 };
 
+export const oaCheckboxControlStyles = {
+  wrapper:
+    "flex h-8 w-full cursor-pointer items-center justify-start gap-2 rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus-within:border-blue-500",
+  checkbox: "h-4 w-4 shrink-0 accent-emerald-500",
+  label: "truncate"
+};
+
 export const oaInputStyles = {
   base:
     "h-8 w-full rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-white outline-none placeholder:text-oa-muted transition focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"

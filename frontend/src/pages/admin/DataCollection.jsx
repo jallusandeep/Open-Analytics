@@ -26,6 +26,7 @@ import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
+  oaCheckboxControlStyles,
   oaFormTextStyles,
   oaPillStyles,
   oaTabStyles
@@ -42,7 +43,9 @@ import {
   getUpstoxMarketHolidaysPreview,
   getUpstoxOhlcvOptions,
   getUpstoxOhlcvPreview,
+  getUpstoxCompanyFundamentalsPreview,
   saveUpstoxOhlcvOptions,
+  syncUpstoxCompanyFundamentals,
   syncUpstoxCurrentInstruments,
   syncUpstoxExpiredInstruments,
   syncUpstoxMarketHolidays,
@@ -57,6 +60,7 @@ const emptySummary = {
   total_current_instruments: 0,
   total_expired_instruments: 0,
   total_ohlcv_daily: 0,
+  total_company_fundamentals: 0,
   total_market_holidays: 0,
   total_sync_runs: 0,
   last_sync_at: "",
@@ -67,6 +71,8 @@ const emptySummary = {
   expired_duration_seconds: null,
   ohlcv_daily_last_sync_at: "",
   ohlcv_daily_duration_seconds: null,
+  company_fundamentals_last_sync_at: "",
+  company_fundamentals_duration_seconds: null,
   market_holidays_last_sync_at: "",
   market_holidays_duration_seconds: null,
   active_job: null,
@@ -118,6 +124,7 @@ const viewOptions = [
   { key: "current_preview", label: "Current Instruments" },
   { key: "expired_preview", label: "Expired Instruments" },
   { key: "ohlcv", label: "OHLCV" },
+  { key: "company_fundamentals", label: "Company Fundamentals" },
   { key: "market_calendar", label: "Market Calendar" }
 ];
 
@@ -207,6 +214,29 @@ const marketHolidayTradingStatusOptions = [
   { value: "open", label: "Partially Open" }
 ];
 
+const companyFundamentalsEndpointOptions = [
+  { value: "company_profile", label: "Company Profile" },
+  { value: "balance_sheet", label: "Balance Sheet" },
+  { value: "income_statement", label: "Income Statement" },
+  { value: "cash_flow", label: "Cash Flow" },
+  { value: "share_holdings", label: "Share Holdings" },
+  { value: "key_ratios", label: "Key Ratios" },
+  { value: "corporate_actions", label: "Corporate Actions" },
+  { value: "competitors", label: "Competitors" }
+];
+
+const companyFundamentalsStatementTypeOptions = [
+  { value: "all", label: "All Types" },
+  { value: "consolidated", label: "Consolidated" },
+  { value: "standalone", label: "Standalone" }
+];
+
+const companyFundamentalsTimePeriodOptions = [
+  { value: "all", label: "All Periods" },
+  { value: "yearly", label: "Yearly" },
+  { value: "quarterly", label: "Quarterly" }
+];
+
 const dumpJobColumns = [
   { key: "source", label: "Source" },
   { key: "saved", label: "Saved" },
@@ -281,6 +311,226 @@ const marketHolidayPreviewColumns = [
 
 const marketHolidayPreviewGridTemplateColumns =
   "150px 320px 190px 170px 320px 360px 130px 230px 230px";
+
+const companyFundamentalsColumnGroups = {
+  company_profile: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "sector", label: "Sector" },
+      { key: "sector_market_cap_inr_formatted", label: "Market Cap INR" },
+      { key: "sector_market_cap_usd_formatted", label: "Market Cap USD" },
+      { key: "item_count", label: "Profile Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns:
+      "170px 190px 320px 230px 180px 180px 140px 140px 230px",
+    minWidth: "min-w-[1780px]",
+    rightAlignedKeys: [
+      "sector_market_cap_inr_formatted",
+      "sector_market_cap_usd_formatted",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  balance_sheet: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "statement_type", label: "Statement Type" },
+      { key: "time_period", label: "Period Type" },
+      { key: "latest_period", label: "Latest Period" },
+      { key: "period_count", label: "Periods" },
+      { key: "latest_total_asset", label: "Total Asset" },
+      { key: "latest_total_liability", label: "Total Liability" },
+      { key: "item_count", label: "Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns:
+      "170px 190px 320px 170px 150px 150px 110px 160px 170px 110px 140px 230px",
+    minWidth: "min-w-[2070px]",
+    rightAlignedKeys: [
+      "statement_type",
+      "time_period",
+      "latest_period",
+      "period_count",
+      "latest_total_asset",
+      "latest_total_liability",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  income_statement: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "statement_type", label: "Statement Type" },
+      { key: "time_period", label: "Period Type" },
+      { key: "latest_period", label: "Latest Period" },
+      { key: "period_count", label: "Periods" },
+      { key: "latest_revenue", label: "Revenue" },
+      { key: "latest_operating_profit", label: "Operating Profit" },
+      { key: "latest_net_profit", label: "Net Profit" },
+      { key: "item_count", label: "Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns:
+      "170px 190px 320px 170px 150px 150px 110px 150px 180px 160px 110px 140px 230px",
+    minWidth: "min-w-[2230px]",
+    rightAlignedKeys: [
+      "statement_type",
+      "time_period",
+      "latest_period",
+      "period_count",
+      "latest_revenue",
+      "latest_operating_profit",
+      "latest_net_profit",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  cash_flow: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "statement_type", label: "Statement Type" },
+      { key: "time_period", label: "Period Type" },
+      { key: "latest_period", label: "Latest Period" },
+      { key: "period_count", label: "Periods" },
+      { key: "latest_operating_cash_flow", label: "Operating CF" },
+      { key: "item_count", label: "Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns:
+      "170px 190px 320px 170px 150px 150px 110px 170px 110px 140px 230px",
+    minWidth: "min-w-[1810px]",
+    rightAlignedKeys: [
+      "statement_type",
+      "time_period",
+      "latest_period",
+      "period_count",
+      "latest_operating_cash_flow",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  share_holdings: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "statement_type", label: "Statement Type" },
+      { key: "time_period", label: "Period Type" },
+      { key: "latest_period", label: "Latest Period" },
+      { key: "period_count", label: "Periods" },
+      { key: "latest_promoter_holding_pct", label: "Promoters %" },
+      { key: "latest_fii_holding_pct", label: "FII %" },
+      { key: "latest_dii_holding_pct", label: "DII %" },
+      { key: "item_count", label: "Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns:
+      "170px 190px 320px 170px 150px 150px 110px 140px 110px 110px 110px 140px 230px",
+    minWidth: "min-w-[2100px]",
+    rightAlignedKeys: [
+      "statement_type",
+      "time_period",
+      "latest_period",
+      "period_count",
+      "latest_promoter_holding_pct",
+      "latest_fii_holding_pct",
+      "latest_dii_holding_pct",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  key_ratios: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "latest_period", label: "Latest Period" },
+      { key: "pe_ratio_company", label: "P/E" },
+      { key: "pb_ratio_company", label: "P/B" },
+      { key: "roe_company", label: "ROE" },
+      { key: "roce_company", label: "ROCE" },
+      { key: "item_count", label: "Ratios" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns:
+      "170px 190px 320px 150px 110px 110px 110px 110px 110px 140px 230px",
+    minWidth: "min-w-[1650px]",
+    rightAlignedKeys: [
+      "latest_period",
+      "pe_ratio_company",
+      "pb_ratio_company",
+      "roe_company",
+      "roce_company",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  corporate_actions: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "latest_period", label: "Latest Action" },
+      { key: "corporate_action_count", label: "Actions" },
+      { key: "item_count", label: "Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns: "170px 190px 320px 170px 130px 110px 140px 230px",
+    minWidth: "min-w-[1460px]",
+    rightAlignedKeys: [
+      "latest_period",
+      "corporate_action_count",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  },
+  competitors: {
+    columns: [
+      { key: "isin", label: "ISIN" },
+      { key: "trading_symbol", label: "Trading Symbol" },
+      { key: "company_name", label: "Company" },
+      { key: "sector", label: "Sector" },
+      { key: "competitor_count", label: "Competitors" },
+      { key: "item_count", label: "Items" },
+      { key: "api_status", label: "API Status" },
+      { key: "synced_at", label: "Synced At" }
+    ],
+    gridTemplateColumns: "170px 190px 320px 230px 140px 110px 140px 230px",
+    minWidth: "min-w-[1530px]",
+    rightAlignedKeys: [
+      "competitor_count",
+      "item_count",
+      "api_status",
+      "synced_at"
+    ]
+  }
+};
+
+const defaultCompanyFundamentalsColumnGroup =
+  companyFundamentalsColumnGroups.company_profile;
 
 function getStoredCurrentUser() {
   try {
@@ -592,6 +842,46 @@ function getMarketHolidayColumnValue(row, key) {
   return row[key];
 }
 
+function getCompanyFundamentalsColumnValue(row, key) {
+  if (key === "synced_at" || key === "updated_at") {
+    return formatDateTime(row[key]);
+  }
+
+  if (key === "endpoint_label") {
+    return row.endpoint_label || getSyncTypeLabel(row.endpoint);
+  }
+
+  if (key === "statement_type" || key === "time_period" || key === "api_status") {
+    return getSyncTypeLabel(row[key]);
+  }
+
+  if (
+    key === "latest_revenue" ||
+    key === "latest_operating_profit" ||
+    key === "latest_net_profit" ||
+    key === "latest_total_asset" ||
+    key === "latest_total_liability" ||
+    key === "latest_operating_cash_flow" ||
+    key === "pe_ratio_company" ||
+    key === "pb_ratio_company" ||
+    key === "roe_company" ||
+    key === "roce_company"
+  ) {
+    return formatPrice(row[key]);
+  }
+
+  if (
+    key === "period_count" ||
+    key === "item_count" ||
+    key === "corporate_action_count" ||
+    key === "competitor_count"
+  ) {
+    return formatNumber(row[key] || 0);
+  }
+
+  return row[key];
+}
+
 function getElapsedSecondsFromDate(value) {
   if (!value) {
     return 0;
@@ -653,10 +943,12 @@ function getSyncTypeLabel(value) {
     upstox_expired_instruments: "Expired Instruments",
     upstox_ohlcv_daily: "OHLCV",
     upstox_market_holidays: "Market Calendar",
+    upstox_company_fundamentals: "Company Fundamentals",
     current_instruments: "Current Instruments",
     expired_instruments: "Expired Instruments",
     ohlcv_daily: "OHLCV",
     market_holidays: "Market Calendar",
+    company_fundamentals: "Company Fundamentals",
     bod_complete: "BOD Complete",
     expired_option_contract: "Expired Options",
     expired_future_contract: "Expired Futures",
@@ -666,6 +958,18 @@ function getSyncTypeLabel(value) {
     intraday: "Intraday",
     TRADING_HOLIDAY: "Trading Holiday",
     SETTLEMENT_HOLIDAY: "Settlement Holiday",
+    company_profile: "Company Profile",
+    balance_sheet: "Balance Sheet",
+    income_statement: "Income Statement",
+    cash_flow: "Cash Flow",
+    share_holdings: "Share Holdings",
+    key_ratios: "Key Ratios",
+    corporate_actions: "Corporate Actions",
+    competitors: "Competitors",
+    consolidated: "Consolidated",
+    standalone: "Standalone",
+    yearly: "Yearly",
+    quarterly: "Quarterly",
     upstox: "Upstox",
     "1minute": "1 Min",
     "3minute": "3 Min",
@@ -1624,68 +1928,86 @@ function OhlcvOptionsModal({
         />
 
         <div className="rounded border border-oa-border bg-black p-3">
-          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
-                Date Range
-              </p>
-              <p className="mt-1 text-[11px] text-oa-muted">
-                Leave From Date empty to continue from the last saved candle, or from Upstox available history.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
-                <input
-                  type="checkbox"
-                  name="auto_date_range"
-                  checked={autoDateRange}
-                  onChange={onChange}
-                  className="h-4 w-4 accent-emerald-500"
-                />
-                <span>Auto start from saved data</span>
-              </label>
-
-              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
-                <input
-                  type="checkbox"
-                  name="use_current_day"
-                  checked={useCurrentDay}
-                  onChange={onChange}
-                  className="h-4 w-4 accent-emerald-500"
-                />
-                <Check size={14} className={useCurrentDay ? "text-emerald-300" : "text-oa-muted"} />
-                <span>Current day</span>
-              </label>
-            </div>
-          </div>
+          <p className="mb-3 text-[12px] font-semibold uppercase tracking-wider text-white">
+            Date Range
+          </p>
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className={oaFormTextStyles.label}>From Date</label>
-              <div className={`mt-1 ${autoDateRange ? "opacity-60" : ""}`}>
-                <DatePicker
-                  name="from_date"
-                  value={formData.from_date}
-                  onChange={onChange}
-                  placeholder={autoDateRange ? "Auto from saved / available" : "From date"}
-                  ariaLabel="Select from date"
-                  disabled={autoDateRange}
-                />
+
+              <div className="mt-1 grid grid-cols-[126px_minmax(0,1fr)] items-center gap-1">
+                <Tooltip
+                  text="Start from the last saved candle. If no saved candle exists, start from available Upstox history."
+                  side="top"
+                >
+                  <span className="block h-8">
+                    <label className={oaCheckboxControlStyles.wrapper}>
+                      <input
+                        type="checkbox"
+                        name="auto_date_range"
+                        checked={autoDateRange}
+                        onChange={onChange}
+                        className={oaCheckboxControlStyles.checkbox}
+                        aria-label="Auto start from saved data"
+                      />
+                      <span className={oaCheckboxControlStyles.label}>
+                        Auto start
+                      </span>
+                    </label>
+                  </span>
+                </Tooltip>
+
+                <div className={autoDateRange ? "opacity-60" : ""}>
+                  <DatePicker
+                    name="from_date"
+                    value={formData.from_date}
+                    onChange={onChange}
+                    placeholder={
+                      autoDateRange ? "Auto from saved / available" : "From date"
+                    }
+                    ariaLabel="Select from date"
+                    disabled={autoDateRange}
+                  />
+                </div>
               </div>
             </div>
 
             <div>
               <label className={oaFormTextStyles.label}>To Date</label>
-              <div className={`mt-1 ${useCurrentDay ? "opacity-60" : ""}`}>
-                <DatePicker
-                  name="to_date"
-                  value={useCurrentDay ? "" : formData.to_date}
-                  onChange={onChange}
-                  placeholder={useCurrentDay ? "Current day" : "To date"}
-                  ariaLabel="Select to date"
-                  disabled={useCurrentDay}
-                />
+
+              <div className="mt-1 grid grid-cols-[150px_minmax(0,1fr)] items-center gap-1.5">
+                <Tooltip
+                  text="Use current day as To Date and disable manual To Date selection."
+                  side="top"
+                >
+                  <span className="block h-8">
+                    <label className={oaCheckboxControlStyles.wrapper}>
+                      <input
+                        type="checkbox"
+                        name="use_current_day"
+                        checked={useCurrentDay}
+                        onChange={onChange}
+                        className={oaCheckboxControlStyles.checkbox}
+                        aria-label="Use current day"
+                      />
+                      <span className={oaCheckboxControlStyles.label}>
+                        Current day
+                      </span>
+                    </label>
+                  </span>
+                </Tooltip>
+
+                <div className={useCurrentDay ? "opacity-60" : ""}>
+                  <DatePicker
+                    name="to_date"
+                    value={useCurrentDay ? "" : formData.to_date}
+                    onChange={onChange}
+                    placeholder={useCurrentDay ? "Current day" : "To date"}
+                    ariaLabel="Select to date"
+                    disabled={useCurrentDay}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1996,6 +2318,170 @@ function OhlcvTabContent({
   );
 }
 
+function CompanyFundamentalsContent({
+  activeEndpoint,
+  onEndpointChange,
+  previewData,
+  rows,
+  loading,
+  hasActiveJob,
+  isAdminControlAllowed,
+  searchValue,
+  searchActive,
+  statementType,
+  onStatementTypeChange,
+  onClearStatementType,
+  timePeriod,
+  onTimePeriodChange,
+  onClearTimePeriod,
+  segment,
+  onSegmentChange,
+  onClearSegment,
+  hasActiveFilter,
+  onSearchChange,
+  onSearchSubmit,
+  onClearSearch,
+  onClearAll,
+  onSchedule,
+  onRun,
+  onRefresh,
+  onPreviousPage,
+  onNextPage,
+  onPageChange,
+  renderCell,
+  filterConfig,
+  columns,
+  gridTemplateColumns,
+  minWidth
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
+        <div className={`${oaTabStyles.wrapper} overflow-x-auto`}>
+          {companyFundamentalsEndpointOptions.map((option) => {
+            const isActive = activeEndpoint === option.value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onEndpointChange(option.value)}
+                className={`${oaTabStyles.button} ${
+                  isActive ? oaTabStyles.active : oaTabStyles.inactive
+                } whitespace-nowrap`}
+              >
+                <span>{option.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder="Search company fundamentals"
+          filters={[
+            {
+              value: statementType,
+              onChange: (event) => onStatementTypeChange(event.target.value),
+              options: companyFundamentalsStatementTypeOptions,
+              onClear: onClearStatementType,
+              showClear: statementType !== "all",
+              ariaLabel: "Statement type",
+              minWidth: "w-44"
+            },
+            {
+              value: timePeriod,
+              onChange: (event) => onTimePeriodChange(event.target.value),
+              options: companyFundamentalsTimePeriodOptions,
+              onClear: onClearTimePeriod,
+              showClear: timePeriod !== "all",
+              ariaLabel: "Time period",
+              minWidth: "w-40"
+            },
+            {
+              value: segment,
+              onChange: (event) => onSegmentChange(event.target.value),
+              options: segmentOptions,
+              onClear: onClearSegment,
+              showClear: segment !== "all",
+              ariaLabel: "Segment",
+              minWidth: "w-36"
+            }
+          ]}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            {
+              icon: Clock3,
+              label: "Schedule Company Fundamentals",
+              variant: "default",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onSchedule
+            },
+            {
+              icon: Play,
+              label: "Run Company Fundamentals",
+              variant: "add",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onRun
+            },
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            }
+          ]}
+        />
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">
+                Loading company fundamentals
+              </span>
+            </div>
+          </div>
+        )}
+
+        <DataTable
+          columns={columns}
+          rows={rows}
+          loading={false}
+          loadingMessage="Loading company fundamentals"
+          emptyMessage="No company fundamentals found."
+          gridTemplateColumns={gridTemplateColumns}
+          minWidth={minWidth}
+          getRowKey={(row, index) =>
+            `${row.fundamental_id || row.isin || "fundamental"}-${index}`
+          }
+          renderCell={renderCell}
+          filterConfig={filterConfig}
+        />
+      </div>
+
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
+
 function PaginationFooter({
   previewData,
   loading,
@@ -2151,6 +2637,24 @@ function DataCollection() {
   const [marketCalendarLoading, setMarketCalendarLoading] = useState(false);
   const [marketCalendarPreviewData, setMarketCalendarPreviewData] = useState(emptyPreviewData);
 
+  const [companyFundamentalsEndpoint, setCompanyFundamentalsEndpoint] = useState("company_profile");
+  const [companyFundamentalsSearch, setCompanyFundamentalsSearch] = useState("");
+  const [appliedCompanyFundamentalsSearch, setAppliedCompanyFundamentalsSearch] = useState("");
+  const [companyFundamentalsStatementType, setCompanyFundamentalsStatementType] = useState("all");
+  const [companyFundamentalsTimePeriod, setCompanyFundamentalsTimePeriod] = useState("all");
+  const [companyFundamentalsSegment, setCompanyFundamentalsSegment] = useState("all");
+  const [companyFundamentalsColumnFilters, setCompanyFundamentalsColumnFilters] = useState({});
+  const [draftCompanyFundamentalsColumnFilters, setDraftCompanyFundamentalsColumnFilters] = useState({});
+  const [activeCompanyFundamentalsFilter, setActiveCompanyFundamentalsFilter] = useState(null);
+  const [companyFundamentalsSortConfig, setCompanyFundamentalsSortConfig] = useState({
+    key: null,
+    direction: null
+  });
+  const [companyFundamentalsPage, setCompanyFundamentalsPage] = useState(1);
+  const [companyFundamentalsPageSize] = useState(2000);
+  const [companyFundamentalsLoading, setCompanyFundamentalsLoading] = useState(false);
+  const [companyFundamentalsPreviewData, setCompanyFundamentalsPreviewData] = useState(emptyPreviewData);
+
   const { showToast } = useToast();
 
   const currentUser = useMemo(() => getStoredCurrentUser(), []);
@@ -2200,6 +2704,16 @@ function DataCollection() {
     (runningJob === "market_calendar" ||
       summary.active_job === "upstox_market_holidays");
 
+  const isCompanyFundamentalsJobRunning =
+    !isCancelRequested &&
+    (runningJob === "company_fundamentals" ||
+      summary.active_job === "upstox_company_fundamentals");
+
+  const companyFundamentalsCancelRequested =
+    isCancelRequested &&
+    (runningJob === "company_fundamentals" ||
+      summary.active_job === "upstox_company_fundamentals");
+
   const shouldShowCancelButton = hasActiveJob && !isCancelRequested;
 
   const currentLastRun = useMemo(() => {
@@ -2212,6 +2726,10 @@ function DataCollection() {
 
   const ohlcvLastRun = useMemo(() => {
     return getLatestRunByTypes(runs, ["upstox_ohlcv_daily"]);
+  }, [runs]);
+
+  const companyFundamentalsLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_company_fundamentals"]);
   }, [runs]);
 
 
@@ -2280,6 +2798,18 @@ function DataCollection() {
         ? summary.active_job_records_added
         : 0;
 
+    const companyFundamentalsRecords =
+      isCompanyFundamentalsJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_company_fundamentals ?? 0;
+
+    const companyFundamentalsRecordsAdded =
+      isCompanyFundamentalsJobRunning &&
+      summary.active_job === "upstox_company_fundamentals" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
     return [
       {
         id: "current",
@@ -2344,6 +2874,26 @@ function DataCollection() {
         runLabel: "Run saved"
       },
       {
+        id: "company_fundamentals",
+        title: "Company Fundamentals",
+        scheduleJobType: "company_fundamentals",
+        records: companyFundamentalsRecords,
+        recordsAdded: companyFundamentalsRecordsAdded,
+        lastSyncedAt: summary.company_fundamentals_last_sync_at,
+        triggeredBy: companyFundamentalsLastRun?.triggered_by_name,
+        triggerSource: companyFundamentalsLastRun?.trigger_source,
+        duration: summary.company_fundamentals_duration_seconds,
+        lastStatus: companyFundamentalsCancelRequested
+          ? "cancel_requested"
+          : isCompanyFundamentalsJobRunning
+            ? "running"
+            : companyFundamentalsLastRun?.status,
+        loading: isCompanyFundamentalsJobRunning,
+        disabled: hasActiveJob && !isCompanyFundamentalsJobRunning,
+        canCancel: isCompanyFundamentalsJobRunning && shouldShowCancelButton,
+        onRun: handleCompanyFundamentalsSync
+      },
+      {
         id: "market_calendar",
         title: "Market Calendar",
         scheduleJobType: "market_holidays",
@@ -2372,12 +2922,15 @@ function DataCollection() {
     isExpiredJobRunning,
     isOhlcvJobRunning,
     isMarketCalendarJobRunning,
+    isCompanyFundamentalsJobRunning,
     currentLastRun,
     expiredLastRun,
     ohlcvLastRun,
     marketCalendarLastRun,
+    companyFundamentalsLastRun,
     ohlcvCancelRequested,
     marketCalendarCancelRequested,
+    companyFundamentalsCancelRequested,
     hasActiveJob,
     shouldShowCancelButton
   ]);
@@ -2493,6 +3046,48 @@ function DataCollection() {
     marketCalendarSortConfig
   ]);
 
+  const activeCompanyFundamentalsColumnGroup = useMemo(() => {
+    return (
+      companyFundamentalsColumnGroups[companyFundamentalsEndpoint] ||
+      defaultCompanyFundamentalsColumnGroup
+    );
+  }, [companyFundamentalsEndpoint]);
+
+  const companyFundamentalsHeaderValues = useMemo(() => {
+    return activeCompanyFundamentalsColumnGroup.columns.reduce(
+      (result, column) => {
+        result[column.key] = getFilterValues(
+          companyFundamentalsPreviewData.rows,
+          column.key,
+          getCompanyFundamentalsColumnValue
+        );
+        return result;
+      },
+      {}
+    );
+  }, [
+    activeCompanyFundamentalsColumnGroup.columns,
+    companyFundamentalsPreviewData.rows
+  ]);
+
+  const filteredCompanyFundamentalsRows = useMemo(() => {
+    let result = applyColumnFilters(
+      companyFundamentalsPreviewData.rows,
+      companyFundamentalsColumnFilters,
+      getCompanyFundamentalsColumnValue
+    );
+
+    return applySort(
+      result,
+      companyFundamentalsSortConfig,
+      getCompanyFundamentalsColumnValue
+    );
+  }, [
+    companyFundamentalsPreviewData.rows,
+    companyFundamentalsColumnFilters,
+    companyFundamentalsSortConfig
+  ]);
+
   async function loadPreview(customPage = previewPage) {
     const previewMode = getPreviewMode(activeView);
     setPreviewLoading(true);
@@ -2603,6 +3198,50 @@ function DataCollection() {
     } finally {
       if (showLoading) {
         setMarketCalendarLoading(false);
+      }
+    }
+  }
+
+  async function loadCompanyFundamentalsPreview(
+    customPage = companyFundamentalsPage,
+    options = {}
+  ) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setCompanyFundamentalsLoading(true);
+    }
+
+    try {
+      const params = {
+        search: appliedCompanyFundamentalsSearch,
+        endpoint: companyFundamentalsEndpoint,
+        statement_type: companyFundamentalsStatementType,
+        time_period: companyFundamentalsTimePeriod,
+        segment: companyFundamentalsSegment,
+        page: customPage,
+        page_size: companyFundamentalsPageSize
+      };
+
+      const response = await getUpstoxCompanyFundamentalsPreview(params);
+      const nextData = response.data.data || response.data || emptyPreviewData;
+
+      setCompanyFundamentalsPreviewData(nextData);
+      setCompanyFundamentalsPage(nextData.page || customPage);
+    } catch (error) {
+      if (showLoading) {
+        setCompanyFundamentalsPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(
+            error,
+            "Unable to load company fundamentals preview."
+          ),
+          "error"
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setCompanyFundamentalsLoading(false);
       }
     }
   }
@@ -3123,6 +3762,74 @@ function DataCollection() {
     }
   }
 
+
+  async function handleCompanyFundamentalsSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    if (hasActiveJob) {
+      showToast("Another data collection job is already running.", "warning");
+      return;
+    }
+
+    setRunningJob("company_fundamentals");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxCompanyFundamentals(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Company Fundamentals collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "Company Fundamentals collection cancelled.",
+          "warning"
+        );
+      } else {
+        showToast(
+          response.data?.message || "Company Fundamentals collection completed.",
+          "success"
+        );
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        getApiErrorMessage(
+          error,
+          "Unable to run Company Fundamentals collection."
+        ),
+        "error"
+      );
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+
+      activeSyncControllerRef.current = null;
+    }
+  }
 
   async function handleMarketCalendarSync() {
     if (!isAdminControlAllowed) {
@@ -3729,6 +4436,110 @@ function DataCollection() {
     return selectedValues.length > 0;
   }
 
+  function handleCompanyFundamentalsSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedCompanyFundamentalsSearch(companyFundamentalsSearch.trim());
+    setCompanyFundamentalsPage(1);
+  }
+
+  function handleClearCompanyFundamentalsSearch() {
+    setCompanyFundamentalsSearch("");
+    setAppliedCompanyFundamentalsSearch("");
+    setCompanyFundamentalsPage(1);
+  }
+
+  function clearCompanyFundamentalsStatementType() {
+    setCompanyFundamentalsStatementType("all");
+    setCompanyFundamentalsPage(1);
+  }
+
+  function clearCompanyFundamentalsTimePeriod() {
+    setCompanyFundamentalsTimePeriod("all");
+    setCompanyFundamentalsPage(1);
+  }
+
+  function clearCompanyFundamentalsSegment() {
+    setCompanyFundamentalsSegment("all");
+    setCompanyFundamentalsPage(1);
+  }
+
+  function hasAnyActiveCompanyFundamentalsFilter() {
+    return (
+      appliedCompanyFundamentalsSearch.trim() !== "" ||
+      companyFundamentalsStatementType !== "all" ||
+      companyFundamentalsTimePeriod !== "all" ||
+      companyFundamentalsSegment !== "all" ||
+      companyFundamentalsSortConfig.key !== null ||
+      Object.values(companyFundamentalsColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllCompanyFundamentalsFilters() {
+    setCompanyFundamentalsSearch("");
+    setAppliedCompanyFundamentalsSearch("");
+    setCompanyFundamentalsStatementType("all");
+    setCompanyFundamentalsTimePeriod("all");
+    setCompanyFundamentalsSegment("all");
+    setCompanyFundamentalsColumnFilters({});
+    setDraftCompanyFundamentalsColumnFilters({});
+    setCompanyFundamentalsSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveCompanyFundamentalsFilter(null);
+    setCompanyFundamentalsPage(1);
+  }
+
+  function openCompanyFundamentalsColumnFilter(key) {
+    setDraftCompanyFundamentalsColumnFilters((previous) => ({
+      ...previous,
+      [key]: companyFundamentalsColumnFilters[key] || []
+    }));
+
+    setActiveCompanyFundamentalsFilter((previous) =>
+      previous === key ? null : key
+    );
+  }
+
+  function applyCompanyFundamentalsColumnFilter(key) {
+    setCompanyFundamentalsColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftCompanyFundamentalsColumnFilters[key] || []
+    }));
+
+    setActiveCompanyFundamentalsFilter(null);
+  }
+
+  function clearCompanyFundamentalsColumnFilter(key) {
+    setCompanyFundamentalsColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftCompanyFundamentalsColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveCompanyFundamentalsFilter(null);
+  }
+
+  function handleCompanyFundamentalsSort(key, direction) {
+    setCompanyFundamentalsSortConfig({
+      key,
+      direction
+    });
+
+    setActiveCompanyFundamentalsFilter(null);
+  }
+
+  function isCompanyFundamentalsColumnFilterActive(key) {
+    const selectedValues = companyFundamentalsColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
   function handleViewChange(nextView) {
     if (nextView === activeView) {
       return;
@@ -3765,6 +4576,24 @@ function DataCollection() {
       setActiveOhlcvFilter(null);
       setOhlcvPage(1);
       setOhlcvPreviewData(emptyPreviewData);
+    }
+
+    if (nextView === "company_fundamentals") {
+      setCompanyFundamentalsEndpoint("company_profile");
+      setCompanyFundamentalsSearch("");
+      setAppliedCompanyFundamentalsSearch("");
+      setCompanyFundamentalsStatementType("all");
+      setCompanyFundamentalsTimePeriod("all");
+      setCompanyFundamentalsSegment("all");
+      setCompanyFundamentalsColumnFilters({});
+      setDraftCompanyFundamentalsColumnFilters({});
+      setCompanyFundamentalsSortConfig({
+        key: null,
+        direction: null
+      });
+      setActiveCompanyFundamentalsFilter(null);
+      setCompanyFundamentalsPage(1);
+      setCompanyFundamentalsPreviewData(emptyPreviewData);
     }
 
     if (nextView === "market_calendar") {
@@ -4029,6 +4858,102 @@ function DataCollection() {
     );
   }
 
+  function renderCompanyFundamentalsCell(row, column) {
+    if (column.key === "isin" || column.key === "instrument_key") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-white">
+          {row[column.key] || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "trading_symbol") {
+      return (
+        <span className="truncate oa-code-font text-cyan-200">
+          {row.trading_symbol || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "company_name" || column.key === "sector") {
+      return <span className="truncate text-white">{row[column.key] || "--"}</span>;
+    }
+
+    if (column.key === "endpoint_label") {
+      return (
+        <span className={`${oaPillStyles.base} border-sky-500/40 bg-sky-950/40 text-sky-200`}>
+          {row.endpoint_label || getSyncTypeLabel(row.endpoint)}
+        </span>
+      );
+    }
+
+    if (column.key === "statement_type" || column.key === "time_period") {
+      return (
+        <span className={`${oaPillStyles.base} border-zinc-600 bg-zinc-900 text-zinc-200`}>
+          {getSyncTypeLabel(row[column.key])}
+        </span>
+      );
+    }
+
+    if (column.key === "api_status") {
+      return <StatusBadge status={row.api_status || "idle"} />;
+    }
+
+    if (column.key === "synced_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row.synced_at)}
+        </span>
+      );
+    }
+
+    if (column.key === "latest_period") {
+      return (
+        <span className="truncate oa-code-font text-emerald-200">
+          {row.latest_period || "--"}
+        </span>
+      );
+    }
+
+    if (
+      column.key === "latest_revenue" ||
+      column.key === "latest_operating_profit" ||
+      column.key === "latest_net_profit" ||
+      column.key === "latest_total_asset" ||
+      column.key === "latest_total_liability" ||
+      column.key === "latest_operating_cash_flow" ||
+      column.key === "pe_ratio_company" ||
+      column.key === "pb_ratio_company" ||
+      column.key === "roe_company" ||
+      column.key === "roce_company"
+    ) {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatPrice(row[column.key])}
+        </span>
+      );
+    }
+
+    if (
+      column.key === "period_count" ||
+      column.key === "item_count" ||
+      column.key === "corporate_action_count" ||
+      column.key === "competitor_count"
+    ) {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatNumber(row[column.key] || 0)}
+        </span>
+      );
+    }
+
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {getCompanyFundamentalsColumnValue(row, column.key) || "--"}
+      </span>
+    );
+  }
+
   useEffect(() => {
     loadData(false);
     loadSchedules(false);
@@ -4078,6 +5003,23 @@ function DataCollection() {
   ]);
 
   useEffect(() => {
+    if (activeView !== "company_fundamentals") {
+      return;
+    }
+
+    loadCompanyFundamentalsPreview(companyFundamentalsPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeView,
+    appliedCompanyFundamentalsSearch,
+    companyFundamentalsEndpoint,
+    companyFundamentalsStatementType,
+    companyFundamentalsTimePeriod,
+    companyFundamentalsSegment,
+    companyFundamentalsPage
+  ]);
+
+  useEffect(() => {
     if (activeView !== "ohlcv" || !isOhlcvJobRunning) {
       return undefined;
     }
@@ -4103,6 +5045,25 @@ function DataCollection() {
     return () => window.clearInterval(pollId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, isMarketCalendarJobRunning, marketCalendarPage]);
+
+
+  useEffect(() => {
+    if (
+      activeView !== "company_fundamentals" ||
+      !isCompanyFundamentalsJobRunning
+    ) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadCompanyFundamentalsPreview(companyFundamentalsPage, {
+        showLoading: false
+      });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isCompanyFundamentalsJobRunning, companyFundamentalsPage]);
 
   useEffect(() => {
     if (!hasActiveJob) {
@@ -4354,6 +5315,88 @@ function DataCollection() {
                 />
               ) : null}
 
+
+              {activeView === "company_fundamentals" ? (
+                <CompanyFundamentalsContent
+                  activeEndpoint={companyFundamentalsEndpoint}
+                  onEndpointChange={(value) => {
+                    setCompanyFundamentalsEndpoint(value);
+                    setCompanyFundamentalsPage(1);
+                  }}
+                  previewData={companyFundamentalsPreviewData}
+                  rows={filteredCompanyFundamentalsRows}
+                  loading={companyFundamentalsLoading}
+                  hasActiveJob={hasActiveJob}
+                  isAdminControlAllowed={isAdminControlAllowed}
+                  searchValue={companyFundamentalsSearch}
+                  onSearchChange={setCompanyFundamentalsSearch}
+                  onSearchSubmit={handleCompanyFundamentalsSearchSubmit}
+                  onClearSearch={handleClearCompanyFundamentalsSearch}
+                  searchActive={appliedCompanyFundamentalsSearch.trim() !== ""}
+                  statementType={companyFundamentalsStatementType}
+                  onStatementTypeChange={(value) => {
+                    setCompanyFundamentalsStatementType(value);
+                    setCompanyFundamentalsPage(1);
+                  }}
+                  onClearStatementType={clearCompanyFundamentalsStatementType}
+                  timePeriod={companyFundamentalsTimePeriod}
+                  onTimePeriodChange={(value) => {
+                    setCompanyFundamentalsTimePeriod(value);
+                    setCompanyFundamentalsPage(1);
+                  }}
+                  onClearTimePeriod={clearCompanyFundamentalsTimePeriod}
+                  segment={companyFundamentalsSegment}
+                  onSegmentChange={(value) => {
+                    setCompanyFundamentalsSegment(value);
+                    setCompanyFundamentalsPage(1);
+                  }}
+                  onClearSegment={clearCompanyFundamentalsSegment}
+                  hasActiveFilter={hasAnyActiveCompanyFundamentalsFilter()}
+                  onClearAll={clearAllCompanyFundamentalsFilters}
+                  onSchedule={() => openSchedulePopup("company_fundamentals")}
+                  onRun={handleCompanyFundamentalsSync}
+                  onRefresh={() =>
+                    loadCompanyFundamentalsPreview(companyFundamentalsPage)
+                  }
+                  onPreviousPage={() =>
+                    setCompanyFundamentalsPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setCompanyFundamentalsPage((value) =>
+                      Math.min(
+                        companyFundamentalsPreviewData.total_pages || 1,
+                        value + 1
+                      )
+                    )
+                  }
+                  onPageChange={(page) => setCompanyFundamentalsPage(page)}
+                  renderCell={renderCompanyFundamentalsCell}
+                  filterConfig={{
+                    activeFilter: activeCompanyFundamentalsFilter,
+                    headerValues: companyFundamentalsHeaderValues,
+                    columnFilters: companyFundamentalsColumnFilters,
+                    draftColumnFilters: draftCompanyFundamentalsColumnFilters,
+                    rightAlignedKeys:
+                      activeCompanyFundamentalsColumnGroup.rightAlignedKeys,
+                    isColumnFilterActive: isCompanyFundamentalsColumnFilterActive,
+                    onOpen: openCompanyFundamentalsColumnFilter,
+                    onClose: () => setActiveCompanyFundamentalsFilter(null),
+                    onChange: (key, values) =>
+                      setDraftCompanyFundamentalsColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyCompanyFundamentalsColumnFilter,
+                    onSort: handleCompanyFundamentalsSort,
+                    onClear: clearCompanyFundamentalsColumnFilter
+                  }}
+                  columns={activeCompanyFundamentalsColumnGroup.columns}
+                  gridTemplateColumns={
+                    activeCompanyFundamentalsColumnGroup.gridTemplateColumns
+                  }
+                  minWidth={activeCompanyFundamentalsColumnGroup.minWidth}
+                />
+              ) : null}
 
               {activeView === "market_calendar" ? (
                 <MarketCalendarContent
