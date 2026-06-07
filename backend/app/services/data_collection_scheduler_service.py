@@ -9,7 +9,10 @@ from app.database import get_connection
 from app.services.data_collection_service import (
     sync_upstox_company_fundamentals_service,
     sync_upstox_current_instruments_service,
+    sync_upstox_equity_news_service,
     sync_upstox_expired_instruments_service,
+    sync_upstox_ipo_calendar_service,
+    sync_upstox_market_holidays_service,
     sync_upstox_ohlcv_daily_service
 )
 
@@ -34,10 +37,23 @@ VALID_JOB_TYPES = {
     "company_fundamentals": {
         "label": "Company Fundamentals",
         "sync_type": "upstox_company_fundamentals"
+    },
+    "market_holidays": {
+        "label": "Market Calendar",
+        "sync_type": "upstox_market_holidays"
+    },
+    "equity_news": {
+        "label": "Equity News",
+        "sync_type": "upstox_equity_news"
+    },
+    "ipo_calendar": {
+        "label": "IPO Calendar",
+        "sync_type": "upstox_ipo_calendar"
     }
 }
 
 SCHEDULABLE_JOB_TYPES = tuple(VALID_JOB_TYPES.keys())
+SCHEDULABLE_JOB_TYPE_SQL = ", ".join(["?"] * len(SCHEDULABLE_JOB_TYPES))
 
 _scheduler_thread = None
 _scheduler_stop_event = threading.Event()
@@ -130,7 +146,8 @@ def validate_job_type(job_type: str) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "Invalid job type. Use current_instruments, expired_instruments, "
-                "ohlcv_daily, or company_fundamentals."
+                "ohlcv_daily, company_fundamentals, market_holidays, "
+                "equity_news, or ipo_calendar."
             )
         )
 
@@ -205,7 +222,7 @@ def get_data_collection_schedules_service():
     conn = get_connection()
 
     try:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT
                 schedule_id,
                 job_type,
@@ -222,9 +239,9 @@ def get_data_collection_schedules_service():
                 updated_by
             FROM upstox_data_collection_schedules
             WHERE record_status = 'S'
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
             ORDER BY job_type, schedule_time;
-        """).fetchall()
+        """, list(SCHEDULABLE_JOB_TYPES)).fetchall()
 
         return [row_to_schedule(row) for row in rows]
 
@@ -319,14 +336,14 @@ def update_data_collection_schedule_service(
     conn = get_connection()
 
     try:
-        current = conn.execute("""
+        current = conn.execute(f"""
             SELECT schedule_id
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
               AND record_status = 'S'
             LIMIT 1;
-        """, [schedule_id]).fetchone()
+        """, [schedule_id] + list(SCHEDULABLE_JOB_TYPES)).fetchone()
 
         if not current:
             raise HTTPException(
@@ -350,7 +367,7 @@ def update_data_collection_schedule_service(
                 detail="This schedule already exists for the selected job."
             )
 
-        conn.execute("""
+        conn.execute(f"""
             UPDATE upstox_data_collection_schedules
             SET
                 job_type = ?,
@@ -364,7 +381,7 @@ def update_data_collection_schedule_service(
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
               AND record_status = 'S';
         """, [
             job_type,
@@ -376,7 +393,7 @@ def update_data_collection_schedule_service(
             next_run_at,
             user_id,
             schedule_id
-        ])
+        ] + list(SCHEDULABLE_JOB_TYPES))
 
         conn.commit()
 
@@ -394,14 +411,14 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
     conn = get_connection()
 
     try:
-        row = conn.execute("""
+        row = conn.execute(f"""
             SELECT schedule_time, is_active
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
               AND record_status = 'S'
             LIMIT 1;
-        """, [schedule_id]).fetchone()
+        """, [schedule_id] + list(SCHEDULABLE_JOB_TYPES)).fetchone()
 
         if not row:
             raise HTTPException(
@@ -413,7 +430,7 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
         next_is_active = not bool(row[1])
         next_run_at = calculate_next_run_at(schedule_time, next_is_active)
 
-        conn.execute("""
+        conn.execute(f"""
             UPDATE upstox_data_collection_schedules
             SET
                 is_active = ?,
@@ -422,14 +439,14 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
               AND record_status = 'S';
         """, [
             next_is_active,
             next_run_at,
             user_id,
             schedule_id
-        ])
+        ] + list(SCHEDULABLE_JOB_TYPES))
 
         conn.commit()
 
@@ -448,14 +465,14 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
     conn = get_connection()
 
     try:
-        row = conn.execute("""
+        row = conn.execute(f"""
             SELECT schedule_id
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
               AND record_status = 'S'
             LIMIT 1;
-        """, [schedule_id]).fetchone()
+        """, [schedule_id] + list(SCHEDULABLE_JOB_TYPES)).fetchone()
 
         if not row:
             raise HTTPException(
@@ -463,7 +480,7 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
                 detail="Schedule not found."
             )
 
-        conn.execute("""
+        conn.execute(f"""
             UPDATE upstox_data_collection_schedules
             SET
                 record_status = 'D',
@@ -473,8 +490,8 @@ def delete_data_collection_schedule_service(schedule_id: str, current_user: dict
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE schedule_id = ?
-              AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals');
-        """, [user_id, schedule_id])
+              AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL});
+        """, [user_id, schedule_id] + list(SCHEDULABLE_JOB_TYPES))
 
         conn.commit()
 
@@ -493,7 +510,7 @@ def get_due_schedules(conn):
     current_run_at = now.replace(tzinfo=None)
     today = now.date().isoformat()
 
-    return conn.execute("""
+    return conn.execute(f"""
         SELECT
             schedule_id,
             job_type,
@@ -503,7 +520,7 @@ def get_due_schedules(conn):
             next_run_at
         FROM upstox_data_collection_schedules
         WHERE record_status = 'S'
-          AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+          AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
           AND is_active = TRUE
           AND (
               last_run_date IS NULL
@@ -517,7 +534,7 @@ def get_due_schedules(conn):
               )
           )
         ORDER BY schedule_time;
-    """, [today, current_run_at, current_time]).fetchall()
+    """, list(SCHEDULABLE_JOB_TYPES) + [today, current_run_at, current_time]).fetchall()
 
 
 def mark_schedule_started(
@@ -526,7 +543,7 @@ def mark_schedule_started(
     schedule_time: str,
     run_date: str
 ):
-    conn.execute("""
+    conn.execute(f"""
         UPDATE upstox_data_collection_schedules
         SET
             last_run_date = ?,
@@ -535,13 +552,13 @@ def mark_schedule_started(
             updated_at = CURRENT_TIMESTAMP,
             updated_by = 'system_scheduler'
         WHERE schedule_id = ?
-          AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+          AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
           AND record_status = 'S';
     """, [
         run_date,
         calculate_next_run_at_after_today(schedule_time, True),
         schedule_id
-    ])
+    ] + list(SCHEDULABLE_JOB_TYPES))
 
     conn.commit()
 
@@ -552,19 +569,19 @@ def update_schedule_next_run(
     schedule_time: str,
     is_active: bool
 ):
-    conn.execute("""
+    conn.execute(f"""
         UPDATE upstox_data_collection_schedules
         SET
             next_run_at = ?,
             updated_at = CURRENT_TIMESTAMP,
             updated_by = 'system_scheduler'
         WHERE schedule_id = ?
-          AND job_type IN ('current_instruments', 'expired_instruments', 'ohlcv_daily', 'company_fundamentals')
+          AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
           AND record_status = 'S';
     """, [
         calculate_next_run_at(schedule_time, is_active),
         schedule_id
-    ])
+    ] + list(SCHEDULABLE_JOB_TYPES))
 
     conn.commit()
 
@@ -598,6 +615,26 @@ def run_schedule_job(schedule_id: str, job_type: str):
         return sync_upstox_company_fundamentals_service(
             current_user=system_user,
             config=None,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "market_holidays":
+        return sync_upstox_market_holidays_service(
+            current_user=system_user,
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "equity_news":
+        return sync_upstox_equity_news_service(
+            current_user=system_user,
+            config={},
+            clear_cancel_at_start=True
+        )
+
+    if job_type == "ipo_calendar":
+        return sync_upstox_ipo_calendar_service(
+            current_user=system_user,
+            config={},
             clear_cancel_at_start=True
         )
 

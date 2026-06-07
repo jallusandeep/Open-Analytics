@@ -32,6 +32,18 @@ export function getUpstoxMarketHolidaysPreview(params = {}) {
   });
 }
 
+export function getUpstoxEquityNewsPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/equity-news/preview", {
+    params
+  });
+}
+
+export function getUpstoxIpoCalendarPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ipo-calendar/preview", {
+    params
+  });
+}
+
 export function getUpstoxOhlcvOptions() {
   return axiosClient.get("/data-collection/upstox/ohlcv/options");
 }
@@ -86,6 +98,22 @@ export function syncUpstoxOhlcvDaily(payload = {}, config = {}) {
 export function syncUpstoxMarketHolidays(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/calendar/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxEquityNews(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/equity-news/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxIpoCalendar(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/ipo-calendar/run",
     payload,
     config
   );
