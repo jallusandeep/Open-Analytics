@@ -8,8 +8,10 @@ from app.services.data_collection_service import (
     get_data_collection_summary_service,
     get_upstox_company_fundamentals_options_service,
     get_upstox_company_fundamentals_preview_service,
+    get_upstox_equity_news_preview_service,
     get_upstox_expired_instruments_preview_service,
     get_upstox_instruments_preview_service,
+    get_upstox_ipo_calendar_preview_service,
     get_upstox_market_holidays_preview_service,
     get_upstox_ohlcv_options_service,
     get_upstox_ohlcv_preview_service,
@@ -17,7 +19,9 @@ from app.services.data_collection_service import (
     save_upstox_ohlcv_options_service,
     sync_upstox_company_fundamentals_service,
     sync_upstox_current_instruments_service,
+    sync_upstox_equity_news_service,
     sync_upstox_expired_instruments_service,
+    sync_upstox_ipo_calendar_service,
     sync_upstox_market_holidays_service,
     sync_upstox_ohlcv_daily_service
 )
@@ -168,6 +172,172 @@ def get_upstox_calendar_preview(
             page=page,
             page_size=page_size
         )
+    }
+
+
+@router.get("/upstox/equity-news/preview")
+def get_upstox_equity_news_preview(
+    search: str = Query(
+        "",
+        description="Search instrument key, symbol, company name, headline, summary, source, or article link."
+    ),
+    segment: str = Query("all", description="Filter by segment."),
+    source: str = Query("all", description="Filter by news source."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_equity_news_preview_service(
+            search=search,
+            segment=segment,
+            source=source,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/news/preview")
+def get_upstox_news_preview_legacy(
+    search: str = Query(
+        "",
+        description="Search instrument key, symbol, company name, headline, summary, source, or article link."
+    ),
+    segment: str = Query("all", description="Filter by segment."),
+    source: str = Query("all", description="Filter by news source."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_equity_news_preview_service(
+            search=search,
+            segment=segment,
+            source=source,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.post("/upstox/equity-news/run")
+def sync_upstox_equity_news(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_equity_news_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "Equity News collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/news/run")
+def sync_upstox_news_legacy(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_equity_news_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "Equity News collection started. Monitor will update while it runs."
+    }
+
+
+@router.get("/upstox/ipo-calendar/preview")
+def get_upstox_ipo_calendar_preview(
+    search: str = Query(
+        "",
+        description="Search IPO id, symbol, name, ISIN, status, issue type, industry, or registrar."
+    ),
+    ipo_status: str = Query("all", description="Filter by IPO status."),
+    issue_type: str = Query("all", description="Filter by issue type."),
+    industry: str = Query("all", description="Accepted from frontend; industry filtering is handled by search/service when available."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ipo_calendar_preview_service(
+            search=search,
+            ipo_status=ipo_status,
+            issue_type=issue_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/ipos/preview")
+def get_upstox_ipos_preview_legacy(
+    search: str = Query(
+        "",
+        description="Search IPO id, symbol, name, ISIN, status, issue type, industry, or registrar."
+    ),
+    ipo_status: str = Query("all", description="Filter by IPO status."),
+    issue_type: str = Query("all", description="Filter by issue type."),
+    industry: str = Query("all", description="Accepted from frontend; industry filtering is handled by search/service when available."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_ipo_calendar_preview_service(
+            search=search,
+            ipo_status=ipo_status,
+            issue_type=issue_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.post("/upstox/ipo-calendar/run")
+def sync_upstox_ipo_calendar(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_ipo_calendar_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "IPO Calendar collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/ipos/run")
+def sync_upstox_ipos_legacy(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_ipo_calendar_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "IPO Calendar collection started. Monitor will update while it runs."
     }
 
 

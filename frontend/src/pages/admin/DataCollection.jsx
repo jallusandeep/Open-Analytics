@@ -38,8 +38,10 @@ import {
   getUpstoxDataCollectionRuns,
   getUpstoxDataCollectionSchedules,
   getUpstoxDataCollectionSummary,
+  getUpstoxEquityNewsPreview,
   getUpstoxExpiredInstrumentsPreview,
   getUpstoxInstrumentsPreview,
+  getUpstoxIpoCalendarPreview,
   getUpstoxMarketHolidaysPreview,
   getUpstoxOhlcvOptions,
   getUpstoxOhlcvPreview,
@@ -47,7 +49,9 @@ import {
   saveUpstoxOhlcvOptions,
   syncUpstoxCompanyFundamentals,
   syncUpstoxCurrentInstruments,
+  syncUpstoxEquityNews,
   syncUpstoxExpiredInstruments,
+  syncUpstoxIpoCalendar,
   syncUpstoxMarketHolidays,
   syncUpstoxOhlcvDaily,
   toggleUpstoxDataCollectionSchedule,
@@ -60,6 +64,8 @@ const emptySummary = {
   total_current_instruments: 0,
   total_expired_instruments: 0,
   total_ohlcv_daily: 0,
+  total_equity_news: 0,
+  total_ipo_calendar: 0,
   total_company_fundamentals: 0,
   total_market_holidays: 0,
   total_sync_runs: 0,
@@ -71,6 +77,10 @@ const emptySummary = {
   expired_duration_seconds: null,
   ohlcv_daily_last_sync_at: "",
   ohlcv_daily_duration_seconds: null,
+  equity_news_last_sync_at: "",
+  equity_news_duration_seconds: null,
+  ipo_calendar_last_sync_at: "",
+  ipo_calendar_duration_seconds: null,
   company_fundamentals_last_sync_at: "",
   company_fundamentals_duration_seconds: null,
   market_holidays_last_sync_at: "",
@@ -124,6 +134,8 @@ const viewOptions = [
   { key: "current_preview", label: "Current Instruments" },
   { key: "expired_preview", label: "Expired Instruments" },
   { key: "ohlcv", label: "OHLCV" },
+  { key: "equity_news", label: "Equity News" },
+  { key: "ipo_calendar", label: "IPO Calendar" },
   { key: "company_fundamentals", label: "Company Fundamentals" },
   { key: "market_calendar", label: "Market Calendar" }
 ];
@@ -212,6 +224,24 @@ const marketHolidayTradingStatusOptions = [
   { value: "all", label: "All Status" },
   { value: "closed", label: "Closed" },
   { value: "open", label: "Partially Open" }
+];
+
+const ipoStatusOptions = [
+  { value: "all", label: "All Status" },
+  { value: "upcoming", label: "Upcoming" },
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+  { value: "listed", label: "Listed" }
+];
+
+const ipoIssueTypeOptions = [
+  { value: "all", label: "All Issue Types" },
+  { value: "regular", label: "Regular" },
+  { value: "sme", label: "SME" }
+];
+
+const ipoIndustryOptions = [
+  { value: "all", label: "All Industries" }
 ];
 
 const companyFundamentalsEndpointOptions = [
@@ -311,6 +341,42 @@ const marketHolidayPreviewColumns = [
 
 const marketHolidayPreviewGridTemplateColumns =
   "150px 320px 190px 170px 320px 360px 130px 230px 230px";
+
+const equityNewsPreviewColumns = [
+  { key: "instrument_key", label: "Instrument Key" },
+  { key: "trading_symbol", label: "Trading Symbol" },
+  { key: "company_name", label: "Company" },
+  { key: "segment", label: "Segment" },
+  { key: "heading", label: "Heading" },
+  { key: "summary", label: "Summary" },
+  { key: "source", label: "Source" },
+  { key: "published_at", label: "Published At" },
+  { key: "article_link", label: "Article Link" },
+  { key: "ingested_at", label: "Ingested At" }
+];
+
+const equityNewsPreviewGridTemplateColumns =
+  "280px 190px 300px 130px 420px 520px 180px 230px 360px 230px";
+
+const ipoCalendarPreviewColumns = [
+  { key: "ipo_id", label: "IPO ID" },
+  { key: "symbol", label: "Symbol" },
+  { key: "name", label: "Name" },
+  { key: "status", label: "Status" },
+  { key: "issue_type", label: "Issue Type" },
+  { key: "isin", label: "ISIN" },
+  { key: "issue_size", label: "Issue Size" },
+  { key: "industry", label: "Industry" },
+  { key: "minimum_price", label: "Min Price" },
+  { key: "maximum_price", label: "Max Price" },
+  { key: "bidding_start_date", label: "Start Date" },
+  { key: "bidding_end_date", label: "End Date" },
+  { key: "total_subscription", label: "Subscription" },
+  { key: "synced_at", label: "Synced At" }
+];
+
+const ipoCalendarPreviewGridTemplateColumns =
+  "240px 160px 320px 130px 140px 170px 150px 260px 130px 130px 140px 140px 150px 230px";
 
 const companyFundamentalsColumnGroups = {
   company_profile: {
@@ -842,6 +908,43 @@ function getMarketHolidayColumnValue(row, key) {
   return row[key];
 }
 
+function getEquityNewsColumnValue(row, key) {
+  if (key === "published_at" || key === "ingested_at" || key === "synced_at") {
+    return formatDateTime(row[key]);
+  }
+
+  if (key === "article_link") {
+    return row.article_link || row.url || row.link;
+  }
+
+  if (key === "heading") {
+    return row.heading || row.title;
+  }
+
+  return row[key];
+}
+
+function getIpoCalendarColumnValue(row, key) {
+  if (key === "synced_at" || key === "updated_at") {
+    return formatDateTime(row[key]);
+  }
+
+  if (key === "status" || key === "issue_type") {
+    return getSyncTypeLabel(row[key]);
+  }
+
+  if (
+    key === "issue_size" ||
+    key === "minimum_price" ||
+    key === "maximum_price" ||
+    key === "total_subscription"
+  ) {
+    return formatPrice(row[key]);
+  }
+
+  return row[key];
+}
+
 function getCompanyFundamentalsColumnValue(row, key) {
   if (key === "synced_at" || key === "updated_at") {
     return formatDateTime(row[key]);
@@ -943,11 +1046,15 @@ function getSyncTypeLabel(value) {
     upstox_expired_instruments: "Expired Instruments",
     upstox_ohlcv_daily: "OHLCV",
     upstox_market_holidays: "Market Calendar",
+    upstox_equity_news: "Equity News",
+    upstox_ipo_calendar: "IPO Calendar",
     upstox_company_fundamentals: "Company Fundamentals",
     current_instruments: "Current Instruments",
     expired_instruments: "Expired Instruments",
     ohlcv_daily: "OHLCV",
     market_holidays: "Market Calendar",
+    equity_news: "Equity News",
+    ipo_calendar: "IPO Calendar",
     company_fundamentals: "Company Fundamentals",
     bod_complete: "BOD Complete",
     expired_option_contract: "Expired Options",
@@ -958,6 +1065,18 @@ function getSyncTypeLabel(value) {
     intraday: "Intraday",
     TRADING_HOLIDAY: "Trading Holiday",
     SETTLEMENT_HOLIDAY: "Settlement Holiday",
+    upcoming: "Upcoming",
+    UPCOMING: "Upcoming",
+    open: "Open",
+    OPEN: "Open",
+    closed: "Closed",
+    CLOSED: "Closed",
+    listed: "Listed",
+    LISTED: "Listed",
+    regular: "Regular",
+    REGULAR: "Regular",
+    sme: "SME",
+    SME: "SME",
     company_profile: "Company Profile",
     balance_sheet: "Balance Sheet",
     income_statement: "Income Statement",
@@ -1936,7 +2055,7 @@ function OhlcvOptionsModal({
             <div>
               <label className={oaFormTextStyles.label}>From Date</label>
 
-              <div className="mt-1 grid grid-cols-[126px_minmax(0,1fr)] items-center gap-1">
+              <div className="mt-1 grid grid-cols-[125px_minmax(0,1fr)] items-center gap-1.5">
                 <Tooltip
                   text="Start from the last saved candle. If no saved candle exists, start from available Upstox history."
                   side="top"
@@ -1976,7 +2095,7 @@ function OhlcvOptionsModal({
             <div>
               <label className={oaFormTextStyles.label}>To Date</label>
 
-              <div className="mt-1 grid grid-cols-[150px_minmax(0,1fr)] items-center gap-1.5">
+              <div className="mt-1 grid grid-cols-[125px_minmax(0,1fr)] items-center gap-1.5">
                 <Tooltip
                   text="Use current day as To Date and disable manual To Date selection."
                   side="top"
@@ -2191,6 +2310,115 @@ function MarketCalendarContent({
           gridTemplateColumns={marketHolidayPreviewGridTemplateColumns}
           minWidth="min-w-[2110px]"
           getRowKey={(row, index) => `${row.holiday_date || "calendar"}-${index}`}
+          renderCell={renderCell}
+          filterConfig={filterConfig}
+        />
+      </div>
+
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
+
+function GenericPreviewContent({
+  title,
+  searchPlaceholder,
+  previewData,
+  rows,
+  loading,
+  hasActiveJob,
+  isAdminControlAllowed,
+  searchValue,
+  searchActive,
+  filters,
+  hasActiveFilter,
+  onSearchChange,
+  onSearchSubmit,
+  onClearSearch,
+  onClearAll,
+  onSchedule,
+  onRun,
+  onRefresh,
+  onPreviousPage,
+  onNextPage,
+  onPageChange,
+  renderCell,
+  filterConfig,
+  columns,
+  gridTemplateColumns,
+  minWidth,
+  emptyMessage,
+  getRowKey
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder={searchPlaceholder}
+          filters={filters}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            onSchedule
+              ? {
+                  icon: Clock3,
+                  label: `Schedule ${title}`,
+                  variant: "default",
+                  disabled: !isAdminControlAllowed || loading || hasActiveJob,
+                  onClick: onSchedule
+                }
+              : null,
+            {
+              icon: Play,
+              label: `Run ${title}`,
+              variant: "add",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onRun
+            },
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            }
+          ].filter(Boolean)}
+        />
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">
+                Loading {title.toLowerCase()}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <DataTable
+          columns={columns}
+          rows={rows}
+          loading={false}
+          loadingMessage={`Loading ${title.toLowerCase()}`}
+          emptyMessage={emptyMessage}
+          gridTemplateColumns={gridTemplateColumns}
+          minWidth={minWidth}
+          getRowKey={getRowKey}
           renderCell={renderCell}
           filterConfig={filterConfig}
         />
@@ -2637,6 +2865,39 @@ function DataCollection() {
   const [marketCalendarLoading, setMarketCalendarLoading] = useState(false);
   const [marketCalendarPreviewData, setMarketCalendarPreviewData] = useState(emptyPreviewData);
 
+
+  const [equityNewsSearch, setEquityNewsSearch] = useState("");
+  const [appliedEquityNewsSearch, setAppliedEquityNewsSearch] = useState("");
+  const [equityNewsSegment, setEquityNewsSegment] = useState("all");
+  const [equityNewsColumnFilters, setEquityNewsColumnFilters] = useState({});
+  const [draftEquityNewsColumnFilters, setDraftEquityNewsColumnFilters] = useState({});
+  const [activeEquityNewsFilter, setActiveEquityNewsFilter] = useState(null);
+  const [equityNewsSortConfig, setEquityNewsSortConfig] = useState({
+    key: null,
+    direction: null
+  });
+  const [equityNewsPage, setEquityNewsPage] = useState(1);
+  const [equityNewsPageSize] = useState(2000);
+  const [equityNewsLoading, setEquityNewsLoading] = useState(false);
+  const [equityNewsPreviewData, setEquityNewsPreviewData] = useState(emptyPreviewData);
+
+  const [ipoCalendarSearch, setIpoCalendarSearch] = useState("");
+  const [appliedIpoCalendarSearch, setAppliedIpoCalendarSearch] = useState("");
+  const [ipoCalendarStatus, setIpoCalendarStatus] = useState("all");
+  const [ipoCalendarIssueType, setIpoCalendarIssueType] = useState("all");
+  const [ipoCalendarIndustry, setIpoCalendarIndustry] = useState("all");
+  const [ipoCalendarColumnFilters, setIpoCalendarColumnFilters] = useState({});
+  const [draftIpoCalendarColumnFilters, setDraftIpoCalendarColumnFilters] = useState({});
+  const [activeIpoCalendarFilter, setActiveIpoCalendarFilter] = useState(null);
+  const [ipoCalendarSortConfig, setIpoCalendarSortConfig] = useState({
+    key: null,
+    direction: null
+  });
+  const [ipoCalendarPage, setIpoCalendarPage] = useState(1);
+  const [ipoCalendarPageSize] = useState(2000);
+  const [ipoCalendarLoading, setIpoCalendarLoading] = useState(false);
+  const [ipoCalendarPreviewData, setIpoCalendarPreviewData] = useState(emptyPreviewData);
+
   const [companyFundamentalsEndpoint, setCompanyFundamentalsEndpoint] = useState("company_profile");
   const [companyFundamentalsSearch, setCompanyFundamentalsSearch] = useState("");
   const [appliedCompanyFundamentalsSearch, setAppliedCompanyFundamentalsSearch] = useState("");
@@ -2704,6 +2965,23 @@ function DataCollection() {
     (runningJob === "market_calendar" ||
       summary.active_job === "upstox_market_holidays");
 
+
+  const isEquityNewsJobRunning =
+    !isCancelRequested &&
+    (runningJob === "equity_news" || summary.active_job === "upstox_equity_news");
+
+  const equityNewsCancelRequested =
+    isCancelRequested &&
+    (runningJob === "equity_news" || summary.active_job === "upstox_equity_news");
+
+  const isIpoCalendarJobRunning =
+    !isCancelRequested &&
+    (runningJob === "ipo_calendar" || summary.active_job === "upstox_ipo_calendar");
+
+  const ipoCalendarCancelRequested =
+    isCancelRequested &&
+    (runningJob === "ipo_calendar" || summary.active_job === "upstox_ipo_calendar");
+
   const isCompanyFundamentalsJobRunning =
     !isCancelRequested &&
     (runningJob === "company_fundamentals" ||
@@ -2726,6 +3004,14 @@ function DataCollection() {
 
   const ohlcvLastRun = useMemo(() => {
     return getLatestRunByTypes(runs, ["upstox_ohlcv_daily"]);
+  }, [runs]);
+
+  const equityNewsLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_equity_news"]);
+  }, [runs]);
+
+  const ipoCalendarLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_ipo_calendar"]);
   }, [runs]);
 
   const companyFundamentalsLastRun = useMemo(() => {
@@ -2782,6 +3068,30 @@ function DataCollection() {
     const ohlcvRecordsAdded =
       isOhlcvJobRunning &&
       summary.active_job === "upstox_ohlcv_daily" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const equityNewsRecords =
+      isEquityNewsJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_equity_news ?? 0;
+
+    const equityNewsRecordsAdded =
+      isEquityNewsJobRunning &&
+      summary.active_job === "upstox_equity_news" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const ipoCalendarRecords =
+      isIpoCalendarJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_ipo_calendar ?? summary.total_ipos ?? 0;
+
+    const ipoCalendarRecordsAdded =
+      isIpoCalendarJobRunning &&
+      summary.active_job === "upstox_ipo_calendar" &&
       summary.active_job_records_added != null
         ? summary.active_job_records_added
         : 0;
@@ -2874,6 +3184,46 @@ function DataCollection() {
         runLabel: "Run saved"
       },
       {
+        id: "equity_news",
+        title: "Equity News",
+        scheduleJobType: "equity_news",
+        records: equityNewsRecords,
+        recordsAdded: equityNewsRecordsAdded,
+        lastSyncedAt: summary.equity_news_last_sync_at,
+        triggeredBy: equityNewsLastRun?.triggered_by_name,
+        triggerSource: equityNewsLastRun?.trigger_source,
+        duration: summary.equity_news_duration_seconds,
+        lastStatus: equityNewsCancelRequested
+          ? "cancel_requested"
+          : isEquityNewsJobRunning
+            ? "running"
+            : equityNewsLastRun?.status,
+        loading: isEquityNewsJobRunning,
+        disabled: hasActiveJob && !isEquityNewsJobRunning,
+        canCancel: isEquityNewsJobRunning && shouldShowCancelButton,
+        onRun: handleEquityNewsSync
+      },
+      {
+        id: "ipo_calendar",
+        title: "IPO Calendar",
+        scheduleJobType: "ipo_calendar",
+        records: ipoCalendarRecords,
+        recordsAdded: ipoCalendarRecordsAdded,
+        lastSyncedAt: summary.ipo_calendar_last_sync_at,
+        triggeredBy: ipoCalendarLastRun?.triggered_by_name,
+        triggerSource: ipoCalendarLastRun?.trigger_source,
+        duration: summary.ipo_calendar_duration_seconds,
+        lastStatus: ipoCalendarCancelRequested
+          ? "cancel_requested"
+          : isIpoCalendarJobRunning
+            ? "running"
+            : ipoCalendarLastRun?.status,
+        loading: isIpoCalendarJobRunning,
+        disabled: hasActiveJob && !isIpoCalendarJobRunning,
+        canCancel: isIpoCalendarJobRunning && shouldShowCancelButton,
+        onRun: handleIpoCalendarSync
+      },
+      {
         id: "company_fundamentals",
         title: "Company Fundamentals",
         scheduleJobType: "company_fundamentals",
@@ -2922,14 +3272,20 @@ function DataCollection() {
     isExpiredJobRunning,
     isOhlcvJobRunning,
     isMarketCalendarJobRunning,
+    isEquityNewsJobRunning,
+    isIpoCalendarJobRunning,
     isCompanyFundamentalsJobRunning,
     currentLastRun,
     expiredLastRun,
     ohlcvLastRun,
     marketCalendarLastRun,
+    equityNewsLastRun,
+    ipoCalendarLastRun,
     companyFundamentalsLastRun,
     ohlcvCancelRequested,
     marketCalendarCancelRequested,
+    equityNewsCancelRequested,
+    ipoCalendarCancelRequested,
     companyFundamentalsCancelRequested,
     hasActiveJob,
     shouldShowCancelButton
@@ -3044,6 +3400,57 @@ function DataCollection() {
     marketCalendarPreviewData.rows,
     marketCalendarColumnFilters,
     marketCalendarSortConfig
+  ]);
+
+
+  const equityNewsHeaderValues = useMemo(() => {
+    return equityNewsPreviewColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        equityNewsPreviewData.rows,
+        column.key,
+        getEquityNewsColumnValue
+      );
+      return result;
+    }, {});
+  }, [equityNewsPreviewData.rows]);
+
+  const filteredEquityNewsRows = useMemo(() => {
+    let result = applyColumnFilters(
+      equityNewsPreviewData.rows,
+      equityNewsColumnFilters,
+      getEquityNewsColumnValue
+    );
+
+    return applySort(result, equityNewsSortConfig, getEquityNewsColumnValue);
+  }, [
+    equityNewsPreviewData.rows,
+    equityNewsColumnFilters,
+    equityNewsSortConfig
+  ]);
+
+  const ipoCalendarHeaderValues = useMemo(() => {
+    return ipoCalendarPreviewColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        ipoCalendarPreviewData.rows,
+        column.key,
+        getIpoCalendarColumnValue
+      );
+      return result;
+    }, {});
+  }, [ipoCalendarPreviewData.rows]);
+
+  const filteredIpoCalendarRows = useMemo(() => {
+    let result = applyColumnFilters(
+      ipoCalendarPreviewData.rows,
+      ipoCalendarColumnFilters,
+      getIpoCalendarColumnValue
+    );
+
+    return applySort(result, ipoCalendarSortConfig, getIpoCalendarColumnValue);
+  }, [
+    ipoCalendarPreviewData.rows,
+    ipoCalendarColumnFilters,
+    ipoCalendarSortConfig
   ]);
 
   const activeCompanyFundamentalsColumnGroup = useMemo(() => {
@@ -3198,6 +3605,82 @@ function DataCollection() {
     } finally {
       if (showLoading) {
         setMarketCalendarLoading(false);
+      }
+    }
+  }
+
+  async function loadEquityNewsPreview(customPage = equityNewsPage, options = {}) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setEquityNewsLoading(true);
+    }
+
+    try {
+      const params = {
+        search: appliedEquityNewsSearch,
+        segment: equityNewsSegment,
+        source: "all",
+        page: customPage,
+        page_size: equityNewsPageSize
+      };
+
+      const response = await getUpstoxEquityNewsPreview(params);
+      const nextData = response.data.data || response.data || emptyPreviewData;
+
+      setEquityNewsPreviewData(nextData);
+      setEquityNewsPage(nextData.page || customPage);
+    } catch (error) {
+      if (showLoading) {
+        setEquityNewsPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(error, "Unable to load Equity News preview."),
+          "error"
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setEquityNewsLoading(false);
+      }
+    }
+  }
+
+  async function loadIpoCalendarPreview(
+    customPage = ipoCalendarPage,
+    options = {}
+  ) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setIpoCalendarLoading(true);
+    }
+
+    try {
+      const params = {
+        search: appliedIpoCalendarSearch,
+        ipo_status: ipoCalendarStatus,
+        issue_type: ipoCalendarIssueType,
+        industry: ipoCalendarIndustry,
+        page: customPage,
+        page_size: ipoCalendarPageSize
+      };
+
+      const response = await getUpstoxIpoCalendarPreview(params);
+      const nextData = response.data.data || response.data || emptyPreviewData;
+
+      setIpoCalendarPreviewData(nextData);
+      setIpoCalendarPage(nextData.page || customPage);
+    } catch (error) {
+      if (showLoading) {
+        setIpoCalendarPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(error, "Unable to load IPO Calendar preview."),
+          "error"
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setIpoCalendarLoading(false);
       }
     }
   }
@@ -3762,6 +4245,136 @@ function DataCollection() {
     }
   }
 
+
+  async function handleEquityNewsSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    if (hasActiveJob) {
+      showToast("Another data collection job is already running.", "warning");
+      return;
+    }
+
+    setRunningJob("equity_news");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxEquityNews(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Equity News collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "Equity News collection cancelled.",
+          "warning"
+        );
+      } else {
+        showToast(
+          response.data?.message || "Equity News collection completed.",
+          "success"
+        );
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        getApiErrorMessage(error, "Unable to run Equity News collection."),
+        "error"
+      );
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+
+      activeSyncControllerRef.current = null;
+    }
+  }
+
+  async function handleIpoCalendarSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    if (hasActiveJob) {
+      showToast("Another data collection job is already running.", "warning");
+      return;
+    }
+
+    setRunningJob("ipo_calendar");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxIpoCalendar(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "IPO Calendar collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "IPO Calendar collection cancelled.",
+          "warning"
+        );
+      } else {
+        showToast(
+          response.data?.message || "IPO Calendar collection completed.",
+          "success"
+        );
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        getApiErrorMessage(error, "Unable to run IPO Calendar collection."),
+        "error"
+      );
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+
+      activeSyncControllerRef.current = null;
+    }
+  }
 
   async function handleCompanyFundamentalsSync() {
     if (!isAdminControlAllowed) {
@@ -4436,6 +5049,196 @@ function DataCollection() {
     return selectedValues.length > 0;
   }
 
+  function handleEquityNewsSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedEquityNewsSearch(equityNewsSearch.trim());
+    setEquityNewsPage(1);
+  }
+
+  function handleClearEquityNewsSearch() {
+    setEquityNewsSearch("");
+    setAppliedEquityNewsSearch("");
+    setEquityNewsPage(1);
+  }
+
+  function clearEquityNewsSegment() {
+    setEquityNewsSegment("all");
+    setEquityNewsPage(1);
+  }
+
+  function hasAnyActiveEquityNewsFilter() {
+    return (
+      appliedEquityNewsSearch.trim() !== "" ||
+      equityNewsSegment !== "all" ||
+      equityNewsSortConfig.key !== null ||
+      Object.values(equityNewsColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllEquityNewsFilters() {
+    setEquityNewsSearch("");
+    setAppliedEquityNewsSearch("");
+    setEquityNewsSegment("all");
+    setEquityNewsColumnFilters({});
+    setDraftEquityNewsColumnFilters({});
+    setEquityNewsSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveEquityNewsFilter(null);
+    setEquityNewsPage(1);
+  }
+
+  function openEquityNewsColumnFilter(key) {
+    setDraftEquityNewsColumnFilters((previous) => ({
+      ...previous,
+      [key]: equityNewsColumnFilters[key] || []
+    }));
+
+    setActiveEquityNewsFilter((previous) => (previous === key ? null : key));
+  }
+
+  function applyEquityNewsColumnFilter(key) {
+    setEquityNewsColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftEquityNewsColumnFilters[key] || []
+    }));
+
+    setActiveEquityNewsFilter(null);
+  }
+
+  function clearEquityNewsColumnFilter(key) {
+    setEquityNewsColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftEquityNewsColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveEquityNewsFilter(null);
+  }
+
+  function handleEquityNewsSort(key, direction) {
+    setEquityNewsSortConfig({
+      key,
+      direction
+    });
+
+    setActiveEquityNewsFilter(null);
+  }
+
+  function isEquityNewsColumnFilterActive(key) {
+    const selectedValues = equityNewsColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
+  function handleIpoCalendarSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedIpoCalendarSearch(ipoCalendarSearch.trim());
+    setIpoCalendarPage(1);
+  }
+
+  function handleClearIpoCalendarSearch() {
+    setIpoCalendarSearch("");
+    setAppliedIpoCalendarSearch("");
+    setIpoCalendarPage(1);
+  }
+
+  function clearIpoCalendarStatus() {
+    setIpoCalendarStatus("all");
+    setIpoCalendarPage(1);
+  }
+
+  function clearIpoCalendarIssueType() {
+    setIpoCalendarIssueType("all");
+    setIpoCalendarPage(1);
+  }
+
+  function clearIpoCalendarIndustry() {
+    setIpoCalendarIndustry("all");
+    setIpoCalendarPage(1);
+  }
+
+  function hasAnyActiveIpoCalendarFilter() {
+    return (
+      appliedIpoCalendarSearch.trim() !== "" ||
+      ipoCalendarStatus !== "all" ||
+      ipoCalendarIssueType !== "all" ||
+      ipoCalendarIndustry !== "all" ||
+      ipoCalendarSortConfig.key !== null ||
+      Object.values(ipoCalendarColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllIpoCalendarFilters() {
+    setIpoCalendarSearch("");
+    setAppliedIpoCalendarSearch("");
+    setIpoCalendarStatus("all");
+    setIpoCalendarIssueType("all");
+    setIpoCalendarIndustry("all");
+    setIpoCalendarColumnFilters({});
+    setDraftIpoCalendarColumnFilters({});
+    setIpoCalendarSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveIpoCalendarFilter(null);
+    setIpoCalendarPage(1);
+  }
+
+  function openIpoCalendarColumnFilter(key) {
+    setDraftIpoCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: ipoCalendarColumnFilters[key] || []
+    }));
+
+    setActiveIpoCalendarFilter((previous) => (previous === key ? null : key));
+  }
+
+  function applyIpoCalendarColumnFilter(key) {
+    setIpoCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftIpoCalendarColumnFilters[key] || []
+    }));
+
+    setActiveIpoCalendarFilter(null);
+  }
+
+  function clearIpoCalendarColumnFilter(key) {
+    setIpoCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftIpoCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveIpoCalendarFilter(null);
+  }
+
+  function handleIpoCalendarSort(key, direction) {
+    setIpoCalendarSortConfig({
+      key,
+      direction
+    });
+
+    setActiveIpoCalendarFilter(null);
+  }
+
+  function isIpoCalendarColumnFilterActive(key) {
+    const selectedValues = ipoCalendarColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
   function handleCompanyFundamentalsSearchSubmit(event) {
     event.preventDefault();
     setAppliedCompanyFundamentalsSearch(companyFundamentalsSearch.trim());
@@ -4576,6 +5379,38 @@ function DataCollection() {
       setActiveOhlcvFilter(null);
       setOhlcvPage(1);
       setOhlcvPreviewData(emptyPreviewData);
+    }
+
+    if (nextView === "equity_news") {
+      setEquityNewsSearch("");
+      setAppliedEquityNewsSearch("");
+      setEquityNewsSegment("all");
+      setEquityNewsColumnFilters({});
+      setDraftEquityNewsColumnFilters({});
+      setEquityNewsSortConfig({
+        key: null,
+        direction: null
+      });
+      setActiveEquityNewsFilter(null);
+      setEquityNewsPage(1);
+      setEquityNewsPreviewData(emptyPreviewData);
+    }
+
+    if (nextView === "ipo_calendar") {
+      setIpoCalendarSearch("");
+      setAppliedIpoCalendarSearch("");
+      setIpoCalendarStatus("all");
+      setIpoCalendarIssueType("all");
+      setIpoCalendarIndustry("all");
+      setIpoCalendarColumnFilters({});
+      setDraftIpoCalendarColumnFilters({});
+      setIpoCalendarSortConfig({
+        key: null,
+        direction: null
+      });
+      setActiveIpoCalendarFilter(null);
+      setIpoCalendarPage(1);
+      setIpoCalendarPreviewData(emptyPreviewData);
     }
 
     if (nextView === "company_fundamentals") {
@@ -4858,6 +5693,132 @@ function DataCollection() {
     );
   }
 
+  function renderEquityNewsCell(row, column) {
+    if (column.key === "instrument_key") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-white">
+          {row.instrument_key || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "trading_symbol") {
+      return (
+        <span className="truncate oa-code-font text-cyan-200">
+          {row.trading_symbol || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "company_name" || column.key === "heading") {
+      return (
+        <span className="truncate text-white">
+          {getEquityNewsColumnValue(row, column.key) || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "segment" || column.key === "source") {
+      return (
+        <span className={`${oaPillStyles.base} border-zinc-600 bg-zinc-900 text-zinc-200`}>
+          {getEquityNewsColumnValue(row, column.key) || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "published_at" || column.key === "ingested_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row[column.key])}
+        </span>
+      );
+    }
+
+    if (column.key === "article_link") {
+      const articleLink = getEquityNewsColumnValue(row, column.key);
+
+      return articleLink ? (
+        <a
+          href={articleLink}
+          target="_blank"
+          rel="noreferrer"
+          className="truncate oa-code-font text-sky-300 hover:text-sky-200"
+        >
+          {articleLink}
+        </a>
+      ) : (
+        <span className="truncate oa-code-font text-oa-muted">--</span>
+      );
+    }
+
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {getEquityNewsColumnValue(row, column.key) || "--"}
+      </span>
+    );
+  }
+
+  function renderIpoCalendarCell(row, column) {
+    if (column.key === "ipo_id" || column.key === "isin") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-white">
+          {row[column.key] || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "symbol") {
+      return (
+        <span className="truncate oa-code-font text-cyan-200">
+          {row.symbol || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "name" || column.key === "industry") {
+      return <span className="truncate text-white">{row[column.key] || "--"}</span>;
+    }
+
+    if (column.key === "status") {
+      return <StatusBadge status={String(row.status || "").toLowerCase()} label={getSyncTypeLabel(row.status)} />;
+    }
+
+    if (column.key === "issue_type") {
+      return (
+        <span className={`${oaPillStyles.base} border-zinc-600 bg-zinc-900 text-zinc-200`}>
+          {getSyncTypeLabel(row.issue_type)}
+        </span>
+      );
+    }
+
+    if (column.key === "synced_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row.synced_at)}
+        </span>
+      );
+    }
+
+    if (
+      column.key === "issue_size" ||
+      column.key === "minimum_price" ||
+      column.key === "maximum_price" ||
+      column.key === "total_subscription"
+    ) {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatPrice(row[column.key])}
+        </span>
+      );
+    }
+
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {getIpoCalendarColumnValue(row, column.key) || "--"}
+      </span>
+    );
+  }
+
   function renderCompanyFundamentalsCell(row, column) {
     if (column.key === "isin" || column.key === "instrument_key") {
       return (
@@ -5003,6 +5964,31 @@ function DataCollection() {
   ]);
 
   useEffect(() => {
+    if (activeView !== "equity_news") {
+      return;
+    }
+
+    loadEquityNewsPreview(equityNewsPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, appliedEquityNewsSearch, equityNewsSegment, equityNewsPage]);
+
+  useEffect(() => {
+    if (activeView !== "ipo_calendar") {
+      return;
+    }
+
+    loadIpoCalendarPreview(ipoCalendarPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeView,
+    appliedIpoCalendarSearch,
+    ipoCalendarStatus,
+    ipoCalendarIssueType,
+    ipoCalendarIndustry,
+    ipoCalendarPage
+  ]);
+
+  useEffect(() => {
     if (activeView !== "company_fundamentals") {
       return;
     }
@@ -5046,6 +6032,32 @@ function DataCollection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, isMarketCalendarJobRunning, marketCalendarPage]);
 
+
+  useEffect(() => {
+    if (activeView !== "equity_news" || !isEquityNewsJobRunning) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadEquityNewsPreview(equityNewsPage, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isEquityNewsJobRunning, equityNewsPage]);
+
+  useEffect(() => {
+    if (activeView !== "ipo_calendar" || !isIpoCalendarJobRunning) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadIpoCalendarPreview(ipoCalendarPage, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isIpoCalendarJobRunning, ipoCalendarPage]);
 
   useEffect(() => {
     if (
@@ -5315,6 +6327,182 @@ function DataCollection() {
                 />
               ) : null}
 
+
+              {activeView === "equity_news" ? (
+                <GenericPreviewContent
+                  title="Equity News"
+                  searchPlaceholder="Search equity news"
+                  previewData={equityNewsPreviewData}
+                  rows={filteredEquityNewsRows}
+                  loading={equityNewsLoading}
+                  hasActiveJob={hasActiveJob}
+                  isAdminControlAllowed={isAdminControlAllowed}
+                  searchValue={equityNewsSearch}
+                  onSearchChange={setEquityNewsSearch}
+                  onSearchSubmit={handleEquityNewsSearchSubmit}
+                  onClearSearch={handleClearEquityNewsSearch}
+                  searchActive={appliedEquityNewsSearch.trim() !== ""}
+                  filters={[
+                    {
+                      value: equityNewsSegment,
+                      onChange: (event) => {
+                        setEquityNewsSegment(event.target.value);
+                        setEquityNewsPage(1);
+                      },
+                      options: segmentOptions,
+                      onClear: clearEquityNewsSegment,
+                      showClear: equityNewsSegment !== "all",
+                      ariaLabel: "Segment",
+                      minWidth: "w-36"
+                    }
+                  ]}
+                  hasActiveFilter={hasAnyActiveEquityNewsFilter()}
+                  onClearAll={clearAllEquityNewsFilters}
+                  onSchedule={() => openSchedulePopup("equity_news")}
+                  onRun={handleEquityNewsSync}
+                  onRefresh={() => loadEquityNewsPreview(equityNewsPage)}
+                  onPreviousPage={() =>
+                    setEquityNewsPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setEquityNewsPage((value) =>
+                      Math.min(equityNewsPreviewData.total_pages || 1, value + 1)
+                    )
+                  }
+                  onPageChange={(page) => setEquityNewsPage(page)}
+                  renderCell={renderEquityNewsCell}
+                  filterConfig={{
+                    activeFilter: activeEquityNewsFilter,
+                    headerValues: equityNewsHeaderValues,
+                    columnFilters: equityNewsColumnFilters,
+                    draftColumnFilters: draftEquityNewsColumnFilters,
+                    rightAlignedKeys: ["segment", "source", "published_at", "ingested_at"],
+                    isColumnFilterActive: isEquityNewsColumnFilterActive,
+                    onOpen: openEquityNewsColumnFilter,
+                    onClose: () => setActiveEquityNewsFilter(null),
+                    onChange: (key, values) =>
+                      setDraftEquityNewsColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyEquityNewsColumnFilter,
+                    onSort: handleEquityNewsSort,
+                    onClear: clearEquityNewsColumnFilter
+                  }}
+                  columns={equityNewsPreviewColumns}
+                  gridTemplateColumns={equityNewsPreviewGridTemplateColumns}
+                  minWidth="min-w-[2830px]"
+                  emptyMessage="No equity news found."
+                  getRowKey={(row, index) =>
+                    `${row.news_id || row.article_link || row.instrument_key || "news"}-${index}`
+                  }
+                />
+              ) : null}
+
+              {activeView === "ipo_calendar" ? (
+                <GenericPreviewContent
+                  title="IPO Calendar"
+                  searchPlaceholder="Search IPO calendar"
+                  previewData={ipoCalendarPreviewData}
+                  rows={filteredIpoCalendarRows}
+                  loading={ipoCalendarLoading}
+                  hasActiveJob={hasActiveJob}
+                  isAdminControlAllowed={isAdminControlAllowed}
+                  searchValue={ipoCalendarSearch}
+                  onSearchChange={setIpoCalendarSearch}
+                  onSearchSubmit={handleIpoCalendarSearchSubmit}
+                  onClearSearch={handleClearIpoCalendarSearch}
+                  searchActive={appliedIpoCalendarSearch.trim() !== ""}
+                  filters={[
+                    {
+                      value: ipoCalendarStatus,
+                      onChange: (event) => {
+                        setIpoCalendarStatus(event.target.value);
+                        setIpoCalendarPage(1);
+                      },
+                      options: ipoStatusOptions,
+                      onClear: clearIpoCalendarStatus,
+                      showClear: ipoCalendarStatus !== "all",
+                      ariaLabel: "IPO status",
+                      minWidth: "w-36"
+                    },
+                    {
+                      value: ipoCalendarIssueType,
+                      onChange: (event) => {
+                        setIpoCalendarIssueType(event.target.value);
+                        setIpoCalendarPage(1);
+                      },
+                      options: ipoIssueTypeOptions,
+                      onClear: clearIpoCalendarIssueType,
+                      showClear: ipoCalendarIssueType !== "all",
+                      ariaLabel: "Issue type",
+                      minWidth: "w-40"
+                    },
+                    {
+                      value: ipoCalendarIndustry,
+                      onChange: (event) => {
+                        setIpoCalendarIndustry(event.target.value);
+                        setIpoCalendarPage(1);
+                      },
+                      options: ipoIndustryOptions,
+                      onClear: clearIpoCalendarIndustry,
+                      showClear: ipoCalendarIndustry !== "all",
+                      ariaLabel: "Industry",
+                      minWidth: "w-40"
+                    }
+                  ]}
+                  hasActiveFilter={hasAnyActiveIpoCalendarFilter()}
+                  onClearAll={clearAllIpoCalendarFilters}
+                  onSchedule={() => openSchedulePopup("ipo_calendar")}
+                  onRun={handleIpoCalendarSync}
+                  onRefresh={() => loadIpoCalendarPreview(ipoCalendarPage)}
+                  onPreviousPage={() =>
+                    setIpoCalendarPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setIpoCalendarPage((value) =>
+                      Math.min(ipoCalendarPreviewData.total_pages || 1, value + 1)
+                    )
+                  }
+                  onPageChange={(page) => setIpoCalendarPage(page)}
+                  renderCell={renderIpoCalendarCell}
+                  filterConfig={{
+                    activeFilter: activeIpoCalendarFilter,
+                    headerValues: ipoCalendarHeaderValues,
+                    columnFilters: ipoCalendarColumnFilters,
+                    draftColumnFilters: draftIpoCalendarColumnFilters,
+                    rightAlignedKeys: [
+                      "status",
+                      "issue_type",
+                      "issue_size",
+                      "minimum_price",
+                      "maximum_price",
+                      "bidding_start_date",
+                      "bidding_end_date",
+                      "total_subscription",
+                      "synced_at"
+                    ],
+                    isColumnFilterActive: isIpoCalendarColumnFilterActive,
+                    onOpen: openIpoCalendarColumnFilter,
+                    onClose: () => setActiveIpoCalendarFilter(null),
+                    onChange: (key, values) =>
+                      setDraftIpoCalendarColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyIpoCalendarColumnFilter,
+                    onSort: handleIpoCalendarSort,
+                    onClear: clearIpoCalendarColumnFilter
+                  }}
+                  columns={ipoCalendarPreviewColumns}
+                  gridTemplateColumns={ipoCalendarPreviewGridTemplateColumns}
+                  minWidth="min-w-[2730px]"
+                  emptyMessage="No IPO records found."
+                  getRowKey={(row, index) =>
+                    `${row.ipo_id || row.id || row.symbol || "ipo"}-${index}`
+                  }
+                />
+              ) : null}
 
               {activeView === "company_fundamentals" ? (
                 <CompanyFundamentalsContent
