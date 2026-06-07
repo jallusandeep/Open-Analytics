@@ -68,6 +68,12 @@ OHLCV_DEFAULT_BATCH_SIZE = 25
 OHLCV_DEFAULT_REQUEST_DELAY_MS = 500
 OHLCV_DEFAULT_BATCH_DELAY_SECONDS = 2
 OHLCV_DEFAULT_RETRY_COUNT = 3
+OHLCV_CURRENT_HISTORY_START_DATE = date(2000, 1, 1)
+OHLCV_INTRADAY_HISTORY_START_DATE = date(2022, 1, 1)
+OHLCV_CURRENT_DAILY_MAX_DAYS = 3653
+OHLCV_CURRENT_INTRADAY_SMALL_MAX_DAYS = 31
+OHLCV_CURRENT_INTRADAY_LARGE_MAX_DAYS = 92
+OHLCV_EXPIRED_MAX_DAYS = 3650
 
 OHLCV_INTERVAL_OPTIONS = {
     "1minute": {"label": "1 minute", "unit": "minutes", "interval_value": 1, "expired_interval": "1minute"},
@@ -2714,7 +2720,6 @@ def normalize_ohlcv_interval_key(value: Any) -> str:
 def normalize_ohlcv_config(payload: Optional[dict]) -> dict:
     payload = payload or {}
     today = datetime.now().date()
-    default_from_date = today - timedelta(days=30)
 
     selected_sources = normalize_string_list(
         payload.get("sources") or payload.get("selected_sources"),
@@ -2760,8 +2765,30 @@ def normalize_ohlcv_config(payload: Optional[dict]) -> dict:
             detail="Select at least one OHLCV interval."
         )
 
-    from_date = parse_iso_date(payload.get("from_date"), "from_date", default_from_date)
-    to_date = parse_iso_date(payload.get("to_date"), "to_date", today)
+    raw_from_date = payload.get("from_date")
+    raw_to_date = payload.get("to_date")
+
+    from_date_was_provided = raw_from_date not in (None, "")
+    to_date_was_provided = raw_to_date not in (None, "")
+
+    use_current_day = normalize_bool(
+        payload.get("use_current_day") if "use_current_day" in payload else payload.get("to_current_day"),
+        not to_date_was_provided
+    )
+    auto_date_range = normalize_bool(
+        payload.get("auto_date_range"),
+        not from_date_was_provided
+    )
+
+    from_date = parse_iso_date(
+        raw_from_date,
+        "from_date",
+        OHLCV_CURRENT_HISTORY_START_DATE
+    )
+    to_date = today if use_current_day else parse_iso_date(raw_to_date, "to_date", today)
+
+    if to_date > today:
+        to_date = today
 
     if to_date < from_date:
         raise HTTPException(
@@ -2770,7 +2797,7 @@ def normalize_ohlcv_config(payload: Optional[dict]) -> dict:
         )
 
     if OHLCV_INTRADAY_MODE in selected_modes:
-        to_date = today
+        to_date = today if use_current_day else min(to_date, today)
 
     instrument_limit = normalize_optional_positive_int(payload.get("instrument_limit"), 1, 1000000)
     single_instrument_key = safe_strip(payload.get("single_instrument_key"))
@@ -2806,6 +2833,10 @@ def normalize_ohlcv_config(payload: Optional[dict]) -> dict:
         "intervals": selected_intervals,
         "from_date": from_date,
         "to_date": to_date,
+        "from_date_was_provided": from_date_was_provided,
+        "to_date_was_provided": to_date_was_provided,
+        "use_current_day": use_current_day,
+        "auto_date_range": auto_date_range,
         "skip_existing": normalize_bool(payload.get("skip_existing"), True),
         "respect_api_limits": normalize_bool(payload.get("respect_api_limits"), True),
         "retry_failed": normalize_bool(payload.get("retry_failed"), True),
@@ -2822,19 +2853,26 @@ def ohlcv_config_to_jsonable(config: dict) -> dict:
     return {
         **config,
         "from_date": config["from_date"].isoformat(),
-        "to_date": config["to_date"].isoformat()
+        "to_date": config["to_date"].isoformat(),
+        "from_date_was_provided": bool(config.get("from_date_was_provided")),
+        "to_date_was_provided": bool(config.get("to_date_was_provided")),
+        "use_current_day": bool(config.get("use_current_day")),
+        "auto_date_range": bool(config.get("auto_date_range"))
     }
 
 def get_default_ohlcv_options_payload() -> dict:
     today = datetime.now().date()
-    from_date = today - timedelta(days=30)
 
     return {
         "sources": OHLCV_DEFAULT_SOURCES.copy(),
         "candle_modes": OHLCV_DEFAULT_MODES.copy(),
         "intervals": OHLCV_DEFAULT_INTERVALS.copy(),
-        "from_date": from_date.isoformat(),
+        "from_date": OHLCV_CURRENT_HISTORY_START_DATE.isoformat(),
         "to_date": today.isoformat(),
+        "from_date_was_provided": False,
+        "to_date_was_provided": False,
+        "use_current_day": True,
+        "auto_date_range": True,
         "skip_existing": True,
         "respect_api_limits": True,
         "retry_failed": True,
@@ -3044,19 +3082,19 @@ def get_ohlcv_interval_definition(interval_key: str) -> dict:
 
 def get_ohlcv_chunk_days(unit: str, interval_value: int, source: str) -> Optional[int]:
     if source == OHLCV_EXPIRED_SOURCE:
-        return 31 if unit == "minutes" else 3650
+        return OHLCV_CURRENT_INTRADAY_SMALL_MAX_DAYS if unit == "minutes" else OHLCV_EXPIRED_MAX_DAYS
 
     if unit == "minutes" and interval_value <= 15:
-        return 31
+        return OHLCV_CURRENT_INTRADAY_SMALL_MAX_DAYS
 
     if unit == "minutes" and interval_value > 15:
-        return 92
+        return OHLCV_CURRENT_INTRADAY_LARGE_MAX_DAYS
 
     if unit == "hours":
-        return 92
+        return OHLCV_CURRENT_INTRADAY_LARGE_MAX_DAYS
 
     if unit == "days":
-        return 3652
+        return OHLCV_CURRENT_DAILY_MAX_DAYS
 
     return None
 
@@ -3139,6 +3177,279 @@ def all_dates_exist_for_chunk(
     day_count = (to_date - from_date).days + 1
 
     return len(existing_dates) >= day_count
+
+def get_ohlcv_available_start_date(source: str, mode: str, unit: str) -> date:
+    if source == OHLCV_CURRENT_SOURCE and mode == OHLCV_HISTORICAL_MODE:
+        if unit in ("minutes", "hours"):
+            return OHLCV_INTRADAY_HISTORY_START_DATE
+
+        return OHLCV_CURRENT_HISTORY_START_DATE
+
+    if source == OHLCV_CURRENT_SOURCE and mode == OHLCV_INTRADAY_MODE:
+        return OHLCV_INTRADAY_HISTORY_START_DATE
+
+    return OHLCV_CURRENT_HISTORY_START_DATE
+
+
+
+def build_ohlcv_saved_bounds_cache(
+    conn,
+    source: str,
+    config: dict,
+    instruments: List[dict]
+) -> dict:
+    instrument_keys = unique_preserve_order([
+        safe_strip(instrument.get("instrument_key"))
+        for instrument in instruments
+        if safe_strip(instrument.get("instrument_key"))
+    ])
+
+    if not instrument_keys:
+        return {}
+
+    interval_rows = []
+
+    for mode in config["candle_modes"]:
+        for interval_key in config["intervals"]:
+            interval = OHLCV_INTERVAL_OPTIONS.get(interval_key)
+
+            if not interval:
+                continue
+
+            interval_rows.append((
+                mode,
+                interval["unit"],
+                int(interval["interval_value"])
+            ))
+
+    if not interval_rows:
+        return {}
+
+    try:
+        conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_instruments")
+        conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_intervals")
+
+        conn.execute("""
+            CREATE TEMP TABLE temp_ohlcv_plan_instruments (
+                instrument_key VARCHAR
+            );
+        """)
+
+        conn.execute("""
+            CREATE TEMP TABLE temp_ohlcv_plan_intervals (
+                candle_mode VARCHAR,
+                unit VARCHAR,
+                interval_value INTEGER
+            );
+        """)
+
+        conn.executemany("""
+            INSERT INTO temp_ohlcv_plan_instruments (instrument_key)
+            VALUES (?);
+        """, [(instrument_key,) for instrument_key in instrument_keys])
+
+        conn.executemany("""
+            INSERT INTO temp_ohlcv_plan_intervals (
+                candle_mode,
+                unit,
+                interval_value
+            )
+            VALUES (?, ?, ?);
+        """, interval_rows)
+
+        rows = conn.execute("""
+            SELECT
+                candles.candle_mode,
+                candles.instrument_key,
+                candles.unit,
+                candles.interval_value,
+                MIN(candles.candle_date) AS min_date,
+                MAX(candles.candle_date) AS max_date,
+                COUNT(1) AS row_count
+            FROM upstox_ohlcv_candles candles
+            INNER JOIN temp_ohlcv_plan_instruments instruments
+                ON instruments.instrument_key = candles.instrument_key
+            INNER JOIN temp_ohlcv_plan_intervals intervals
+                ON intervals.candle_mode = candles.candle_mode
+               AND intervals.unit = candles.unit
+               AND intervals.interval_value = candles.interval_value
+            WHERE candles.provider = ?
+              AND candles.instrument_source = ?
+            GROUP BY
+                candles.candle_mode,
+                candles.instrument_key,
+                candles.unit,
+                candles.interval_value;
+        """, [
+            UPSTOX_PROVIDER,
+            source
+        ]).fetchall()
+
+        cache = {}
+
+        for row in rows:
+            cache[(
+                row[0],
+                row[1],
+                row[2],
+                int(row[3] or 0)
+            )] = {
+                "min_date": row[4],
+                "max_date": row[5],
+                "count": int(row[6] or 0)
+            }
+
+        log_ohlcv_message(
+            f"Loaded saved OHLCV bounds cache for source={source}: "
+            f"{len(cache)} instrument/mode/interval groups."
+        )
+
+        return cache
+
+    finally:
+        try:
+            conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_intervals")
+            conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_instruments")
+        except Exception:
+            pass
+
+def get_saved_ohlcv_date_bounds(
+    conn,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    saved_bounds_cache: Optional[dict] = None
+) -> dict:
+    cache_key = (
+        mode,
+        instrument_key,
+        unit,
+        int(interval_value or 0)
+    )
+
+    if saved_bounds_cache is not None:
+        return saved_bounds_cache.get(cache_key, {
+            "min_date": None,
+            "max_date": None,
+            "count": 0
+        })
+
+    row = conn.execute("""
+        SELECT
+            MIN(candle_date),
+            MAX(candle_date),
+            COUNT(1)
+        FROM upstox_ohlcv_candles
+        WHERE provider = ?
+          AND instrument_source = ?
+          AND candle_mode = ?
+          AND instrument_key = ?
+          AND unit = ?
+          AND interval_value = ?;
+    """, [
+        UPSTOX_PROVIDER,
+        source,
+        mode,
+        instrument_key,
+        unit,
+        interval_value
+    ]).fetchone()
+
+    if not row:
+        return {
+            "min_date": None,
+            "max_date": None,
+            "count": 0
+        }
+
+    return {
+        "min_date": row[0],
+        "max_date": row[1],
+        "count": int(row[2] or 0)
+    }
+
+
+def should_skip_ohlcv_chunk_by_saved_bounds(
+    conn,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    from_date: date,
+    to_date: date
+) -> bool:
+    bounds = get_saved_ohlcv_date_bounds(
+        conn=conn,
+        source=source,
+        mode=mode,
+        instrument_key=instrument_key,
+        unit=unit,
+        interval_value=interval_value
+    )
+
+    min_date = bounds.get("min_date")
+    max_date = bounds.get("max_date")
+
+    if not min_date or not max_date:
+        return False
+
+    return min_date <= from_date and max_date >= to_date
+
+
+def get_effective_ohlcv_date_range_for_instrument(
+    conn,
+    config: dict,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    saved_bounds_cache: Optional[dict] = None
+) -> Optional[dict]:
+    available_start_date = get_ohlcv_available_start_date(
+        source=source,
+        mode=mode,
+        unit=unit
+    )
+    effective_from_date = max(config["from_date"], available_start_date)
+    effective_to_date = config["to_date"]
+
+    if effective_to_date < effective_from_date:
+        return None
+
+    if (
+        config.get("skip_existing")
+        and config.get("auto_date_range")
+        and not config.get("from_date_was_provided")
+    ):
+        bounds = get_saved_ohlcv_date_bounds(
+            conn=conn,
+            source=source,
+            mode=mode,
+            instrument_key=instrument_key,
+            unit=unit,
+            interval_value=interval_value,
+            saved_bounds_cache=saved_bounds_cache
+        )
+        saved_max_date = bounds.get("max_date")
+
+        if saved_max_date:
+            effective_from_date = max(
+                effective_from_date,
+                saved_max_date + timedelta(days=1)
+            )
+
+            if effective_from_date > effective_to_date:
+                return None
+
+    return {
+        "from_date": effective_from_date,
+        "to_date": effective_to_date
+    }
+
 
 
 def fetch_ohlcv_instruments(conn, source: str, config: dict) -> List[dict]:
@@ -3583,66 +3894,205 @@ def count_ohlcv_records_for_sync(
     sync_id: Optional[str],
     started_at: Optional[datetime] = None
 ) -> int:
-    if not sync_id and not started_at:
+    if not sync_id:
         return 0
 
     try:
-        if sync_id:
-            row = conn.execute("""
-                SELECT COUNT(*)
-                FROM upstox_ohlcv_candles
-                WHERE source_sync_id = ?;
-            """, [sync_id]).fetchone()
+        row = conn.execute("""
+            SELECT COUNT(*)
+            FROM upstox_ohlcv_candles
+            WHERE source_sync_id = ?;
+        """, [sync_id]).fetchone()
 
-            sync_count = int(row[0] or 0) if row else 0
-
-            if sync_count > 0:
-                return sync_count
-
-        if started_at:
-            row = conn.execute("""
-                SELECT COUNT(*)
-                FROM upstox_ohlcv_candles
-                WHERE ingested_at >= ?;
-            """, [started_at]).fetchone()
-
-            return int(row[0] or 0) if row else 0
-
-        return 0
+        return int(row[0] or 0) if row else 0
 
     except Exception as error:
         log_ohlcv_message(f"Unable to count saved records for sync {sync_id}: {error}")
         return 0
 
 def filter_new_ohlcv_records(conn, records: List[dict]) -> List[dict]:
-    new_records = []
+    if not records:
+        return []
 
-    for record in records:
-        row = conn.execute("""
-            SELECT 1
-            FROM upstox_ohlcv_candles
-            WHERE provider = ?
-              AND instrument_source = ?
-              AND candle_mode = ?
-              AND instrument_key = ?
-              AND unit = ?
-              AND interval_value = ?
-              AND candle_timestamp = ?
-            LIMIT 1;
+    try:
+        conn.execute("DROP TABLE IF EXISTS temp_ohlcv_incoming_records")
+
+        conn.execute("""
+            CREATE TEMP TABLE temp_ohlcv_incoming_records (
+                provider VARCHAR,
+                instrument_source VARCHAR,
+                candle_mode VARCHAR,
+                instrument_key VARCHAR,
+                trading_symbol VARCHAR,
+                name VARCHAR,
+                exchange VARCHAR,
+                segment VARCHAR,
+                isin VARCHAR,
+                expiry VARCHAR,
+                instrument_type VARCHAR,
+                unit VARCHAR,
+                interval_value INTEGER,
+                interval_label VARCHAR,
+                candle_timestamp TIMESTAMP,
+                candle_date DATE,
+                open_price DOUBLE,
+                high_price DOUBLE,
+                low_price DOUBLE,
+                close_price DOUBLE,
+                volume DOUBLE,
+                open_interest DOUBLE,
+                source_sync_id VARCHAR,
+                raw_json VARCHAR
+            );
+        """)
+
+        conn.executemany("""
+            INSERT INTO temp_ohlcv_incoming_records (
+                provider,
+                instrument_source,
+                candle_mode,
+                instrument_key,
+                trading_symbol,
+                name,
+                exchange,
+                segment,
+                isin,
+                expiry,
+                instrument_type,
+                unit,
+                interval_value,
+                interval_label,
+                candle_timestamp,
+                candle_date,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                volume,
+                open_interest,
+                source_sync_id,
+                raw_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, [
-            record.get("provider"),
-            record.get("instrument_source"),
-            record.get("candle_mode"),
-            record.get("instrument_key"),
-            record.get("unit"),
-            record.get("interval_value"),
-            record.get("candle_timestamp")
-        ]).fetchone()
+            (
+                record.get("provider"),
+                record.get("instrument_source"),
+                record.get("candle_mode"),
+                record.get("instrument_key"),
+                record.get("trading_symbol"),
+                record.get("name"),
+                record.get("exchange"),
+                record.get("segment"),
+                record.get("isin"),
+                record.get("expiry"),
+                record.get("instrument_type"),
+                record.get("unit"),
+                int(record.get("interval_value") or 0),
+                record.get("interval_label"),
+                record.get("candle_timestamp"),
+                record.get("candle_date"),
+                record.get("open_price"),
+                record.get("high_price"),
+                record.get("low_price"),
+                record.get("close_price"),
+                record.get("volume"),
+                record.get("open_interest"),
+                record.get("source_sync_id"),
+                record.get("raw_json")
+            )
+            for record in records
+        ])
 
-        if not row:
-            new_records.append(record)
+        rows = conn.execute("""
+            SELECT
+                incoming.provider,
+                incoming.instrument_source,
+                incoming.candle_mode,
+                incoming.instrument_key,
+                incoming.trading_symbol,
+                incoming.name,
+                incoming.exchange,
+                incoming.segment,
+                incoming.isin,
+                incoming.expiry,
+                incoming.instrument_type,
+                incoming.unit,
+                incoming.interval_value,
+                incoming.interval_label,
+                incoming.candle_timestamp,
+                incoming.candle_date,
+                incoming.open_price,
+                incoming.high_price,
+                incoming.low_price,
+                incoming.close_price,
+                incoming.volume,
+                incoming.open_interest,
+                incoming.source_sync_id,
+                incoming.raw_json
+            FROM (
+                SELECT
+                    *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY
+                            provider,
+                            instrument_source,
+                            candle_mode,
+                            instrument_key,
+                            unit,
+                            interval_value,
+                            candle_timestamp
+                        ORDER BY candle_timestamp
+                    ) AS duplicate_rank
+                FROM temp_ohlcv_incoming_records
+            ) incoming
+            LEFT JOIN upstox_ohlcv_candles existing
+                ON existing.provider = incoming.provider
+               AND existing.instrument_source = incoming.instrument_source
+               AND existing.candle_mode = incoming.candle_mode
+               AND existing.instrument_key = incoming.instrument_key
+               AND existing.unit = incoming.unit
+               AND existing.interval_value = incoming.interval_value
+               AND existing.candle_timestamp = incoming.candle_timestamp
+            WHERE incoming.duplicate_rank = 1
+              AND existing.instrument_key IS NULL;
+        """).fetchall()
 
-    return new_records
+        return [
+            {
+                "provider": row[0],
+                "instrument_source": row[1],
+                "candle_mode": row[2],
+                "instrument_key": row[3],
+                "trading_symbol": row[4],
+                "name": row[5],
+                "exchange": row[6],
+                "segment": row[7],
+                "isin": row[8],
+                "expiry": row[9],
+                "instrument_type": row[10],
+                "unit": row[11],
+                "interval_value": row[12],
+                "interval_label": row[13],
+                "candle_timestamp": row[14],
+                "candle_date": row[15],
+                "open_price": row[16],
+                "high_price": row[17],
+                "low_price": row[18],
+                "close_price": row[19],
+                "volume": row[20],
+                "open_interest": row[21],
+                "source_sync_id": row[22],
+                "raw_json": row[23]
+            }
+            for row in rows
+        ]
+
+    finally:
+        try:
+            conn.execute("DROP TABLE IF EXISTS temp_ohlcv_incoming_records")
+        except Exception:
+            pass
 
 def persist_ohlcv_records(conn, records: List[dict]) -> int:
     if not records:
@@ -3710,6 +4160,8 @@ def sync_upstox_ohlcv_daily_service(
             f"intervals={normalized_config['intervals']} "
             f"from={normalized_config['from_date']} "
             f"to={normalized_config['to_date']} "
+            f"use_current_day={normalized_config['use_current_day']} "
+            f"auto_date_range={normalized_config['auto_date_range']} "
             f"limit={normalized_config['instrument_limit'] or 'all'} "
             f"single={normalized_config['single_instrument_key'] or '--'}"
         )
@@ -3751,6 +4203,13 @@ def sync_upstox_ohlcv_daily_service(
 
             log_ohlcv_message(
                 f"Source {source}: {len(instruments)} instruments loaded."
+            )
+
+            saved_bounds_cache = build_ohlcv_saved_bounds_cache(
+                conn=conn,
+                source=source,
+                config=normalized_config,
+                instruments=instruments
             )
 
             for instrument_index, instrument in enumerate(instruments, start=1):
@@ -3809,9 +4268,29 @@ def sync_upstox_ohlcv_daily_service(
                             update_ohlcv_metrics_progress(conn, sync_id, metrics)
                             continue
 
+                        effective_range = get_effective_ohlcv_date_range_for_instrument(
+                            conn=conn,
+                            config=normalized_config,
+                            source=source,
+                            mode=mode,
+                            instrument_key=instrument_key,
+                            unit=interval["unit"],
+                            interval_value=interval["interval_value"],
+                            saved_bounds_cache=saved_bounds_cache
+                        )
+
+                        if not effective_range:
+                            metrics["api_calls_skipped"] += 1
+                            log_ohlcv_message(
+                                f"Skipped {instrument_key}: saved data already reaches "
+                                f"{normalized_config['to_date']} for {source} {mode} {interval_key}."
+                            )
+                            update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                            continue
+
                         chunks = split_ohlcv_date_range(
-                            from_date=normalized_config["from_date"],
-                            to_date=normalized_config["to_date"],
+                            from_date=effective_range["from_date"],
+                            to_date=effective_range["to_date"],
                             unit=interval["unit"],
                             interval_value=interval["interval_value"],
                             source=source
@@ -3820,8 +4299,8 @@ def sync_upstox_ohlcv_daily_service(
                         if mode == OHLCV_INTRADAY_MODE:
                             chunks = [
                                 {
-                                    "from_date": normalized_config["to_date"],
-                                    "to_date": normalized_config["to_date"]
+                                    "from_date": effective_range["to_date"],
+                                    "to_date": effective_range["to_date"]
                                 }
                             ]
 
@@ -3831,7 +4310,7 @@ def sync_upstox_ohlcv_daily_service(
                             chunk_from = chunk["from_date"]
                             chunk_to = chunk["to_date"]
 
-                            if normalized_config["skip_existing"] and all_dates_exist_for_chunk(
+                            if normalized_config["skip_existing"] and should_skip_ohlcv_chunk_by_saved_bounds(
                                 conn=conn,
                                 source=source,
                                 mode=mode,
@@ -3846,7 +4325,7 @@ def sync_upstox_ohlcv_daily_service(
                                 metrics["candles_skipped"] += skipped_days
                                 log_ohlcv_message(
                                     f"Skipped API call {instrument_key} {source} {mode} "
-                                    f"{interval_key} {chunk_from} to {chunk_to}: already downloaded."
+                                    f"{interval_key} {chunk_from} to {chunk_to}: saved date range already covers it."
                                 )
                                 update_ohlcv_metrics_progress(conn, sync_id, metrics)
                                 continue
@@ -3960,7 +4439,7 @@ def sync_upstox_ohlcv_daily_service(
                                 update_ohlcv_metrics_progress(conn, sync_id, metrics)
                                 continue
 
-        total_records = count_ohlcv_records_for_sync(conn, sync_id, started_at) or total_records
+        total_records = count_ohlcv_records_for_sync(conn, sync_id) or total_records
         metrics["candles_inserted"] = max(
             int(metrics.get("candles_inserted") or 0),
             int(total_records or 0)

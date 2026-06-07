@@ -94,6 +94,8 @@ const emptyOhlcvForm = {
   intervals: ["day"],
   from_date: "",
   to_date: "",
+  use_current_day: true,
+  auto_date_range: true,
   skip_existing: true,
   respect_api_limits: true,
   retry_failed: true,
@@ -320,7 +322,6 @@ function formatDateTime(value) {
     hour12: true
   });
 }
-
 
 function normalizeCellValue(value) {
   if (value === null || value === undefined || value === "") {
@@ -1401,72 +1402,16 @@ function DbPreviewContent({
         />
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
-        <span>
-          Records: {formatNumber(previewData.total_records)} | Page{" "}
-          {previewData.page} of {previewData.total_pages}
-        </span>
-
-        <div className="flex items-center gap-1.5">
-          <IconButton
-            icon={ChevronLeft}
-            label="Previous"
-            variant="default"
-            disabled={previewData.page <= 1 || loading}
-            onClick={onPreviousPage}
-            tooltipSide="top"
-          />
-
-          <div className="flex items-center gap-1">
-            {getPaginationItems(previewData.page, previewData.total_pages).map(
-              (item) => {
-                if (String(item).includes("ellipsis")) {
-                  return (
-                    <span
-                      key={item}
-                      className="flex h-8 min-w-8 items-center justify-center px-1 text-[12px] text-oa-muted"
-                    >
-                      ...
-                    </span>
-                  );
-                }
-
-                const active = Number(item) === Number(previewData.page);
-
-                return (
-                  <button
-                    key={item}
-                    type="button"
-                    disabled={loading || active}
-                    onClick={() => onPageChange(item)}
-                    className={`flex h-8 min-w-8 items-center justify-center rounded border px-2 text-[12px] font-semibold outline-none transition ${
-                      active
-                        ? "border-sky-500/60 bg-sky-950/40 text-sky-200"
-                        : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white focus:border-sky-500"
-                    } disabled:cursor-default`}
-                    aria-label={`Go to page ${item}`}
-                  >
-                    {item}
-                  </button>
-                );
-              }
-            )}
-          </div>
-
-          <IconButton
-            icon={ChevronRight}
-            label="Next"
-            variant="default"
-            disabled={previewData.page >= previewData.total_pages || loading}
-            onClick={onNextPage}
-            tooltipSide="top"
-          />
-        </div>
-      </div>
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
     </div>
   );
 }
-
 
 function CheckboxGroup({ title, helper, options, selectedValues, onChange }) {
   function toggleValue(value) {
@@ -1517,6 +1462,8 @@ function OhlcvOptionsModal({
   onMultiChange,
   onSave
 }) {
+  const useCurrentDay = Boolean(formData.use_current_day);
+  const autoDateRange = Boolean(formData.auto_date_range);
   const canSave =
     formData.sources.length > 0 &&
     formData.candle_modes.length > 0 &&
@@ -1560,8 +1507,6 @@ function OhlcvOptionsModal({
         onSubmit={handleSubmit}
         className="max-h-[calc(100vh-190px)] space-y-4 overflow-y-auto pb-4 pr-1 oa-table-font"
       >
-
-
         <CheckboxGroup
           title="Instrument Source"
           options={ohlcvSourceOptions}
@@ -1583,30 +1528,70 @@ function OhlcvOptionsModal({
           onChange={(values) => onMultiChange("intervals", values)}
         />
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <div>
-            <label className={oaFormTextStyles.label}>From Date</label>
-            <div className="mt-1">
-              <DatePicker
-                name="from_date"
-                value={formData.from_date}
-                onChange={onChange}
-                placeholder="From date"
-                ariaLabel="Select from date"
-              />
+        <div className="rounded border border-oa-border bg-black p-3">
+          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
+                Date Range
+              </p>
+              <p className="mt-1 text-[11px] text-oa-muted">
+                Leave From Date empty to continue from the last saved candle, or from Upstox available history.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
+                <input
+                  type="checkbox"
+                  name="auto_date_range"
+                  checked={autoDateRange}
+                  onChange={onChange}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <span>Auto start from saved data</span>
+              </label>
+
+              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
+                <input
+                  type="checkbox"
+                  name="use_current_day"
+                  checked={useCurrentDay}
+                  onChange={onChange}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <Check size={14} className={useCurrentDay ? "text-emerald-300" : "text-oa-muted"} />
+                <span>Current day</span>
+              </label>
             </div>
           </div>
 
-          <div>
-            <label className={oaFormTextStyles.label}>To Date</label>
-            <div className="mt-1">
-              <DatePicker
-                name="to_date"
-                value={formData.to_date}
-                onChange={onChange}
-                placeholder="To date"
-                ariaLabel="Select to date"
-              />
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label className={oaFormTextStyles.label}>From Date</label>
+              <div className={`mt-1 ${autoDateRange ? "opacity-60" : ""}`}>
+                <DatePicker
+                  name="from_date"
+                  value={formData.from_date}
+                  onChange={onChange}
+                  placeholder={autoDateRange ? "Auto from saved / available" : "From date"}
+                  ariaLabel="Select from date"
+                  disabled={autoDateRange}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>To Date</label>
+              <div className={`mt-1 ${useCurrentDay ? "opacity-60" : ""}`}>
+                <DatePicker
+                  name="to_date"
+                  value={useCurrentDay ? "" : formData.to_date}
+                  onChange={onChange}
+                  placeholder={useCurrentDay ? "Current day" : "To date"}
+                  ariaLabel="Select to date"
+                  disabled={useCurrentDay}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1769,67 +1754,85 @@ function OhlcvTabContent({
         />
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
-        <span>
-          Records: {formatNumber(previewData.total_records)} | Page{" "}
-          {previewData.page} of {previewData.total_pages}
-        </span>
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
 
-        <div className="flex items-center gap-1.5">
-          <IconButton
-            icon={ChevronLeft}
-            label="Previous"
-            variant="default"
-            disabled={previewData.page <= 1 || loading}
-            onClick={onPreviousPage}
-            tooltipSide="top"
-          />
+function PaginationFooter({
+  previewData,
+  loading,
+  onPreviousPage,
+  onNextPage,
+  onPageChange
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
+      <span>
+        Records: {formatNumber(previewData.total_records)} | Page {" "}
+        {previewData.page} of {previewData.total_pages}
+      </span>
 
-          <div className="flex items-center gap-1">
-            {getPaginationItems(previewData.page, previewData.total_pages).map(
-              (item) => {
-                if (String(item).includes("ellipsis")) {
-                  return (
-                    <span
-                      key={item}
-                      className="flex h-8 min-w-8 items-center justify-center px-1 text-[12px] text-oa-muted"
-                    >
-                      ...
-                    </span>
-                  );
-                }
+      <div className="flex items-center gap-1.5">
+        <IconButton
+          icon={ChevronLeft}
+          label="Previous"
+          variant="default"
+          disabled={previewData.page <= 1 || loading}
+          onClick={onPreviousPage}
+          tooltipSide="top"
+        />
 
-                const active = Number(item) === Number(previewData.page);
-
+        <div className="flex items-center gap-1">
+          {getPaginationItems(previewData.page, previewData.total_pages).map(
+            (item) => {
+              if (String(item).includes("ellipsis")) {
                 return (
-                  <button
+                  <span
                     key={item}
-                    type="button"
-                    disabled={loading || active}
-                    onClick={() => onPageChange(item)}
-                    className={`flex h-8 min-w-8 items-center justify-center rounded border px-2 text-[12px] font-semibold outline-none transition ${
-                      active
-                        ? "border-sky-500/60 bg-sky-950/40 text-sky-200"
-                        : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white focus:border-sky-500"
-                    } disabled:cursor-default`}
-                    aria-label={`Go to page ${item}`}
+                    className="flex h-8 min-w-8 items-center justify-center px-1 text-[12px] text-oa-muted"
                   >
-                    {item}
-                  </button>
+                    ...
+                  </span>
                 );
               }
-            )}
-          </div>
 
-          <IconButton
-            icon={ChevronRight}
-            label="Next"
-            variant="default"
-            disabled={previewData.page >= previewData.total_pages || loading}
-            onClick={onNextPage}
-            tooltipSide="top"
-          />
+              const active = Number(item) === Number(previewData.page);
+
+              return (
+                <button
+                  key={item}
+                  type="button"
+                  disabled={loading || active}
+                  onClick={() => onPageChange(item)}
+                  className={`flex h-8 min-w-8 items-center justify-center rounded border px-2 text-[12px] font-semibold outline-none transition ${
+                    active
+                      ? "border-sky-500/60 bg-sky-950/40 text-sky-200"
+                      : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white focus:border-sky-500"
+                  } disabled:cursor-default`}
+                  aria-label={`Go to page ${item}`}
+                >
+                  {item}
+                </button>
+              );
+            }
+          )}
         </div>
+
+        <IconButton
+          icon={ChevronRight}
+          label="Next"
+          variant="default"
+          disabled={previewData.page >= previewData.total_pages || loading}
+          onClick={onNextPage}
+          tooltipSide="top"
+        />
       </div>
     </div>
   );
@@ -2504,7 +2507,6 @@ function DataCollection() {
     }
   }
 
-
   function normalizeOhlcvOptionsResponse(data) {
     const options = data?.options || data?.data?.options || data?.data || data || {};
     const nextOptions = {
@@ -2522,6 +2524,21 @@ function DataCollection() {
 
     if (!Array.isArray(nextOptions.intervals)) {
       nextOptions.intervals = emptyOhlcvForm.intervals;
+    }
+
+    nextOptions.use_current_day = Boolean(
+      nextOptions.use_current_day ?? emptyOhlcvForm.use_current_day
+    );
+    nextOptions.auto_date_range = Boolean(
+      nextOptions.auto_date_range ?? emptyOhlcvForm.auto_date_range
+    );
+
+    if (nextOptions.use_current_day) {
+      nextOptions.to_date = "";
+    }
+
+    if (nextOptions.auto_date_range) {
+      nextOptions.from_date = "";
     }
 
     nextOptions.instrument_scope = nextOptions.single_instrument_key
@@ -2581,10 +2598,23 @@ function DataCollection() {
   function handleOhlcvFormChange(event) {
     const { name, value, type, checked } = event.target;
 
-    setOhlcvFormData((previous) => ({
-      ...previous,
-      [name]: type === "checkbox" ? checked : value
-    }));
+    setOhlcvFormData((previous) => {
+      const nextValue = type === "checkbox" ? checked : value;
+      const nextData = {
+        ...previous,
+        [name]: nextValue
+      };
+
+      if (name === "use_current_day" && checked) {
+        nextData.to_date = "";
+      }
+
+      if (name === "auto_date_range" && checked) {
+        nextData.from_date = "";
+      }
+
+      return nextData;
+    });
   }
 
   function handleOhlcvMultiChange(fieldName, values) {
@@ -2596,17 +2626,15 @@ function DataCollection() {
 
   function buildOhlcvOptionsPayload() {
     const instrumentLimit = Number(ohlcvFormData.instrument_limit);
-    const batchSize = Number(ohlcvFormData.batch_size);
-    const requestDelayMs = Number(ohlcvFormData.request_delay_ms);
-    const batchDelaySeconds = Number(ohlcvFormData.batch_delay_seconds);
-    const retryCount = Number(ohlcvFormData.retry_count);
 
     return {
       sources: ohlcvFormData.sources,
       candle_modes: ohlcvFormData.candle_modes,
       intervals: ohlcvFormData.intervals,
-      from_date: ohlcvFormData.from_date || null,
-      to_date: ohlcvFormData.to_date || null,
+      from_date: ohlcvFormData.auto_date_range ? null : ohlcvFormData.from_date || null,
+      to_date: ohlcvFormData.use_current_day ? null : ohlcvFormData.to_date || null,
+      use_current_day: Boolean(ohlcvFormData.use_current_day),
+      auto_date_range: Boolean(ohlcvFormData.auto_date_range),
       skip_existing: true,
       respect_api_limits: true,
       retry_failed: true,
@@ -3397,7 +3425,6 @@ function DataCollection() {
     previewInstrumentType,
     previewPage
   ]);
-
 
   useEffect(() => {
     if (activeView !== "ohlcv") {
