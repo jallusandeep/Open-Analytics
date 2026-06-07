@@ -229,6 +229,7 @@ jobs:
           docker build \
             -f server/docker/frontend.Dockerfile \
             --build-arg VITE_API_BASE_URL=https://api.openanalytics.co.in/api/v1 \
+            --build-arg VITE_UPSTOX_REDIRECT_URL=https://openanalytics.co.in/connections/upstox/callback \
             -t ghcr.io/${{ github.repository_owner }}/openanalytics-frontend2:latest \
             .
           docker push ghcr.io/${{ github.repository_owner }}/openanalytics-frontend2:latest
