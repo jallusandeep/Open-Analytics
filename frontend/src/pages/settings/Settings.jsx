@@ -205,30 +205,27 @@ function PasswordFloatingInput({
   autoComplete
 }) {
   return (
-    <div className="relative">
-      <FloatingInput
-        name={name}
-        label={label}
-        type={show ? "text" : "password"}
-        value={value}
-        onChange={onChange}
-        autoComplete={autoComplete}
-        required
-      />
-
-      <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
+    <FloatingInput
+      name={name}
+      label={label}
+      type={show ? "text" : "password"}
+      value={value}
+      onChange={onChange}
+      autoComplete={autoComplete}
+      required
+      rightElement={
         <Tooltip text={show ? "Hide password" : "Show password"} side="left">
           <button
             type="button"
             onClick={onToggle}
-            className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-sm text-oa-muted transition hover:bg-oa-card hover:text-white"
+            className="flex h-6 w-6 items-center justify-center rounded-sm bg-transparent text-oa-muted transition hover:text-white"
             aria-label={show ? "Hide password" : "Show password"}
           >
             {show ? <EyeOff size={15} /> : <Eye size={15} />}
           </button>
         </Tooltip>
-      </div>
-    </div>
+      }
+    />
   );
 }
 

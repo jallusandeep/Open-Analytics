@@ -68,6 +68,21 @@ def get_connection():
 
             time.sleep(DB_CONNECT_RETRY_DELAY_SECONDS)
 
+def get_read_only_connection():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    for attempt in range(DB_CONNECT_RETRY_ATTEMPTS):
+        try:
+            with DB_CONNECT_LOCK:
+                return duckdb.connect(str(DB_PATH), read_only=True)
+        except (duckdb.IOException, duckdb.BinderException) as error:
+            is_last_attempt = attempt == DB_CONNECT_RETRY_ATTEMPTS - 1
+
+            if is_last_attempt or not is_transient_duckdb_lock_error(error):
+                raise
+
+            time.sleep(DB_CONNECT_RETRY_DELAY_SECONDS)
+
 
 def safe_execute(conn, query: str):
     try:
@@ -714,6 +729,25 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_id VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_name VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN triggered_by_role VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN request_options JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN selected_sources JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN selected_candle_modes JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN selected_intervals JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN from_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN to_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN skip_existing BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN respect_api_limits BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN retry_failed BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN instrument_limit BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN single_instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN batch_size BIGINT DEFAULT 25;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN request_delay_ms BIGINT DEFAULT 500;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN batch_delay_seconds BIGINT DEFAULT 2;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN api_calls_attempted BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN api_calls_skipped BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN candles_inserted BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN candles_skipped BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN failed_instruments BIGINT DEFAULT 0;")
 
         conn.execute("""
             UPDATE upstox_sync_runs
@@ -729,6 +763,51 @@ def init_database():
                 duration_seconds = date_diff('second', started_at, CURRENT_TIMESTAMP),
                 message = 'Sync run was interrupted before completion.'
             WHERE status IN ('running', 'cancel_requested');
+        """)
+
+        # -----------------------------
+        # Upstox market holidays / calendar
+        # Stores Upstox market holiday calendar for past and future dates.
+        # Used by OHLCV sync to avoid unnecessary calls on non-trading days.
+        # Upstox API:
+        #   GET /v2/market/holidays
+        #   GET /v2/market/holidays/{date}
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_market_holidays (
+                holiday_date DATE PRIMARY KEY,
+                description VARCHAR,
+                holiday_type VARCHAR,
+                closed_exchanges JSON,
+                open_exchanges JSON,
+                is_trading_day BOOLEAN DEFAULT FALSE,
+                source_provider VARCHAR DEFAULT 'upstox',
+                raw_json JSON,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN description VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN holiday_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN closed_exchanges JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN open_exchanges JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN is_trading_day BOOLEAN DEFAULT FALSE;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN source_provider VARCHAR DEFAULT 'upstox';")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE upstox_market_holidays
+            SET source_provider = 'upstox'
+            WHERE source_provider IS NULL OR TRIM(source_provider) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_market_holidays
+            SET is_trading_day = FALSE
+            WHERE is_trading_day IS NULL;
         """)
 
         # -----------------------------
@@ -794,6 +873,80 @@ def init_database():
             UPDATE upstox_data_collection_schedules
             SET version_no = 1
             WHERE version_no IS NULL;
+        """)
+
+        # -----------------------------
+        # Upstox OHLCV saved collection settings
+        # Stores saved checkbox/options config for OHLCV Options, Run Saved Options, and Scheduler.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_ohlcv_collection_settings (
+                setting_id VARCHAR PRIMARY KEY,
+                setting_name VARCHAR UNIQUE NOT NULL DEFAULT 'default',
+                request_options JSON,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by VARCHAR,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by VARCHAR
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN setting_name VARCHAR DEFAULT 'default';")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN request_options JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN is_active BOOLEAN DEFAULT TRUE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN created_by VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_settings ADD COLUMN updated_by VARCHAR;")
+
+        conn.execute("""
+            UPDATE upstox_ohlcv_collection_settings
+            SET is_active = TRUE
+            WHERE is_active IS NULL;
+        """)
+
+        # -----------------------------
+        # Upstox OHLCV collection status
+        # Tracks completed OHLCV API chunks so skip-existing can avoid repeat calls,
+        # including empty successful holiday/non-trading ranges.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_ohlcv_collection_status (
+                provider VARCHAR DEFAULT 'upstox',
+                instrument_source VARCHAR NOT NULL,
+                candle_mode VARCHAR NOT NULL,
+                instrument_key VARCHAR NOT NULL,
+                unit VARCHAR NOT NULL,
+                interval_value BIGINT NOT NULL,
+                from_date DATE NOT NULL,
+                to_date DATE NOT NULL,
+                status VARCHAR DEFAULT 'success',
+                candle_count BIGINT DEFAULT 0,
+                last_error VARCHAR,
+                source_sync_id VARCHAR,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN provider VARCHAR DEFAULT 'upstox';")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN instrument_source VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN candle_mode VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN interval_value BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN from_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN to_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN status VARCHAR DEFAULT 'success';")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN candle_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN last_error VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN source_sync_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_collection_status ADD COLUMN checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE upstox_ohlcv_collection_status
+            SET provider = 'upstox'
+            WHERE provider IS NULL OR TRIM(provider) = '';
         """)
 
         # -----------------------------
@@ -900,9 +1053,82 @@ def init_database():
         """)
 
         # -----------------------------
-        # OHLCV Daily
-        # Core daily price candle data for NSE equity instruments.
-        # Linked by instrument_key to upstox_equity_instruments.
+        # OHLCV Candles
+        # Stores Upstox candle data for current/equity and expired instruments.
+        # Supports historical/intraday, multiple intervals, skip-existing checks, and duplicate-safe inserts.
+        # Upstox candle fields: timestamp, open, high, low, close, volume, open_interest.
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_ohlcv_candles (
+                provider VARCHAR DEFAULT 'upstox',
+                instrument_source VARCHAR NOT NULL,
+                candle_mode VARCHAR NOT NULL,
+                instrument_key VARCHAR NOT NULL,
+                trading_symbol VARCHAR,
+                name VARCHAR,
+                exchange VARCHAR,
+                segment VARCHAR,
+                isin VARCHAR,
+                expiry DATE,
+                instrument_type VARCHAR,
+                unit VARCHAR NOT NULL,
+                interval_value INTEGER NOT NULL,
+                interval_label VARCHAR NOT NULL,
+                candle_timestamp TIMESTAMP NOT NULL,
+                candle_date DATE,
+                open_price DOUBLE,
+                high_price DOUBLE,
+                low_price DOUBLE,
+                close_price DOUBLE,
+                volume BIGINT,
+                open_interest BIGINT DEFAULT 0,
+                source_sync_id VARCHAR,
+                raw_json JSON,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (
+                    provider,
+                    instrument_source,
+                    candle_mode,
+                    instrument_key,
+                    unit,
+                    interval_value,
+                    candle_timestamp
+                )
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN provider VARCHAR DEFAULT 'upstox';")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN instrument_source VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN candle_mode VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN instrument_key VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN trading_symbol VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN name VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN exchange VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN segment VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN isin VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN expiry DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN instrument_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN interval_value INTEGER;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN interval_label VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN candle_timestamp TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN candle_date DATE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN open_price DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN high_price DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN low_price DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN close_price DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN volume BIGINT;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN open_interest BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN source_sync_id VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        # -----------------------------
+        # OHLCV Daily compatibility table
+        # Kept for existing code/screens that still read ohlcv_daily.
+        # New OHLCV logic writes to upstox_ohlcv_candles and can also mirror daily candles here.
         # -----------------------------
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ohlcv_daily (

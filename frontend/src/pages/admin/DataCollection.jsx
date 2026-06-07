@@ -39,16 +39,25 @@ import {
   getUpstoxDataCollectionSummary,
   getUpstoxExpiredInstrumentsPreview,
   getUpstoxInstrumentsPreview,
+  getUpstoxMarketHolidaysPreview,
+  getUpstoxOhlcvOptions,
+  getUpstoxOhlcvPreview,
+  saveUpstoxOhlcvOptions,
   syncUpstoxCurrentInstruments,
   syncUpstoxExpiredInstruments,
+  syncUpstoxMarketHolidays,
+  syncUpstoxOhlcvDaily,
   toggleUpstoxDataCollectionSchedule,
   updateUpstoxDataCollectionSchedule
 } from "../../api/dataCollectionApi";
+import DatePicker from "../../components/common/DatePicker";
 
 const emptySummary = {
   connection_status: "not_connected",
   total_current_instruments: 0,
   total_expired_instruments: 0,
+  total_ohlcv_daily: 0,
+  total_market_holidays: 0,
   total_sync_runs: 0,
   last_sync_at: "",
   last_duration_seconds: null,
@@ -56,6 +65,10 @@ const emptySummary = {
   current_duration_seconds: null,
   expired_last_sync_at: "",
   expired_duration_seconds: null,
+  ohlcv_daily_last_sync_at: "",
+  ohlcv_daily_duration_seconds: null,
+  market_holidays_last_sync_at: "",
+  market_holidays_duration_seconds: null,
   active_job: null,
   active_job_status: null,
   active_job_started_at: null,
@@ -80,10 +93,32 @@ const emptyScheduleForm = {
   is_active: true
 };
 
+const emptyOhlcvForm = {
+  sources: ["current"],
+  candle_modes: ["historical"],
+  intervals: ["day"],
+  from_date: "",
+  to_date: "",
+  use_current_day: true,
+  auto_date_range: true,
+  skip_existing: true,
+  respect_api_limits: true,
+  retry_failed: true,
+  instrument_scope: "all",
+  instrument_limit: "",
+  single_instrument_key: "",
+  batch_size: "25",
+  request_delay_ms: "500",
+  batch_delay_seconds: "2",
+  retry_count: "3"
+};
+
 const viewOptions = [
   { key: "monitor", label: "Collection Monitor" },
   { key: "current_preview", label: "Current Instruments" },
-  { key: "expired_preview", label: "Expired Instruments" }
+  { key: "expired_preview", label: "Expired Instruments" },
+  { key: "ohlcv", label: "OHLCV" },
+  { key: "market_calendar", label: "Market Calendar" }
 ];
 
 const timeFormatOptions = [
@@ -128,6 +163,50 @@ const instrumentTypeOptions = [
   { value: "INDEX", label: "INDEX" }
 ];
 
+const ohlcvSourceOptions = [
+  { value: "current", label: "Current / Equity Instruments" },
+  { value: "expired", label: "Expired Instruments" }
+];
+
+const ohlcvModeOptions = [
+  { value: "historical", label: "Historical" },
+  { value: "intraday", label: "Intraday Current Day" }
+];
+
+const ohlcvIntervalOptions = [
+  { value: "1minute", label: "1 minute" },
+  { value: "3minute", label: "3 minute" },
+  { value: "5minute", label: "5 minute" },
+  { value: "15minute", label: "15 minute" },
+  { value: "30minute", label: "30 minute" },
+  { value: "1hour", label: "1 hour" },
+  { value: "day", label: "Day" },
+  { value: "week", label: "Week" },
+  { value: "month", label: "Month" }
+];
+
+const marketHolidayTypeOptions = [
+  { value: "all", label: "All Types" },
+  { value: "TRADING_HOLIDAY", label: "Trading Holiday" },
+  { value: "SETTLEMENT_HOLIDAY", label: "Settlement Holiday" }
+];
+
+const marketHolidayExchangeOptions = [
+  { value: "all", label: "All Exchanges" },
+  { value: "NSE", label: "NSE" },
+  { value: "BSE", label: "BSE" },
+  { value: "NFO", label: "NFO" },
+  { value: "BFO", label: "BFO" },
+  { value: "CDS", label: "CDS" },
+  { value: "MCX", label: "MCX" }
+];
+
+const marketHolidayTradingStatusOptions = [
+  { value: "all", label: "All Status" },
+  { value: "closed", label: "Closed" },
+  { value: "open", label: "Partially Open" }
+];
+
 const dumpJobColumns = [
   { key: "source", label: "Source" },
   { key: "saved", label: "Saved" },
@@ -138,7 +217,7 @@ const dumpJobColumns = [
 ];
 
 const dumpJobGridTemplateColumns =
-  "1.2fr 0.85fr 0.75fr 0.75fr 0.45fr 0.7fr 152px";
+  "1.2fr 0.85fr 0.75fr 0.75fr 0.45fr 0.7fr 190px";
 
 const scheduleColumns = [
   { key: "schedule_time", label: "Time" },
@@ -163,6 +242,45 @@ const previewColumns = [
 
 const previewGridTemplateColumns =
   "280px 300px 300px 150px 150px 130px 150px 140px 190px 230px";
+
+const ohlcvPreviewColumns = [
+  { key: "instrument_key", label: "Instrument Key" },
+  { key: "trading_symbol", label: "Trading Symbol" },
+  { key: "source", label: "Source" },
+  { key: "mode", label: "Mode" },
+  { key: "interval_label", label: "Interval" },
+  { key: "timestamp", label: "Timestamp" },
+  { key: "date", label: "Date" },
+  { key: "open", label: "Open" },
+  { key: "high", label: "High" },
+  { key: "low", label: "Low" },
+  { key: "close", label: "Close" },
+  { key: "volume", label: "Volume" },
+  { key: "open_interest", label: "Open Interest" },
+  { key: "exchange", label: "Exchange" },
+  { key: "segment", label: "Segment" },
+  { key: "instrument_type", label: "Type" },
+  { key: "expiry", label: "Expiry" },
+  { key: "ingested_at", label: "Ingested At" }
+];
+
+const ohlcvPreviewGridTemplateColumns =
+  "280px 260px 130px 140px 140px 230px 130px 120px 120px 120px 120px 140px 150px 130px 130px 130px 130px 230px";
+
+const marketHolidayPreviewColumns = [
+  { key: "holiday_date", label: "Holiday Date" },
+  { key: "description", label: "Description" },
+  { key: "holiday_type", label: "Holiday Type" },
+  { key: "is_trading_day", label: "Trading Status" },
+  { key: "closed_exchanges", label: "Closed Exchanges" },
+  { key: "open_exchanges", label: "Open Exchanges" },
+  { key: "source_provider", label: "Source" },
+  { key: "synced_at", label: "Synced At" },
+  { key: "updated_at", label: "Updated At" }
+];
+
+const marketHolidayPreviewGridTemplateColumns =
+  "150px 320px 190px 170px 320px 360px 130px 230px 230px";
 
 function getStoredCurrentUser() {
   try {
@@ -247,7 +365,6 @@ function formatDateTime(value) {
     hour12: true
   });
 }
-
 
 function normalizeCellValue(value) {
   if (value === null || value === undefined || value === "") {
@@ -353,6 +470,128 @@ function getPreviewColumnValue(row, key) {
   return row[key];
 }
 
+function parseMaybeJsonArray(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (value === null || value === undefined || value === "") {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsedValue = JSON.parse(value);
+
+      if (Array.isArray(parsedValue)) {
+        return parsedValue;
+      }
+    } catch {
+      return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+function formatOhlcvList(value) {
+  const values = parseMaybeJsonArray(value);
+
+  if (values.length === 0) {
+    return "--";
+  }
+
+  return values
+    .map((item) => getSyncTypeLabel(item))
+    .join(", ");
+}
+
+function formatPrice(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    Number.isNaN(Number(value))
+  ) {
+    return "--";
+  }
+
+  return Number(value).toLocaleString("en-IN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4
+  });
+}
+
+function getOhlcvColumnValue(row, key) {
+  if (key === "timestamp" || key === "ingested_at") {
+    return formatDateTime(row[key]);
+  }
+
+  if (key === "source" || key === "mode") {
+    return getSyncTypeLabel(row[key]);
+  }
+
+  if (key === "open" || key === "high" || key === "low" || key === "close") {
+    return formatPrice(row[key]);
+  }
+
+  if (key === "volume" || key === "open_interest") {
+    return formatNumber(row[key] || 0);
+  }
+
+  return row[key];
+}
+
+function formatJsonListCell(value, displayKey = "exchange") {
+  const values = parseMaybeJsonArray(value);
+
+  if (values.length === 0) {
+    return "--";
+  }
+
+  return values
+    .map((item) => {
+      if (item && typeof item === "object") {
+        const exchange = item[displayKey] || item.exchange || item.segment || "";
+        const startTime = item.start_time || item.startTime || "";
+        const endTime = item.end_time || item.endTime || "";
+
+        if (exchange && startTime && endTime) {
+          return `${exchange} ${startTime}-${endTime}`;
+        }
+
+        return exchange || JSON.stringify(item);
+      }
+
+      return String(item);
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getMarketHolidayColumnValue(row, key) {
+  if (key === "synced_at" || key === "updated_at") {
+    return formatDateTime(row[key]);
+  }
+
+  if (key === "holiday_type") {
+    return getSyncTypeLabel(row[key]);
+  }
+
+  if (key === "is_trading_day") {
+    return row.is_trading_day ? "Partially Open" : "Closed";
+  }
+
+  if (key === "closed_exchanges" || key === "open_exchanges") {
+    return formatJsonListCell(row[key]);
+  }
+
+  return row[key];
+}
+
 function getElapsedSecondsFromDate(value) {
   if (!value) {
     return 0;
@@ -412,11 +651,31 @@ function getSyncTypeLabel(value) {
   const labels = {
     upstox_current_instruments: "Current Instruments",
     upstox_expired_instruments: "Expired Instruments",
+    upstox_ohlcv_daily: "OHLCV",
+    upstox_market_holidays: "Market Calendar",
     current_instruments: "Current Instruments",
     expired_instruments: "Expired Instruments",
+    ohlcv_daily: "OHLCV",
+    market_holidays: "Market Calendar",
     bod_complete: "BOD Complete",
     expired_option_contract: "Expired Options",
-    expired_future_contract: "Expired Futures"
+    expired_future_contract: "Expired Futures",
+    current: "Current",
+    expired: "Expired",
+    historical: "Historical",
+    intraday: "Intraday",
+    TRADING_HOLIDAY: "Trading Holiday",
+    SETTLEMENT_HOLIDAY: "Settlement Holiday",
+    upstox: "Upstox",
+    "1minute": "1 Min",
+    "3minute": "3 Min",
+    "5minute": "5 Min",
+    "15minute": "15 Min",
+    "30minute": "30 Min",
+    "1hour": "1 Hour",
+    day: "Day",
+    week: "Week",
+    month: "Month"
   };
 
   return labels[value] || value || "--";
@@ -459,7 +718,7 @@ function getLatestRunByTypes(runs, syncTypes = []) {
 }
 
 function isPreviewView(activeView) {
-  return activeView !== "monitor";
+  return activeView === "current_preview" || activeView === "expired_preview";
 }
 
 function getPreviewMode(activeView) {
@@ -615,28 +874,47 @@ function DumpJobActions({
   cancelling,
   onRun,
   onCancel,
-  onSchedule
+  onSchedule,
+  onOptions,
+  runLabel = "Run"
 }) {
   return (
     <div className="flex justify-end gap-2">
-      <Tooltip text={`Schedule ${title}`} side="left">
-        <button
-          type="button"
-          onClick={onSchedule}
-          className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500"
-          aria-label={`Schedule ${title}`}
-        >
-          <Clock3 size={15} />
-        </button>
-      </Tooltip>
+      {onOptions ? (
+        <Tooltip text={`${title} options`} side="left">
+          <button
+            type="button"
+            disabled={disabled || loading}
+            onClick={onOptions}
+            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-amber-300 outline-none transition hover:border-amber-500/60 hover:bg-amber-950/40 hover:text-amber-200 focus:border-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={`${title} options`}
+          >
+            <Edit3 size={15} />
+          </button>
+        </Tooltip>
+      ) : null}
 
-      <Tooltip text={loading ? `${title} running` : `Run ${title}`} side="left">
+      {onSchedule ? (
+        <Tooltip text={`Schedule ${title}`} side="left">
+          <button
+            type="button"
+            disabled={disabled || loading}
+            onClick={onSchedule}
+            className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-sky-300 outline-none transition hover:border-sky-500/60 hover:bg-sky-950/40 hover:text-sky-200 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={`Schedule ${title}`}
+          >
+            <Clock3 size={15} />
+          </button>
+        </Tooltip>
+      ) : null}
+
+      <Tooltip text={loading ? `${title} running` : `${runLabel} ${title}`} side="left">
         <button
           type="button"
           disabled={disabled || loading}
           onClick={onRun}
           className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={`Run ${title}`}
+          aria-label={`${runLabel} ${title}`}
         >
           {loading ? <Spinner size="xs" color="light" /> : <Play size={15} />}
         </button>
@@ -1219,67 +1497,573 @@ function DbPreviewContent({
         />
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
-        <span>
-          Records: {formatNumber(previewData.total_records)} | Page{" "}
-          {previewData.page} of {previewData.total_pages}
-        </span>
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
 
-        <div className="flex items-center gap-1.5">
+function CheckboxGroup({ title, helper, options, selectedValues, onChange }) {
+  function toggleValue(value) {
+    const nextValues = selectedValues.includes(value)
+      ? selectedValues.filter((item) => item !== value)
+      : [...selectedValues, value];
+
+    onChange(nextValues);
+  }
+
+  return (
+    <div className="rounded border border-oa-border bg-black p-3">
+      <div className="mb-2">
+        <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
+          {title}
+        </p>
+        {helper ? (
+          <p className="mt-1 text-[11px] text-oa-muted">{helper}</p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {options.map((option) => (
+          <label
+            key={option.value}
+            className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white"
+          >
+            <input
+              type="checkbox"
+              checked={selectedValues.includes(option.value)}
+              onChange={() => toggleValue(option.value)}
+              className="h-4 w-4 accent-emerald-500"
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OhlcvOptionsModal({
+  open,
+  formData,
+  saving,
+  onClose,
+  onChange,
+  onMultiChange,
+  onSave
+}) {
+  const useCurrentDay = Boolean(formData.use_current_day);
+  const autoDateRange = Boolean(formData.auto_date_range);
+  const canSave =
+    formData.sources.length > 0 &&
+    formData.candle_modes.length > 0 &&
+    formData.intervals.length > 0 &&
+    !saving;
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    onSave();
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="OHLCV Options"
+      onClose={onClose}
+      width="max-w-4xl"
+      footer={
+        <div className="flex items-center justify-end gap-2">
           <IconButton
-            icon={ChevronLeft}
-            label="Previous"
+            icon={X}
+            label="Close"
             variant="default"
-            disabled={previewData.page <= 1 || loading}
-            onClick={onPreviousPage}
+            disabled={saving}
+            onClick={onClose}
             tooltipSide="top"
           />
 
-          <div className="flex items-center gap-1">
-            {getPaginationItems(previewData.page, previewData.total_pages).map(
-              (item) => {
-                if (String(item).includes("ellipsis")) {
-                  return (
-                    <span
-                      key={item}
-                      className="flex h-8 min-w-8 items-center justify-center px-1 text-[12px] text-oa-muted"
-                    >
-                      ...
-                    </span>
-                  );
-                }
-
-                const active = Number(item) === Number(previewData.page);
-
-                return (
-                  <button
-                    key={item}
-                    type="button"
-                    disabled={loading || active}
-                    onClick={() => onPageChange(item)}
-                    className={`flex h-8 min-w-8 items-center justify-center rounded border px-2 text-[12px] font-semibold outline-none transition ${
-                      active
-                        ? "border-sky-500/60 bg-sky-950/40 text-sky-200"
-                        : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white focus:border-sky-500"
-                    } disabled:cursor-default`}
-                    aria-label={`Go to page ${item}`}
-                  >
-                    {item}
-                  </button>
-                );
-              }
-            )}
-          </div>
-
           <IconButton
-            icon={ChevronRight}
-            label="Next"
+            icon={Check}
+            label="Save options"
             variant="default"
-            disabled={previewData.page >= previewData.total_pages || loading}
-            onClick={onNextPage}
+            disabled={!canSave}
+            onClick={onSave}
             tooltipSide="top"
           />
         </div>
+      }
+    >
+      <form
+        onSubmit={handleSubmit}
+        className="max-h-[calc(100vh-190px)] space-y-4 overflow-y-auto pb-4 pr-1 oa-table-font"
+      >
+        <CheckboxGroup
+          title="Instrument Source"
+          options={ohlcvSourceOptions}
+          selectedValues={formData.sources}
+          onChange={(values) => onMultiChange("sources", values)}
+        />
+
+        <CheckboxGroup
+          title="OHLCV Mode"
+          options={ohlcvModeOptions}
+          selectedValues={formData.candle_modes}
+          onChange={(values) => onMultiChange("candle_modes", values)}
+        />
+
+        <CheckboxGroup
+          title="Intervals"
+          options={ohlcvIntervalOptions}
+          selectedValues={formData.intervals}
+          onChange={(values) => onMultiChange("intervals", values)}
+        />
+
+        <div className="rounded border border-oa-border bg-black p-3">
+          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
+                Date Range
+              </p>
+              <p className="mt-1 text-[11px] text-oa-muted">
+                Leave From Date empty to continue from the last saved candle, or from Upstox available history.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
+                <input
+                  type="checkbox"
+                  name="auto_date_range"
+                  checked={autoDateRange}
+                  onChange={onChange}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <span>Auto start from saved data</span>
+              </label>
+
+              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
+                <input
+                  type="checkbox"
+                  name="use_current_day"
+                  checked={useCurrentDay}
+                  onChange={onChange}
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <Check size={14} className={useCurrentDay ? "text-emerald-300" : "text-oa-muted"} />
+                <span>Current day</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label className={oaFormTextStyles.label}>From Date</label>
+              <div className={`mt-1 ${autoDateRange ? "opacity-60" : ""}`}>
+                <DatePicker
+                  name="from_date"
+                  value={formData.from_date}
+                  onChange={onChange}
+                  placeholder={autoDateRange ? "Auto from saved / available" : "From date"}
+                  ariaLabel="Select from date"
+                  disabled={autoDateRange}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>To Date</label>
+              <div className={`mt-1 ${useCurrentDay ? "opacity-60" : ""}`}>
+                <DatePicker
+                  name="to_date"
+                  value={useCurrentDay ? "" : formData.to_date}
+                  onChange={onChange}
+                  placeholder={useCurrentDay ? "Current day" : "To date"}
+                  ariaLabel="Select to date"
+                  disabled={useCurrentDay}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <label className={oaFormTextStyles.label}>Instrument Scope</label>
+            <div className="mt-1">
+              <Select
+                name="instrument_scope"
+                value={formData.instrument_scope}
+                onChange={onChange}
+                options={[
+                  { value: "all", label: "All Instruments" },
+                  { value: "limit", label: "First N Instruments" },
+                  { value: "single", label: "Single Instrument Key" }
+                ]}
+                ariaLabel="Instrument scope"
+                minWidth="w-full"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className={oaFormTextStyles.label}>First N Instruments</label>
+            <div className="mt-1">
+              <Input
+                name="instrument_limit"
+                type="number"
+                min="1"
+                value={formData.instrument_limit}
+                onChange={onChange}
+                disabled={formData.instrument_scope !== "limit"}
+                placeholder="Example: 50"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className={oaFormTextStyles.label}>
+              Single Instrument Key
+            </label>
+            <div className="mt-1">
+              <Input
+                name="single_instrument_key"
+                value={formData.single_instrument_key}
+                onChange={onChange}
+                disabled={formData.instrument_scope !== "single"}
+                placeholder="NSE_EQ|INE002A01018"
+              />
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" className="hidden" aria-hidden="true">
+          Save OHLCV options
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function MarketCalendarContent({
+  previewData,
+  rows,
+  loading,
+  hasActiveJob,
+  isAdminControlAllowed,
+  searchValue,
+  searchActive,
+  holidayType,
+  onHolidayTypeChange,
+  onClearHolidayType,
+  exchange,
+  onExchangeChange,
+  onClearExchange,
+  tradingStatus,
+  onTradingStatusChange,
+  onClearTradingStatus,
+  hasActiveFilter,
+  onSearchChange,
+  onSearchSubmit,
+  onClearSearch,
+  onClearAll,
+  onSchedule,
+  onRun,
+  onRefresh,
+  onPreviousPage,
+  onNextPage,
+  onPageChange,
+  renderCell,
+  filterConfig
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder="Search market calendar"
+          filters={[
+            {
+              value: holidayType,
+              onChange: (event) => onHolidayTypeChange(event.target.value),
+              options: marketHolidayTypeOptions,
+              onClear: onClearHolidayType,
+              showClear: holidayType !== "all",
+              ariaLabel: "Holiday type",
+              minWidth: "w-44"
+            },
+            {
+              value: exchange,
+              onChange: (event) => onExchangeChange(event.target.value),
+              options: marketHolidayExchangeOptions,
+              onClear: onClearExchange,
+              showClear: exchange !== "all",
+              ariaLabel: "Exchange",
+              minWidth: "w-36"
+            },
+            {
+              value: tradingStatus,
+              onChange: (event) => onTradingStatusChange(event.target.value),
+              options: marketHolidayTradingStatusOptions,
+              onClear: onClearTradingStatus,
+              showClear: tradingStatus !== "all",
+              ariaLabel: "Trading status",
+              minWidth: "w-40"
+            }
+          ]}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            {
+              icon: Clock3,
+              label: "Schedule Market Calendar",
+              variant: "default",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onSchedule
+            },
+            {
+              icon: Play,
+              label: "Run Market Calendar",
+              variant: "add",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onRun
+            },
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            }
+          ]}
+        />
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">
+                Loading market calendar
+              </span>
+            </div>
+          </div>
+        )}
+
+        <DataTable
+          columns={marketHolidayPreviewColumns}
+          rows={rows}
+          loading={false}
+          loadingMessage="Loading market calendar"
+          emptyMessage="No market holidays found."
+          gridTemplateColumns={marketHolidayPreviewGridTemplateColumns}
+          minWidth="min-w-[2110px]"
+          getRowKey={(row, index) => `${row.holiday_date || "calendar"}-${index}`}
+          renderCell={renderCell}
+          filterConfig={filterConfig}
+        />
+      </div>
+
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
+
+function OhlcvTabContent({
+  previewData,
+  rows,
+  loading,
+  savingOptions,
+  hasActiveJob,
+  isAdminControlAllowed,
+  searchValue,
+  searchActive,
+  hasActiveFilter,
+  onSearchChange,
+  onSearchSubmit,
+  onClearSearch,
+  onClearAll,
+  onOptions,
+  onSchedule,
+  onRun,
+  onRefresh,
+  onPreviousPage,
+  onNextPage,
+  onPageChange,
+  renderCell,
+  filterConfig
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder="Search OHLCV"
+          filters={[]}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            {
+              icon: Edit3,
+              label: "OHLCV options",
+              variant: "default",
+              disabled:
+                !isAdminControlAllowed || loading || hasActiveJob || savingOptions,
+              onClick: onOptions
+            },
+            {
+              icon: Clock3,
+              label: "Schedule OHLCV",
+              variant: "default",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onSchedule
+            },
+            {
+              icon: Play,
+              label: "Run saved OHLCV",
+              variant: "add",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onRun
+            },
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            }
+          ]}
+        />
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">Loading OHLCV</span>
+            </div>
+          </div>
+        )}
+
+        <DataTable
+          columns={ohlcvPreviewColumns}
+          rows={rows}
+          loading={false}
+          loadingMessage="Loading OHLCV"
+          emptyMessage="No OHLCV records found."
+          gridTemplateColumns={ohlcvPreviewGridTemplateColumns}
+          minWidth="min-w-[2860px]"
+          getRowKey={(row, index) =>
+            `${row.instrument_key || row.trading_symbol || "ohlcv"}-${
+              row.timestamp || row.date || index
+            }-${index}`
+          }
+          renderCell={renderCell}
+          filterConfig={filterConfig}
+        />
+      </div>
+
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
+
+function PaginationFooter({
+  previewData,
+  loading,
+  onPreviousPage,
+  onNextPage,
+  onPageChange
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
+      <span>
+        Records: {formatNumber(previewData.total_records)} | Page {" "}
+        {previewData.page} of {previewData.total_pages}
+      </span>
+
+      <div className="flex items-center gap-1.5">
+        <IconButton
+          icon={ChevronLeft}
+          label="Previous"
+          variant="default"
+          disabled={previewData.page <= 1 || loading}
+          onClick={onPreviousPage}
+          tooltipSide="top"
+        />
+
+        <div className="flex items-center gap-1">
+          {getPaginationItems(previewData.page, previewData.total_pages).map(
+            (item) => {
+              if (String(item).includes("ellipsis")) {
+                return (
+                  <span
+                    key={item}
+                    className="flex h-8 min-w-8 items-center justify-center px-1 text-[12px] text-oa-muted"
+                  >
+                    ...
+                  </span>
+                );
+              }
+
+              const active = Number(item) === Number(previewData.page);
+
+              return (
+                <button
+                  key={item}
+                  type="button"
+                  disabled={loading || active}
+                  onClick={() => onPageChange(item)}
+                  className={`flex h-8 min-w-8 items-center justify-center rounded border px-2 text-[12px] font-semibold outline-none transition ${
+                    active
+                      ? "border-sky-500/60 bg-sky-950/40 text-sky-200"
+                      : "border-oa-border bg-black text-oa-muted hover:border-sky-500/40 hover:bg-oa-card hover:text-white focus:border-sky-500"
+                  } disabled:cursor-default`}
+                  aria-label={`Go to page ${item}`}
+                >
+                  {item}
+                </button>
+              );
+            }
+          )}
+        </div>
+
+        <IconButton
+          icon={ChevronRight}
+          label="Next"
+          variant="default"
+          disabled={previewData.page >= previewData.total_pages || loading}
+          onClick={onNextPage}
+          tooltipSide="top"
+        />
       </div>
     </div>
   );
@@ -1332,6 +2116,41 @@ function DataCollection() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewData, setPreviewData] = useState(emptyPreviewData);
 
+  const [ohlcvOptionsOpen, setOhlcvOptionsOpen] = useState(false);
+  const [ohlcvFormData, setOhlcvFormData] = useState(emptyOhlcvForm);
+  const [ohlcvOptionsLoading, setOhlcvOptionsLoading] = useState(false);
+  const [ohlcvOptionsSaving, setOhlcvOptionsSaving] = useState(false);
+  const [ohlcvSearch, setOhlcvSearch] = useState("");
+  const [appliedOhlcvSearch, setAppliedOhlcvSearch] = useState("");
+  const [ohlcvColumnFilters, setOhlcvColumnFilters] = useState({});
+  const [draftOhlcvColumnFilters, setDraftOhlcvColumnFilters] = useState({});
+  const [activeOhlcvFilter, setActiveOhlcvFilter] = useState(null);
+  const [ohlcvSortConfig, setOhlcvSortConfig] = useState({
+    key: null,
+    direction: null
+  });
+  const [ohlcvPage, setOhlcvPage] = useState(1);
+  const [ohlcvPageSize] = useState(2000);
+  const [ohlcvLoading, setOhlcvLoading] = useState(false);
+  const [ohlcvPreviewData, setOhlcvPreviewData] = useState(emptyPreviewData);
+
+  const [marketCalendarSearch, setMarketCalendarSearch] = useState("");
+  const [appliedMarketCalendarSearch, setAppliedMarketCalendarSearch] = useState("");
+  const [marketCalendarColumnFilters, setMarketCalendarColumnFilters] = useState({});
+  const [draftMarketCalendarColumnFilters, setDraftMarketCalendarColumnFilters] = useState({});
+  const [activeMarketCalendarFilter, setActiveMarketCalendarFilter] = useState(null);
+  const [marketCalendarSortConfig, setMarketCalendarSortConfig] = useState({
+    key: null,
+    direction: null
+  });
+  const [marketCalendarHolidayType, setMarketCalendarHolidayType] = useState("all");
+  const [marketCalendarExchange, setMarketCalendarExchange] = useState("all");
+  const [marketCalendarTradingStatus, setMarketCalendarTradingStatus] = useState("all");
+  const [marketCalendarPage, setMarketCalendarPage] = useState(1);
+  const [marketCalendarPageSize] = useState(2000);
+  const [marketCalendarLoading, setMarketCalendarLoading] = useState(false);
+  const [marketCalendarPreviewData, setMarketCalendarPreviewData] = useState(emptyPreviewData);
+
   const { showToast } = useToast();
 
   const currentUser = useMemo(() => getStoredCurrentUser(), []);
@@ -1363,6 +2182,24 @@ function DataCollection() {
     (runningJob === "expired" ||
       summary.active_job === "upstox_expired_instruments");
 
+  const isOhlcvJobRunning =
+    !isCancelRequested &&
+    (runningJob === "ohlcv" || summary.active_job === "upstox_ohlcv_daily");
+
+  const ohlcvCancelRequested =
+    isCancelRequested &&
+    (runningJob === "ohlcv" || summary.active_job === "upstox_ohlcv_daily");
+
+  const isMarketCalendarJobRunning =
+    !isCancelRequested &&
+    (runningJob === "market_calendar" ||
+      summary.active_job === "upstox_market_holidays");
+
+  const marketCalendarCancelRequested =
+    isCancelRequested &&
+    (runningJob === "market_calendar" ||
+      summary.active_job === "upstox_market_holidays");
+
   const shouldShowCancelButton = hasActiveJob && !isCancelRequested;
 
   const currentLastRun = useMemo(() => {
@@ -1371,6 +2208,15 @@ function DataCollection() {
 
   const expiredLastRun = useMemo(() => {
     return getLatestRunByTypes(runs, ["upstox_expired_instruments"]);
+  }, [runs]);
+
+  const ohlcvLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_ohlcv_daily"]);
+  }, [runs]);
+
+
+  const marketCalendarLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_market_holidays"]);
   }, [runs]);
 
   const selectedSchedules = useMemo(() => {
@@ -1406,6 +2252,30 @@ function DataCollection() {
     const expiredRecordsAdded =
       isExpiredJobRunning &&
       summary.active_job === "upstox_expired_instruments" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const ohlcvRecords =
+      isOhlcvJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_ohlcv_daily ?? 0;
+
+    const ohlcvRecordsAdded =
+      isOhlcvJobRunning &&
+      summary.active_job === "upstox_ohlcv_daily" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const marketCalendarRecords =
+      isMarketCalendarJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_market_holidays ?? 0;
+
+    const marketCalendarRecordsAdded =
+      isMarketCalendarJobRunning &&
+      summary.active_job === "upstox_market_holidays" &&
       summary.active_job_records_added != null
         ? summary.active_job_records_added
         : 0;
@@ -1450,6 +2320,48 @@ function DataCollection() {
         disabled: hasActiveJob && !isExpiredJobRunning,
         canCancel: isExpiredJobRunning && shouldShowCancelButton,
         onRun: handleExpiredSync
+      },
+      {
+        id: "ohlcv",
+        title: "OHLCV",
+        scheduleJobType: "ohlcv_daily",
+        records: ohlcvRecords,
+        recordsAdded: ohlcvRecordsAdded,
+        lastSyncedAt: summary.ohlcv_daily_last_sync_at,
+        triggeredBy: ohlcvLastRun?.triggered_by_name,
+        triggerSource: ohlcvLastRun?.trigger_source,
+        duration: summary.ohlcv_daily_duration_seconds,
+        lastStatus: ohlcvCancelRequested
+          ? "cancel_requested"
+          : isOhlcvJobRunning
+            ? "running"
+            : ohlcvLastRun?.status,
+        loading: isOhlcvJobRunning,
+        disabled: hasActiveJob && !isOhlcvJobRunning,
+        canCancel: isOhlcvJobRunning && shouldShowCancelButton,
+        onOptions: openOhlcvOptionsPopup,
+        onRun: handleOhlcvSync,
+        runLabel: "Run saved"
+      },
+      {
+        id: "market_calendar",
+        title: "Market Calendar",
+        scheduleJobType: "market_holidays",
+        records: marketCalendarRecords,
+        recordsAdded: marketCalendarRecordsAdded,
+        lastSyncedAt: summary.market_holidays_last_sync_at,
+        triggeredBy: marketCalendarLastRun?.triggered_by_name,
+        triggerSource: marketCalendarLastRun?.trigger_source,
+        duration: summary.market_holidays_duration_seconds,
+        lastStatus: marketCalendarCancelRequested
+          ? "cancel_requested"
+          : isMarketCalendarJobRunning
+            ? "running"
+            : marketCalendarLastRun?.status,
+        loading: isMarketCalendarJobRunning,
+        disabled: hasActiveJob && !isMarketCalendarJobRunning,
+        canCancel: isMarketCalendarJobRunning && shouldShowCancelButton,
+        onRun: handleMarketCalendarSync
       }
     ];
   }, [
@@ -1458,8 +2370,14 @@ function DataCollection() {
     expiredCancelRequested,
     isCurrentJobRunning,
     isExpiredJobRunning,
+    isOhlcvJobRunning,
+    isMarketCalendarJobRunning,
     currentLastRun,
     expiredLastRun,
+    ohlcvLastRun,
+    marketCalendarLastRun,
+    ohlcvCancelRequested,
+    marketCalendarCancelRequested,
     hasActiveJob,
     shouldShowCancelButton
   ]);
@@ -1524,6 +2442,57 @@ function DataCollection() {
     return applySort(result, previewSortConfig, getPreviewColumnValue);
   }, [previewData.rows, previewColumnFilters, previewSortConfig]);
 
+  const ohlcvHeaderValues = useMemo(() => {
+    return ohlcvPreviewColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        ohlcvPreviewData.rows,
+        column.key,
+        getOhlcvColumnValue
+      );
+      return result;
+    }, {});
+  }, [ohlcvPreviewData.rows]);
+
+  const filteredOhlcvRows = useMemo(() => {
+    let result = applyColumnFilters(
+      ohlcvPreviewData.rows,
+      ohlcvColumnFilters,
+      getOhlcvColumnValue
+    );
+
+    return applySort(result, ohlcvSortConfig, getOhlcvColumnValue);
+  }, [ohlcvPreviewData.rows, ohlcvColumnFilters, ohlcvSortConfig]);
+
+
+  const marketCalendarHeaderValues = useMemo(() => {
+    return marketHolidayPreviewColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        marketCalendarPreviewData.rows,
+        column.key,
+        getMarketHolidayColumnValue
+      );
+      return result;
+    }, {});
+  }, [marketCalendarPreviewData.rows]);
+
+  const filteredMarketCalendarRows = useMemo(() => {
+    let result = applyColumnFilters(
+      marketCalendarPreviewData.rows,
+      marketCalendarColumnFilters,
+      getMarketHolidayColumnValue
+    );
+
+    return applySort(
+      result,
+      marketCalendarSortConfig,
+      getMarketHolidayColumnValue
+    );
+  }, [
+    marketCalendarPreviewData.rows,
+    marketCalendarColumnFilters,
+    marketCalendarSortConfig
+  ]);
+
   async function loadPreview(customPage = previewPage) {
     const previewMode = getPreviewMode(activeView);
     setPreviewLoading(true);
@@ -1560,6 +2529,81 @@ function DataCollection() {
       );
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  async function loadOhlcvPreview(customPage = ohlcvPage, options = {}) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setOhlcvLoading(true);
+    }
+
+    try {
+      const params = {
+        search: appliedOhlcvSearch,
+        page: customPage,
+        page_size: ohlcvPageSize
+      };
+
+      const response = await getUpstoxOhlcvPreview(params);
+      const nextData = response.data.data || response.data || emptyPreviewData;
+
+      setOhlcvPreviewData(nextData);
+      setOhlcvPage(nextData.page || customPage);
+    } catch (error) {
+      if (showLoading) {
+        setOhlcvPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(error, "Unable to load OHLCV preview."),
+          "error"
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setOhlcvLoading(false);
+      }
+    }
+  }
+
+
+  async function loadMarketCalendarPreview(
+    customPage = marketCalendarPage,
+    options = {}
+  ) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setMarketCalendarLoading(true);
+    }
+
+    try {
+      const params = {
+        search: appliedMarketCalendarSearch,
+        holiday_type: marketCalendarHolidayType,
+        exchange: marketCalendarExchange,
+        trading_status: marketCalendarTradingStatus,
+        page: customPage,
+        page_size: marketCalendarPageSize
+      };
+
+      const response = await getUpstoxMarketHolidaysPreview(params);
+      const nextData = response.data.data || response.data || emptyPreviewData;
+
+      setMarketCalendarPreviewData(nextData);
+      setMarketCalendarPage(nextData.page || customPage);
+    } catch (error) {
+      if (showLoading) {
+        setMarketCalendarPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(error, "Unable to load market calendar preview."),
+          "error"
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setMarketCalendarLoading(false);
+      }
     }
   }
 
@@ -1828,6 +2872,319 @@ function DataCollection() {
       if (!backgroundStarted) {
         setRunningJob(null);
       }
+      activeSyncControllerRef.current = null;
+    }
+  }
+
+  function normalizeOhlcvOptionsResponse(data) {
+    const options = data?.options || data?.data?.options || data?.data || data || {};
+    const nextOptions = {
+      ...emptyOhlcvForm,
+      ...options
+    };
+
+    if (!Array.isArray(nextOptions.sources)) {
+      nextOptions.sources = emptyOhlcvForm.sources;
+    }
+
+    if (!Array.isArray(nextOptions.candle_modes)) {
+      nextOptions.candle_modes = emptyOhlcvForm.candle_modes;
+    }
+
+    if (!Array.isArray(nextOptions.intervals)) {
+      nextOptions.intervals = emptyOhlcvForm.intervals;
+    }
+
+    nextOptions.use_current_day = Boolean(
+      nextOptions.use_current_day ?? emptyOhlcvForm.use_current_day
+    );
+    nextOptions.auto_date_range = Boolean(
+      nextOptions.auto_date_range ?? emptyOhlcvForm.auto_date_range
+    );
+
+    if (nextOptions.use_current_day) {
+      nextOptions.to_date = "";
+    }
+
+    if (nextOptions.auto_date_range) {
+      nextOptions.from_date = "";
+    }
+
+    nextOptions.instrument_scope = nextOptions.single_instrument_key
+      ? "single"
+      : nextOptions.instrument_limit
+        ? "limit"
+        : "all";
+
+    nextOptions.instrument_limit =
+      nextOptions.instrument_limit === null || nextOptions.instrument_limit === undefined
+        ? ""
+        : String(nextOptions.instrument_limit);
+
+    nextOptions.batch_size = String(nextOptions.batch_size || emptyOhlcvForm.batch_size);
+    nextOptions.request_delay_ms = String(
+      nextOptions.request_delay_ms ?? emptyOhlcvForm.request_delay_ms
+    );
+    nextOptions.batch_delay_seconds = String(
+      nextOptions.batch_delay_seconds ?? emptyOhlcvForm.batch_delay_seconds
+    );
+    nextOptions.retry_count = String(nextOptions.retry_count || emptyOhlcvForm.retry_count);
+
+    return nextOptions;
+  }
+
+  async function openOhlcvOptionsPopup() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to manage OHLCV options.", "error");
+      return;
+    }
+
+    setOhlcvOptionsOpen(true);
+    setOhlcvOptionsLoading(true);
+
+    try {
+      const response = await getUpstoxOhlcvOptions();
+      setOhlcvFormData(normalizeOhlcvOptionsResponse(response.data));
+    } catch (error) {
+      setOhlcvFormData(emptyOhlcvForm);
+      showToast(
+        getApiErrorMessage(error, "Unable to load OHLCV options."),
+        "warning"
+      );
+    } finally {
+      setOhlcvOptionsLoading(false);
+    }
+  }
+
+  function closeOhlcvOptionsPopup() {
+    if (ohlcvOptionsSaving) {
+      return;
+    }
+
+    setOhlcvOptionsOpen(false);
+  }
+
+  function handleOhlcvFormChange(event) {
+    const { name, value, type, checked } = event.target;
+
+    setOhlcvFormData((previous) => {
+      const nextValue = type === "checkbox" ? checked : value;
+      const nextData = {
+        ...previous,
+        [name]: nextValue
+      };
+
+      if (name === "use_current_day" && checked) {
+        nextData.to_date = "";
+      }
+
+      if (name === "auto_date_range" && checked) {
+        nextData.from_date = "";
+      }
+
+      return nextData;
+    });
+  }
+
+  function handleOhlcvMultiChange(fieldName, values) {
+    setOhlcvFormData((previous) => ({
+      ...previous,
+      [fieldName]: values
+    }));
+  }
+
+  function buildOhlcvOptionsPayload() {
+    const instrumentLimit = Number(ohlcvFormData.instrument_limit);
+
+    return {
+      sources: ohlcvFormData.sources,
+      candle_modes: ohlcvFormData.candle_modes,
+      intervals: ohlcvFormData.intervals,
+      from_date: ohlcvFormData.auto_date_range ? null : ohlcvFormData.from_date || null,
+      to_date: ohlcvFormData.use_current_day ? null : ohlcvFormData.to_date || null,
+      use_current_day: Boolean(ohlcvFormData.use_current_day),
+      auto_date_range: Boolean(ohlcvFormData.auto_date_range),
+      skip_existing: true,
+      respect_api_limits: true,
+      retry_failed: true,
+      instrument_limit:
+        ohlcvFormData.instrument_scope === "limit" && instrumentLimit > 0
+          ? instrumentLimit
+          : null,
+      single_instrument_key:
+        ohlcvFormData.instrument_scope === "single"
+          ? ohlcvFormData.single_instrument_key.trim()
+          : "",
+      batch_size: 25,
+      request_delay_ms: 500,
+      batch_delay_seconds: 2,
+      retry_count: 3
+    };
+  }
+
+  async function handleSaveOhlcvOptions() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to save OHLCV options.", "error");
+      return;
+    }
+
+    if (ohlcvFormData.sources.length === 0) {
+      showToast("Select at least one OHLCV source.", "warning");
+      return;
+    }
+
+    if (ohlcvFormData.candle_modes.length === 0) {
+      showToast("Select at least one OHLCV mode.", "warning");
+      return;
+    }
+
+    if (ohlcvFormData.intervals.length === 0) {
+      showToast("Select at least one interval.", "warning");
+      return;
+    }
+
+    if (
+      ohlcvFormData.instrument_scope === "single" &&
+      !ohlcvFormData.single_instrument_key.trim()
+    ) {
+      showToast("Enter a single instrument key.", "warning");
+      return;
+    }
+
+    setOhlcvOptionsSaving(true);
+
+    try {
+      const response = await saveUpstoxOhlcvOptions(buildOhlcvOptionsPayload());
+      const nextData = response.data?.data || response.data;
+
+      setOhlcvFormData(normalizeOhlcvOptionsResponse(nextData));
+      setOhlcvOptionsOpen(false);
+      showToast(response.data?.message || "OHLCV options saved.", "success");
+    } catch (error) {
+      showToast(getApiErrorMessage(error, "Unable to save OHLCV options."), "error");
+    } finally {
+      setOhlcvOptionsSaving(false);
+    }
+  }
+
+  async function handleOhlcvSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    if (hasActiveJob) {
+      showToast("Another data collection job is already running.", "warning");
+      return;
+    }
+
+    setRunningJob("ohlcv");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxOhlcvDaily(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "OHLCV collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(response.data.message || "OHLCV collection cancelled.", "warning");
+      } else {
+        showToast(response.data?.message || "OHLCV collection completed.", "success");
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(getApiErrorMessage(error, "Unable to run OHLCV collection."), "error");
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+
+      activeSyncControllerRef.current = null;
+    }
+  }
+
+
+  async function handleMarketCalendarSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    if (hasActiveJob) {
+      showToast("Another data collection job is already running.", "warning");
+      return;
+    }
+
+    setRunningJob("market_calendar");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxMarketHolidays(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Market Calendar collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "Market Calendar collection cancelled.",
+          "warning"
+        );
+      } else {
+        showToast(
+          response.data?.message || "Market Calendar collection completed.",
+          "success"
+        );
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        getApiErrorMessage(error, "Unable to run Market Calendar collection."),
+        "error"
+      );
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+
       activeSyncControllerRef.current = null;
     }
   }
@@ -2188,7 +3545,195 @@ function DataCollection() {
     return selectedValues.length > 0;
   }
 
+  function handleOhlcvSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedOhlcvSearch(ohlcvSearch.trim());
+    setOhlcvPage(1);
+  }
+
+  function handleClearOhlcvSearch() {
+    setOhlcvSearch("");
+    setAppliedOhlcvSearch("");
+    setOhlcvPage(1);
+  }
+
+  function hasAnyActiveOhlcvFilter() {
+    return (
+      appliedOhlcvSearch.trim() !== "" ||
+      ohlcvSortConfig.key !== null ||
+      Object.values(ohlcvColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllOhlcvFilters() {
+    setOhlcvSearch("");
+    setAppliedOhlcvSearch("");
+    setOhlcvColumnFilters({});
+    setDraftOhlcvColumnFilters({});
+    setOhlcvSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveOhlcvFilter(null);
+  }
+
+  function openOhlcvColumnFilter(key) {
+    setDraftOhlcvColumnFilters((previous) => ({
+      ...previous,
+      [key]: ohlcvColumnFilters[key] || []
+    }));
+
+    setActiveOhlcvFilter((previous) => (previous === key ? null : key));
+  }
+
+  function applyOhlcvColumnFilter(key) {
+    setOhlcvColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftOhlcvColumnFilters[key] || []
+    }));
+
+    setActiveOhlcvFilter(null);
+  }
+
+  function clearOhlcvColumnFilter(key) {
+    setOhlcvColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftOhlcvColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveOhlcvFilter(null);
+  }
+
+  function handleOhlcvSort(key, direction) {
+    setOhlcvSortConfig({
+      key,
+      direction
+    });
+
+    setActiveOhlcvFilter(null);
+  }
+
+  function isOhlcvColumnFilterActive(key) {
+    const selectedValues = ohlcvColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
+  function handleMarketCalendarSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedMarketCalendarSearch(marketCalendarSearch.trim());
+    setMarketCalendarPage(1);
+  }
+
+  function handleClearMarketCalendarSearch() {
+    setMarketCalendarSearch("");
+    setAppliedMarketCalendarSearch("");
+    setMarketCalendarPage(1);
+  }
+
+  function clearMarketCalendarHolidayType() {
+    setMarketCalendarHolidayType("all");
+    setMarketCalendarPage(1);
+  }
+
+  function clearMarketCalendarExchange() {
+    setMarketCalendarExchange("all");
+    setMarketCalendarPage(1);
+  }
+
+  function clearMarketCalendarTradingStatus() {
+    setMarketCalendarTradingStatus("all");
+    setMarketCalendarPage(1);
+  }
+
+  function hasAnyActiveMarketCalendarFilter() {
+    return (
+      appliedMarketCalendarSearch.trim() !== "" ||
+      marketCalendarHolidayType !== "all" ||
+      marketCalendarExchange !== "all" ||
+      marketCalendarTradingStatus !== "all" ||
+      marketCalendarSortConfig.key !== null ||
+      Object.values(marketCalendarColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllMarketCalendarFilters() {
+    setMarketCalendarSearch("");
+    setAppliedMarketCalendarSearch("");
+    setMarketCalendarHolidayType("all");
+    setMarketCalendarExchange("all");
+    setMarketCalendarTradingStatus("all");
+    setMarketCalendarColumnFilters({});
+    setDraftMarketCalendarColumnFilters({});
+    setMarketCalendarSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveMarketCalendarFilter(null);
+    setMarketCalendarPage(1);
+  }
+
+  function openMarketCalendarColumnFilter(key) {
+    setDraftMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: marketCalendarColumnFilters[key] || []
+    }));
+
+    setActiveMarketCalendarFilter((previous) =>
+      previous === key ? null : key
+    );
+  }
+
+  function applyMarketCalendarColumnFilter(key) {
+    setMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftMarketCalendarColumnFilters[key] || []
+    }));
+
+    setActiveMarketCalendarFilter(null);
+  }
+
+  function clearMarketCalendarColumnFilter(key) {
+    setMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveMarketCalendarFilter(null);
+  }
+
+  function handleMarketCalendarSort(key, direction) {
+    setMarketCalendarSortConfig({
+      key,
+      direction
+    });
+
+    setActiveMarketCalendarFilter(null);
+  }
+
+  function isMarketCalendarColumnFilterActive(key) {
+    const selectedValues = marketCalendarColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
   function handleViewChange(nextView) {
+    if (nextView === activeView) {
+      return;
+    }
+
     setActiveView(nextView);
 
     if (isPreviewView(nextView)) {
@@ -2206,6 +3751,37 @@ function DataCollection() {
       setActivePreviewFilter(null);
       setPreviewPage(1);
       setPreviewData(emptyPreviewData);
+    }
+
+    if (nextView === "ohlcv") {
+      setOhlcvSearch("");
+      setAppliedOhlcvSearch("");
+      setOhlcvColumnFilters({});
+      setDraftOhlcvColumnFilters({});
+      setOhlcvSortConfig({
+        key: null,
+        direction: null
+      });
+      setActiveOhlcvFilter(null);
+      setOhlcvPage(1);
+      setOhlcvPreviewData(emptyPreviewData);
+    }
+
+    if (nextView === "market_calendar") {
+      setMarketCalendarSearch("");
+      setAppliedMarketCalendarSearch("");
+      setMarketCalendarHolidayType("all");
+      setMarketCalendarExchange("all");
+      setMarketCalendarTradingStatus("all");
+      setMarketCalendarColumnFilters({});
+      setDraftMarketCalendarColumnFilters({});
+      setMarketCalendarSortConfig({
+        key: null,
+        direction: null
+      });
+      setActiveMarketCalendarFilter(null);
+      setMarketCalendarPage(1);
+      setMarketCalendarPreviewData(emptyPreviewData);
     }
   }
 
@@ -2288,8 +3864,168 @@ function DataCollection() {
         cancelling={cancelling}
         onRun={row.onRun}
         onCancel={handleCancelSync}
-        onSchedule={() => openSchedulePopup(row.scheduleJobType)}
+        onSchedule={
+          row.scheduleJobType
+            ? () => openSchedulePopup(row.scheduleJobType)
+            : null
+        }
+        onOptions={row.onOptions}
+        runLabel={row.runLabel || "Run"}
       />
+    );
+  }
+
+  function renderOhlcvCell(row, column) {
+    if (column.key === "source") {
+      return (
+        <span className={`${oaPillStyles.base} border-zinc-600 bg-zinc-900 text-zinc-200`}>
+          {getSyncTypeLabel(row.source)}
+        </span>
+      );
+    }
+
+    if (column.key === "mode") {
+      return (
+        <span className={`${oaPillStyles.base} border-sky-500/40 bg-sky-950/40 text-sky-200`}>
+          {getSyncTypeLabel(row.mode)}
+        </span>
+      );
+    }
+
+    if (column.key === "interval_label") {
+      return (
+        <span className="truncate oa-code-font text-emerald-200">
+          {row.interval_label || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "timestamp" || column.key === "ingested_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row[column.key])}
+        </span>
+      );
+    }
+
+    if (column.key === "date" || column.key === "expiry") {
+      return (
+        <span className="truncate oa-code-font text-cyan-200">
+          {row[column.key] || "--"}
+        </span>
+      );
+    }
+
+    if (
+      column.key === "open" ||
+      column.key === "high" ||
+      column.key === "low" ||
+      column.key === "close"
+    ) {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatPrice(row[column.key])}
+        </span>
+      );
+    }
+
+    if (column.key === "volume" || column.key === "open_interest") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatNumber(row[column.key] || 0)}
+        </span>
+      );
+    }
+
+    if (column.key === "trading_symbol") {
+      return (
+        <span className="truncate oa-code-font text-cyan-200">
+          {row.trading_symbol || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "instrument_key") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-white">
+          {row.instrument_key || "--"}
+        </span>
+      );
+    }
+
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {getOhlcvColumnValue(row, column.key) || "--"}
+      </span>
+    );
+  }
+
+  function renderMarketCalendarCell(row, column) {
+    if (column.key === "holiday_date") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-cyan-200">
+          {row.holiday_date || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "description") {
+      return <span className="truncate text-white">{row.description || "--"}</span>;
+    }
+
+    if (column.key === "holiday_type") {
+      return (
+        <span className={`${oaPillStyles.base} border-zinc-600 bg-zinc-900 text-zinc-200`}>
+          {getSyncTypeLabel(row.holiday_type)}
+        </span>
+      );
+    }
+
+    if (column.key === "is_trading_day") {
+      return (
+        <StatusBadge
+          status={row.is_trading_day ? "active" : "inactive"}
+          label={row.is_trading_day ? "Partially Open" : "Closed"}
+        />
+      );
+    }
+
+    if (column.key === "closed_exchanges") {
+      return (
+        <span className="truncate oa-code-font text-red-200">
+          {formatJsonListCell(row.closed_exchanges)}
+        </span>
+      );
+    }
+
+    if (column.key === "open_exchanges") {
+      return (
+        <span className="truncate oa-code-font text-emerald-200">
+          {formatJsonListCell(row.open_exchanges)}
+        </span>
+      );
+    }
+
+    if (column.key === "source_provider") {
+      return (
+        <span className={`${oaPillStyles.base} border-sky-500/40 bg-sky-950/40 text-sky-200`}>
+          {getSyncTypeLabel(row.source_provider)}
+        </span>
+      );
+    }
+
+    if (column.key === "synced_at" || column.key === "updated_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row[column.key])}
+        </span>
+      );
+    }
+
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {getMarketHolidayColumnValue(row, column.key) || "--"}
+      </span>
     );
   }
 
@@ -2314,6 +4050,59 @@ function DataCollection() {
     previewInstrumentType,
     previewPage
   ]);
+
+  useEffect(() => {
+    if (activeView !== "ohlcv") {
+      return;
+    }
+
+    loadOhlcvPreview(ohlcvPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, appliedOhlcvSearch, ohlcvPage]);
+
+
+  useEffect(() => {
+    if (activeView !== "market_calendar") {
+      return;
+    }
+
+    loadMarketCalendarPreview(marketCalendarPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeView,
+    appliedMarketCalendarSearch,
+    marketCalendarHolidayType,
+    marketCalendarExchange,
+    marketCalendarTradingStatus,
+    marketCalendarPage
+  ]);
+
+  useEffect(() => {
+    if (activeView !== "ohlcv" || !isOhlcvJobRunning) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadOhlcvPreview(ohlcvPage, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isOhlcvJobRunning, ohlcvPage]);
+
+
+  useEffect(() => {
+    if (activeView !== "market_calendar" || !isMarketCalendarJobRunning) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadMarketCalendarPreview(marketCalendarPage, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isMarketCalendarJobRunning, marketCalendarPage]);
 
   useEffect(() => {
     if (!hasActiveJob) {
@@ -2502,9 +4291,157 @@ function DataCollection() {
                   }}
                 />
               ) : null}
+
+              {activeView === "ohlcv" ? (
+                <OhlcvTabContent
+                  previewData={ohlcvPreviewData}
+                  rows={filteredOhlcvRows}
+                  loading={ohlcvLoading}
+                  savingOptions={ohlcvOptionsLoading || ohlcvOptionsSaving}
+                  hasActiveJob={hasActiveJob}
+                  isAdminControlAllowed={isAdminControlAllowed}
+                  searchValue={ohlcvSearch}
+                  onSearchChange={setOhlcvSearch}
+                  onSearchSubmit={handleOhlcvSearchSubmit}
+                  onClearSearch={handleClearOhlcvSearch}
+                  searchActive={appliedOhlcvSearch.trim() !== ""}
+                  hasActiveFilter={hasAnyActiveOhlcvFilter()}
+                  onClearAll={clearAllOhlcvFilters}
+                  onOptions={openOhlcvOptionsPopup}
+                  onSchedule={() => openSchedulePopup("ohlcv_daily")}
+                  onRun={handleOhlcvSync}
+                  onRefresh={() => loadOhlcvPreview(ohlcvPage)}
+                  onPreviousPage={() =>
+                    setOhlcvPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setOhlcvPage((value) =>
+                      Math.min(ohlcvPreviewData.total_pages || 1, value + 1)
+                    )
+                  }
+                  onPageChange={(page) => setOhlcvPage(page)}
+                  renderCell={renderOhlcvCell}
+                  filterConfig={{
+                    activeFilter: activeOhlcvFilter,
+                    headerValues: ohlcvHeaderValues,
+                    columnFilters: ohlcvColumnFilters,
+                    draftColumnFilters: draftOhlcvColumnFilters,
+                    rightAlignedKeys: [
+                      "open",
+                      "high",
+                      "low",
+                      "close",
+                      "volume",
+                      "open_interest",
+                      "exchange",
+                      "segment",
+                      "instrument_type",
+                      "expiry",
+                      "ingested_at"
+                    ],
+                    isColumnFilterActive: isOhlcvColumnFilterActive,
+                    onOpen: openOhlcvColumnFilter,
+                    onClose: () => setActiveOhlcvFilter(null),
+                    onChange: (key, values) =>
+                      setDraftOhlcvColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyOhlcvColumnFilter,
+                    onSort: handleOhlcvSort,
+                    onClear: clearOhlcvColumnFilter
+                  }}
+                />
+              ) : null}
+
+
+              {activeView === "market_calendar" ? (
+                <MarketCalendarContent
+                  previewData={marketCalendarPreviewData}
+                  rows={filteredMarketCalendarRows}
+                  loading={marketCalendarLoading}
+                  hasActiveJob={hasActiveJob}
+                  isAdminControlAllowed={isAdminControlAllowed}
+                  searchValue={marketCalendarSearch}
+                  onSearchChange={setMarketCalendarSearch}
+                  onSearchSubmit={handleMarketCalendarSearchSubmit}
+                  onClearSearch={handleClearMarketCalendarSearch}
+                  searchActive={appliedMarketCalendarSearch.trim() !== ""}
+                  holidayType={marketCalendarHolidayType}
+                  onHolidayTypeChange={(value) => {
+                    setMarketCalendarHolidayType(value);
+                    setMarketCalendarPage(1);
+                  }}
+                  onClearHolidayType={clearMarketCalendarHolidayType}
+                  exchange={marketCalendarExchange}
+                  onExchangeChange={(value) => {
+                    setMarketCalendarExchange(value);
+                    setMarketCalendarPage(1);
+                  }}
+                  onClearExchange={clearMarketCalendarExchange}
+                  tradingStatus={marketCalendarTradingStatus}
+                  onTradingStatusChange={(value) => {
+                    setMarketCalendarTradingStatus(value);
+                    setMarketCalendarPage(1);
+                  }}
+                  onClearTradingStatus={clearMarketCalendarTradingStatus}
+                  hasActiveFilter={hasAnyActiveMarketCalendarFilter()}
+                  onClearAll={clearAllMarketCalendarFilters}
+                  onSchedule={() => openSchedulePopup("market_holidays")}
+                  onRun={handleMarketCalendarSync}
+                  onRefresh={() => loadMarketCalendarPreview(marketCalendarPage)}
+                  onPreviousPage={() =>
+                    setMarketCalendarPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setMarketCalendarPage((value) =>
+                      Math.min(
+                        marketCalendarPreviewData.total_pages || 1,
+                        value + 1
+                      )
+                    )
+                  }
+                  onPageChange={(page) => setMarketCalendarPage(page)}
+                  renderCell={renderMarketCalendarCell}
+                  filterConfig={{
+                    activeFilter: activeMarketCalendarFilter,
+                    headerValues: marketCalendarHeaderValues,
+                    columnFilters: marketCalendarColumnFilters,
+                    draftColumnFilters: draftMarketCalendarColumnFilters,
+                    rightAlignedKeys: [
+                      "holiday_type",
+                      "is_trading_day",
+                      "source_provider",
+                      "synced_at",
+                      "updated_at"
+                    ],
+                    isColumnFilterActive: isMarketCalendarColumnFilterActive,
+                    onOpen: openMarketCalendarColumnFilter,
+                    onClose: () => setActiveMarketCalendarFilter(null),
+                    onChange: (key, values) =>
+                      setDraftMarketCalendarColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyMarketCalendarColumnFilter,
+                    onSort: handleMarketCalendarSort,
+                    onClear: clearMarketCalendarColumnFilter
+                  }}
+                />
+              ) : null}
             </DataCollectionShell>
           </div>
         </div>
+
+        <OhlcvOptionsModal
+          open={ohlcvOptionsOpen}
+          formData={ohlcvFormData}
+          saving={ohlcvOptionsLoading || ohlcvOptionsSaving}
+          onClose={closeOhlcvOptionsPopup}
+          onChange={handleOhlcvFormChange}
+          onMultiChange={handleOhlcvMultiChange}
+          onSave={handleSaveOhlcvOptions}
+        />
 
         <ScheduleManagerModal
           open={Boolean(selectedScheduleJob)}
