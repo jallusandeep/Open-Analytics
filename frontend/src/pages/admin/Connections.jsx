@@ -917,17 +917,36 @@ function Connections() {
       return;
     }
 
+    const apiKey = formData.api_key.trim();
+    const apiSecret = formData.api_secret.trim();
+    const redirectUrl = formData.redirect_url.trim();
+
+    const analyticalToken = formData.analytical_token.trim();
+    const accessToken = formData.access_token.trim();
+
     if (formBroker.id === "upstox") {
-      const apiKey = formData.api_key.trim();
-      const apiSecret = formData.api_secret.trim();
-      const redirectUrl = formData.redirect_url.trim();
-      const analyticalToken = formData.analytical_token.trim();
-      const accessToken = formData.access_token.trim();
+      const hasStoredApiSecret =
+        Boolean(selectedConnection?.has_api_secret);
+
+      const effectiveApiSecret =
+        apiSecret || (hasStoredApiSecret ? "__saved__" : "");
 
       const hasAnyValue =
-        apiKey || apiSecret || redirectUrl || analyticalToken || accessToken;
-      const hasPartialApiCredential = apiKey || apiSecret || redirectUrl;
-      const hasCompleteApiCredential = apiKey && apiSecret && redirectUrl;
+        apiKey ||
+        effectiveApiSecret ||
+        redirectUrl ||
+        analyticalToken ||
+        accessToken;
+
+      const hasPartialApiCredential =
+        apiKey ||
+        effectiveApiSecret ||
+        redirectUrl;
+
+      const hasCompleteApiCredential =
+        apiKey &&
+        effectiveApiSecret &&
+        redirectUrl;
 
       if (!hasAnyValue) {
         showToast(
@@ -958,12 +977,12 @@ function Connections() {
 
       if (formBroker.id === "upstox") {
         response = await saveUpstoxConnection({
-          api_key: formData.api_key.trim() || null,
-          api_secret: formData.api_secret.trim() || null,
-          redirect_url: formData.redirect_url.trim() || null,
-          analytical_token: formData.analytical_token.trim() || null,
-          access_token: formData.access_token.trim() || null
-        });
+        api_key: apiKey || null,
+        api_secret: apiSecret || null,
+        redirect_url: redirectUrl || null,
+        analytical_token: analyticalToken || null,
+        access_token: accessToken || null
+      });
 
         response = await testUpstoxConnection();
       }
