@@ -41,8 +41,6 @@ import {
 
 const UPSTOX_REDIRECT_URL = import.meta.env.VITE_UPSTOX_REDIRECT_URL || "http://localhost:5173/connections/upstox/callback";
 
-console.log("url is " + import.meta.env.VITE_UPSTOX_REDIRECT_URL);
-
 const emptyFormData = {
   provider: "",
   api_key: "",
