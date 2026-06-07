@@ -1936,7 +1936,7 @@ function OhlcvOptionsModal({
             <div>
               <label className={oaFormTextStyles.label}>From Date</label>
 
-              <div className="mt-1 grid grid-cols-[126px_minmax(0,1fr)] items-center gap-1">
+              <div className="mt-1 grid grid-cols-[125px_minmax(0,1fr)] items-center gap-1.5">
                 <Tooltip
                   text="Start from the last saved candle. If no saved candle exists, start from available Upstox history."
                   side="top"
@@ -1976,7 +1976,7 @@ function OhlcvOptionsModal({
             <div>
               <label className={oaFormTextStyles.label}>To Date</label>
 
-              <div className="mt-1 grid grid-cols-[150px_minmax(0,1fr)] items-center gap-1.5">
+              <div className="mt-1 grid grid-cols-[125px_minmax(0,1fr)] items-center gap-1.5">
                 <Tooltip
                   text="Use current day as To Date and disable manual To Date selection."
                   side="top"
