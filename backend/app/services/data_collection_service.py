@@ -29,6 +29,8 @@ UPSTOX_CURRENT_MASTER_URL = (
 UPSTOX_CURRENT_HISTORICAL_V3_URL = "https://api.upstox.com/v3/historical-candle"
 UPSTOX_CURRENT_INTRADAY_V3_URL = "https://api.upstox.com/v3/historical-candle/intraday"
 UPSTOX_EXPIRED_HISTORICAL_URL = "https://api.upstox.com/v2/expired-instruments/historical-candle"
+UPSTOX_MARKET_HOLIDAYS_URL = "https://api.upstox.com/v2/market/holidays"
+UPSTOX_MARKET_HOLIDAYS_SYNC_TYPE = "upstox_market_holidays"
 
 REQUEST_TIMEOUT_SECONDS = 180
 UPSTOX_STANDARD_MAX_REQUESTS_PER_SECOND = 45
@@ -2095,7 +2097,8 @@ def table_name_for_sync_type(sync_type: Optional[str]) -> Optional[str]:
         "upstox_current_instruments": "upstox_instruments",
         "upstox_expired_instruments": "upstox_expired_instruments",
         "upstox_equity_instruments": "upstox_equity_instruments",
-        "upstox_ohlcv_daily": "upstox_ohlcv_candles"
+        "upstox_ohlcv_daily": "upstox_ohlcv_candles",
+        UPSTOX_MARKET_HOLIDAYS_SYNC_TYPE: "upstox_market_holidays"
     }.get(sync_type or "")
 
 
@@ -2129,6 +2132,7 @@ def get_data_collection_summary_service():
         expired_count = safe_table_count(conn, "upstox_expired_instruments")
         equity_count = safe_table_count(conn, "upstox_equity_instruments")
         ohlcv_daily_count = safe_table_count(conn, "upstox_ohlcv_candles")
+        market_holidays_count = safe_table_count(conn, "upstox_market_holidays")
         equity_news_count = safe_table_count(conn, "equity_news")
         fundamentals_count = safe_table_count(conn, "fundamentals")
         corporate_actions_count = safe_table_count(conn, "corporate_actions")
@@ -2141,7 +2145,8 @@ def get_data_collection_summary_service():
                 'upstox_current_instruments',
                 'upstox_expired_instruments',
                 'upstox_equity_instruments',
-                'upstox_ohlcv_daily'
+                'upstox_ohlcv_daily',
+                'upstox_market_holidays'
             );
         """)
         total_runs = int(total_runs_row[0] or 0) if total_runs_row else 0
@@ -2159,7 +2164,8 @@ def get_data_collection_summary_service():
                 'upstox_current_instruments',
                 'upstox_expired_instruments',
                 'upstox_equity_instruments',
-                'upstox_ohlcv_daily'
+                'upstox_ohlcv_daily',
+                'upstox_market_holidays'
             )
             ORDER BY started_at DESC
             LIMIT 1;
@@ -2169,6 +2175,7 @@ def get_data_collection_summary_service():
         expired_run = safe_last_success_run(conn, "upstox_expired_instruments")
         equity_run = safe_last_success_run(conn, "upstox_equity_instruments")
         ohlcv_run = safe_last_success_run(conn, "upstox_ohlcv_daily")
+        market_holidays_run = safe_last_success_run(conn, UPSTOX_MARKET_HOLIDAYS_SYNC_TYPE)
 
         active_run = safe_fetchone(conn, """
             SELECT sync_type, status, started_at
@@ -2197,6 +2204,7 @@ def get_data_collection_summary_service():
             "total_expired_instruments": expired_count,
             "total_equity_instruments": equity_count,
             "total_ohlcv_daily": ohlcv_daily_count,
+            "total_market_holidays": market_holidays_count,
             "total_equity_news": equity_news_count,
             "total_fundamentals": fundamentals_count,
             "total_corporate_actions": corporate_actions_count,
@@ -2212,6 +2220,8 @@ def get_data_collection_summary_service():
             "equity_duration_seconds": equity_run[1] if equity_run else None,
             "ohlcv_daily_last_sync_at": str(ohlcv_run[0]) if ohlcv_run and ohlcv_run[0] else None,
             "ohlcv_daily_duration_seconds": ohlcv_run[1] if ohlcv_run else None,
+            "market_holidays_last_sync_at": str(market_holidays_run[0]) if market_holidays_run and market_holidays_run[0] else None,
+            "market_holidays_duration_seconds": market_holidays_run[1] if market_holidays_run else None,
             "active_job": active_job,
             "active_job_status": active_run[1] if active_run else None,
             "active_job_started_at": str(active_job_started_at) if active_job_started_at else None,
@@ -2252,7 +2262,8 @@ def get_data_collection_runs_service():
                 'upstox_current_instruments',
                 'upstox_expired_instruments',
                 'upstox_equity_instruments',
-                'upstox_ohlcv_daily'
+                'upstox_ohlcv_daily',
+                'upstox_market_holidays'
             )
             ORDER BY started_at DESC
             LIMIT 25;
@@ -2275,6 +2286,309 @@ def get_data_collection_runs_service():
             }
             for row in rows
         ]
+
+    finally:
+        conn.close()
+
+
+def get_optional_upstox_access_token(conn) -> str:
+    row = conn.execute("""
+        SELECT access_token, connection_status
+        FROM external_connections
+        WHERE provider = ?
+          AND record_status = 'S'
+        LIMIT 1;
+    """, [UPSTOX_PROVIDER]).fetchone()
+
+    if not row:
+        return ""
+
+    connection_status = row[1] or "saved"
+
+    if connection_status == "disconnected":
+        return ""
+
+    return normalize_upstox_token(row[0])
+
+
+def upstox_market_holidays_http_get_json(
+    url: str,
+    token: str = "",
+    timeout: int = REQUEST_TIMEOUT_SECONDS
+) -> dict:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "OpenAnalytics/1.0"
+    }
+
+    clean_token = normalize_upstox_token(token)
+
+    if clean_token:
+        headers["Authorization"] = f"Bearer {clean_token}"
+
+    request = urllib.request.Request(url, headers=headers)
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_text = response.read().decode("utf-8")
+            return json.loads(response_text or "{}")
+    except urllib.error.HTTPError as error:
+        error_text = error.read().decode("utf-8", errors="replace")
+        raise HTTPException(
+            status_code=error.code,
+            detail=error_text or str(error)
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to call Upstox Market Holidays API: {error}"
+        )
+
+
+def extract_market_holiday_rows(response: dict) -> List[dict]:
+    if not isinstance(response, dict):
+        return []
+
+    data = response.get("data")
+
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        return [data]
+
+    return []
+
+
+def normalize_market_holiday_record(record: dict) -> Optional[dict]:
+    plain_record = model_to_dict(record)
+
+    if not isinstance(plain_record, dict):
+        return None
+
+    holiday_date = normalize_expiry_value(plain_record.get("date"))
+
+    if not holiday_date:
+        return None
+
+    closed_exchanges = plain_record.get("closed_exchanges")
+    open_exchanges = plain_record.get("open_exchanges")
+
+    if not isinstance(closed_exchanges, list):
+        closed_exchanges = []
+
+    if not isinstance(open_exchanges, list):
+        open_exchanges = []
+
+    return {
+        "holiday_date": holiday_date,
+        "description": plain_record.get("description"),
+        "holiday_type": plain_record.get("holiday_type"),
+        "closed_exchanges": json.dumps(closed_exchanges, ensure_ascii=False, default=str),
+        "open_exchanges": json.dumps(open_exchanges, ensure_ascii=False, default=str),
+        "is_trading_day": bool(open_exchanges),
+        "raw_json": json.dumps(plain_record, ensure_ascii=False, default=str)
+    }
+
+
+def insert_market_holiday_records(conn, records: List[dict]) -> int:
+    if not records:
+        return 0
+
+    unique_records = {}
+
+    for record in records:
+        normalized = normalize_market_holiday_record(record)
+
+        if normalized and normalized.get("holiday_date"):
+            unique_records[normalized["holiday_date"]] = normalized
+
+    rows = list(unique_records.values())
+
+    if not rows:
+        return 0
+
+    conn.executemany("""
+        INSERT OR REPLACE INTO upstox_market_holidays (
+            holiday_date,
+            description,
+            holiday_type,
+            closed_exchanges,
+            open_exchanges,
+            is_trading_day,
+            source_provider,
+            raw_json,
+            synced_at,
+            updated_at
+        )
+        SELECT
+            TRY_CAST(? AS DATE),
+            ?,
+            ?,
+            TRY_CAST(? AS JSON),
+            TRY_CAST(? AS JSON),
+            ?,
+            'upstox',
+            TRY_CAST(? AS JSON),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP;
+    """, [
+        (
+            row.get("holiday_date"),
+            row.get("description"),
+            row.get("holiday_type"),
+            row.get("closed_exchanges"),
+            row.get("open_exchanges"),
+            bool(row.get("is_trading_day")),
+            row.get("raw_json")
+        )
+        for row in rows
+    ])
+
+    return len(rows)
+
+
+def sync_upstox_market_holidays_service(
+    current_user: dict,
+    clear_cancel_at_start: bool = True
+):
+    conn = get_connection()
+    started_at = datetime.now()
+    sync_id = None
+    total_records = 0
+
+    try:
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        ensure_no_active_sync_run(conn)
+
+        access_token = get_optional_upstox_access_token(conn)
+
+        sync_id = create_sync_run(
+            conn,
+            UPSTOX_MARKET_HOLIDAYS_SYNC_TYPE,
+            "running",
+            "Upstox market holidays sync started.",
+            current_user=current_user
+        )
+
+        check_sync_cancelled(conn, sync_id)
+
+        try:
+            response = upstox_market_holidays_http_get_json(
+                url=UPSTOX_MARKET_HOLIDAYS_URL,
+                token=access_token
+            )
+        except HTTPException as error:
+            if access_token and error.status_code in (400, 401, 403):
+                response = upstox_market_holidays_http_get_json(
+                    url=UPSTOX_MARKET_HOLIDAYS_URL,
+                    token=""
+                )
+            else:
+                raise
+
+        check_sync_cancelled(conn, sync_id)
+
+        records = extract_market_holiday_rows(response)
+
+        conn.execute("BEGIN TRANSACTION")
+        total_records = insert_market_holiday_records(conn, records)
+        conn.execute("COMMIT")
+
+        finish_sync_run(
+            conn,
+            sync_id,
+            "success",
+            "Upstox market holidays synced successfully.",
+            total_records,
+            started_at
+        )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "success",
+            "message": "Upstox market holidays synced successfully.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
+
+    except SyncCancelled:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                "Upstox market holidays sync cancelled.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "cancelled",
+            "message": "Upstox market holidays sync cancelled.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
+
+    except HTTPException as error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"Upstox market holidays sync failed: {error.detail}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise
+
+    except Exception as error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"Upstox market holidays sync failed: {error}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to sync Upstox market holidays: {error}"
+        )
 
     finally:
         conn.close()
@@ -4584,6 +4898,145 @@ def sync_upstox_ohlcv_daily_service(
 
     finally:
         conn.close()
+
+def build_market_holidays_preview_filters(
+    search: str,
+    holiday_type: str,
+    exchange: str,
+    trading_status: str
+):
+    where_clauses = []
+    params = []
+
+    clean_search = search.strip() if search else ""
+    clean_holiday_type = holiday_type.strip() if holiday_type else "all"
+    clean_exchange = exchange.strip() if exchange else "all"
+    clean_trading_status = trading_status.strip() if trading_status else "all"
+
+    if clean_search:
+        where_clauses.append("""
+            (
+                LOWER(COALESCE(description, '')) LIKE ?
+                OR LOWER(COALESCE(holiday_type, '')) LIKE ?
+                OR LOWER(CAST(COALESCE(closed_exchanges, '[]') AS VARCHAR)) LIKE ?
+                OR LOWER(CAST(COALESCE(open_exchanges, '[]') AS VARCHAR)) LIKE ?
+                OR CAST(holiday_date AS VARCHAR) LIKE ?
+            )
+        """)
+
+        search_value = f"%{clean_search.lower()}%"
+        params.extend([
+            search_value,
+            search_value,
+            search_value,
+            search_value,
+            f"%{clean_search}%"
+        ])
+
+    if clean_holiday_type != "all":
+        where_clauses.append("holiday_type = ?")
+        params.append(clean_holiday_type)
+
+    if clean_exchange != "all":
+        exchange_value = f"%{clean_exchange}%"
+        where_clauses.append("""
+            (
+                CAST(COALESCE(closed_exchanges, '[]') AS VARCHAR) LIKE ?
+                OR CAST(COALESCE(open_exchanges, '[]') AS VARCHAR) LIKE ?
+            )
+        """)
+        params.extend([exchange_value, exchange_value])
+
+    if clean_trading_status == "open":
+        where_clauses.append("is_trading_day = TRUE")
+
+    if clean_trading_status == "closed":
+        where_clauses.append("is_trading_day = FALSE")
+
+    where_sql = ""
+
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    return where_sql, params
+
+
+def row_to_market_holidays_preview(row):
+    return {
+        "holiday_date": str(row[0]) if row[0] else None,
+        "description": row[1],
+        "holiday_type": row[2],
+        "closed_exchanges": row[3],
+        "open_exchanges": row[4],
+        "is_trading_day": bool(row[5]),
+        "source_provider": row[6],
+        "synced_at": str(row[7]) if row[7] else None,
+        "updated_at": str(row[8]) if row[8] else None
+    }
+
+
+def get_upstox_market_holidays_preview_service(
+    search: str = "",
+    holiday_type: str = "all",
+    exchange: str = "all",
+    trading_status: str = "all",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+
+        where_sql, params = build_market_holidays_preview_filters(
+            search=search,
+            holiday_type=holiday_type,
+            exchange=exchange,
+            trading_status=trading_status
+        )
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM upstox_market_holidays
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                holiday_date,
+                description,
+                holiday_type,
+                CAST(COALESCE(closed_exchanges, '[]') AS VARCHAR) AS closed_exchanges,
+                CAST(COALESCE(open_exchanges, '[]') AS VARCHAR) AS open_exchanges,
+                is_trading_day,
+                source_provider,
+                synced_at,
+                updated_at
+            FROM upstox_market_holidays
+            {where_sql}
+            ORDER BY holiday_date DESC
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [row_to_market_holidays_preview(row) for row in rows],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
+    finally:
+        conn.close()
+
 
 def build_ohlcv_preview_filters(
     search: str,

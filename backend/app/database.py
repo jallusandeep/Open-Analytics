@@ -766,6 +766,51 @@ def init_database():
         """)
 
         # -----------------------------
+        # Upstox market holidays / calendar
+        # Stores Upstox market holiday calendar for past and future dates.
+        # Used by OHLCV sync to avoid unnecessary calls on non-trading days.
+        # Upstox API:
+        #   GET /v2/market/holidays
+        #   GET /v2/market/holidays/{date}
+        # -----------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upstox_market_holidays (
+                holiday_date DATE PRIMARY KEY,
+                description VARCHAR,
+                holiday_type VARCHAR,
+                closed_exchanges JSON,
+                open_exchanges JSON,
+                is_trading_day BOOLEAN DEFAULT FALSE,
+                source_provider VARCHAR DEFAULT 'upstox',
+                raw_json JSON,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN description VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN holiday_type VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN closed_exchanges JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN open_exchanges JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN is_trading_day BOOLEAN DEFAULT FALSE;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN source_provider VARCHAR DEFAULT 'upstox';")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN raw_json JSON;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, "ALTER TABLE upstox_market_holidays ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE upstox_market_holidays
+            SET source_provider = 'upstox'
+            WHERE source_provider IS NULL OR TRIM(source_provider) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_market_holidays
+            SET is_trading_day = FALSE
+            WHERE is_trading_day IS NULL;
+        """)
+
+        # -----------------------------
         # Upstox data collection schedules
         # Multiple IST schedules for current, expired, and equity instruments.
         # schedule_time is stored in 24-hour HH:MM format.

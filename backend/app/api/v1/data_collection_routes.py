@@ -8,12 +8,14 @@ from app.services.data_collection_service import (
     get_data_collection_summary_service,
     get_upstox_expired_instruments_preview_service,
     get_upstox_instruments_preview_service,
+    get_upstox_market_holidays_preview_service,
     get_upstox_ohlcv_options_service,
     get_upstox_ohlcv_preview_service,
     request_cancel_active_sync_runs_service,
     save_upstox_ohlcv_options_service,
     sync_upstox_current_instruments_service,
     sync_upstox_expired_instruments_service,
+    sync_upstox_market_holidays_service,
     sync_upstox_ohlcv_daily_service
 )
 from app.services.data_collection_scheduler_service import (
@@ -108,6 +110,58 @@ def get_upstox_expired_instruments_preview(
             source_type=source_type,
             segment=segment,
             instrument_type=instrument_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/market-holidays")
+def get_upstox_market_holidays_preview(
+    search: str = Query(
+        "",
+        description="Search holiday date, description, holiday type, or exchange."
+    ),
+    holiday_type: str = Query("all", description="Filter by holiday type."),
+    exchange: str = Query("all", description="Filter by exchange."),
+    trading_status: str = Query("all", description="Filter by open or closed trading status."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_market_holidays_preview_service(
+            search=search,
+            holiday_type=holiday_type,
+            exchange=exchange,
+            trading_status=trading_status,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/calendar/preview")
+def get_upstox_calendar_preview(
+    search: str = Query(
+        "",
+        description="Search holiday date, description, holiday type, or exchange."
+    ),
+    holiday_type: str = Query("all", description="Filter by holiday type."),
+    exchange: str = Query("all", description="Filter by exchange."),
+    trading_status: str = Query("all", description="Filter by open or closed trading status."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_upstox_market_holidays_preview_service(
+            search=search,
+            holiday_type=holiday_type,
+            exchange=exchange,
+            trading_status=trading_status,
             page=page,
             page_size=page_size
         )
@@ -236,6 +290,7 @@ def sync_upstox_expired_instruments(
 ):
     start_detached_collection_job(
         sync_upstox_expired_instruments_service,
+    sync_upstox_market_holidays_service,
         current_user=current_user,
         config=payload or {}
     )
@@ -243,6 +298,51 @@ def sync_upstox_expired_instruments(
     return {
         "status": "started",
         "message": "Expired Instruments collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/sync-market-holidays")
+def sync_upstox_market_holidays_legacy(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_market_holidays_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "Market Holidays calendar collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/market-holidays/run")
+def sync_upstox_market_holidays(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_market_holidays_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "Market Holidays calendar collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/calendar/run")
+def sync_upstox_calendar(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_upstox_market_holidays_service,
+        current_user=current_user
+    )
+
+    return {
+        "status": "started",
+        "message": "Market Holidays calendar collection started. Monitor will update while it runs."
     }
 
 

@@ -39,11 +39,13 @@ import {
   getUpstoxDataCollectionSummary,
   getUpstoxExpiredInstrumentsPreview,
   getUpstoxInstrumentsPreview,
+  getUpstoxMarketHolidaysPreview,
   getUpstoxOhlcvOptions,
   getUpstoxOhlcvPreview,
   saveUpstoxOhlcvOptions,
   syncUpstoxCurrentInstruments,
   syncUpstoxExpiredInstruments,
+  syncUpstoxMarketHolidays,
   syncUpstoxOhlcvDaily,
   toggleUpstoxDataCollectionSchedule,
   updateUpstoxDataCollectionSchedule
@@ -55,6 +57,7 @@ const emptySummary = {
   total_current_instruments: 0,
   total_expired_instruments: 0,
   total_ohlcv_daily: 0,
+  total_market_holidays: 0,
   total_sync_runs: 0,
   last_sync_at: "",
   last_duration_seconds: null,
@@ -64,6 +67,8 @@ const emptySummary = {
   expired_duration_seconds: null,
   ohlcv_daily_last_sync_at: "",
   ohlcv_daily_duration_seconds: null,
+  market_holidays_last_sync_at: "",
+  market_holidays_duration_seconds: null,
   active_job: null,
   active_job_status: null,
   active_job_started_at: null,
@@ -112,7 +117,8 @@ const viewOptions = [
   { key: "monitor", label: "Collection Monitor" },
   { key: "current_preview", label: "Current Instruments" },
   { key: "expired_preview", label: "Expired Instruments" },
-  { key: "ohlcv", label: "OHLCV" }
+  { key: "ohlcv", label: "OHLCV" },
+  { key: "market_calendar", label: "Market Calendar" }
 ];
 
 const timeFormatOptions = [
@@ -179,6 +185,28 @@ const ohlcvIntervalOptions = [
   { value: "month", label: "Month" }
 ];
 
+const marketHolidayTypeOptions = [
+  { value: "all", label: "All Types" },
+  { value: "TRADING_HOLIDAY", label: "Trading Holiday" },
+  { value: "SETTLEMENT_HOLIDAY", label: "Settlement Holiday" }
+];
+
+const marketHolidayExchangeOptions = [
+  { value: "all", label: "All Exchanges" },
+  { value: "NSE", label: "NSE" },
+  { value: "BSE", label: "BSE" },
+  { value: "NFO", label: "NFO" },
+  { value: "BFO", label: "BFO" },
+  { value: "CDS", label: "CDS" },
+  { value: "MCX", label: "MCX" }
+];
+
+const marketHolidayTradingStatusOptions = [
+  { value: "all", label: "All Status" },
+  { value: "closed", label: "Closed" },
+  { value: "open", label: "Partially Open" }
+];
+
 const dumpJobColumns = [
   { key: "source", label: "Source" },
   { key: "saved", label: "Saved" },
@@ -238,6 +266,21 @@ const ohlcvPreviewColumns = [
 
 const ohlcvPreviewGridTemplateColumns =
   "280px 260px 130px 140px 140px 230px 130px 120px 120px 120px 120px 140px 150px 130px 130px 130px 130px 230px";
+
+const marketHolidayPreviewColumns = [
+  { key: "holiday_date", label: "Holiday Date" },
+  { key: "description", label: "Description" },
+  { key: "holiday_type", label: "Holiday Type" },
+  { key: "is_trading_day", label: "Trading Status" },
+  { key: "closed_exchanges", label: "Closed Exchanges" },
+  { key: "open_exchanges", label: "Open Exchanges" },
+  { key: "source_provider", label: "Source" },
+  { key: "synced_at", label: "Synced At" },
+  { key: "updated_at", label: "Updated At" }
+];
+
+const marketHolidayPreviewGridTemplateColumns =
+  "150px 320px 190px 170px 320px 360px 130px 230px 230px";
 
 function getStoredCurrentUser() {
   try {
@@ -502,6 +545,53 @@ function getOhlcvColumnValue(row, key) {
   return row[key];
 }
 
+function formatJsonListCell(value, displayKey = "exchange") {
+  const values = parseMaybeJsonArray(value);
+
+  if (values.length === 0) {
+    return "--";
+  }
+
+  return values
+    .map((item) => {
+      if (item && typeof item === "object") {
+        const exchange = item[displayKey] || item.exchange || item.segment || "";
+        const startTime = item.start_time || item.startTime || "";
+        const endTime = item.end_time || item.endTime || "";
+
+        if (exchange && startTime && endTime) {
+          return `${exchange} ${startTime}-${endTime}`;
+        }
+
+        return exchange || JSON.stringify(item);
+      }
+
+      return String(item);
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getMarketHolidayColumnValue(row, key) {
+  if (key === "synced_at" || key === "updated_at") {
+    return formatDateTime(row[key]);
+  }
+
+  if (key === "holiday_type") {
+    return getSyncTypeLabel(row[key]);
+  }
+
+  if (key === "is_trading_day") {
+    return row.is_trading_day ? "Partially Open" : "Closed";
+  }
+
+  if (key === "closed_exchanges" || key === "open_exchanges") {
+    return formatJsonListCell(row[key]);
+  }
+
+  return row[key];
+}
+
 function getElapsedSecondsFromDate(value) {
   if (!value) {
     return 0;
@@ -562,9 +652,11 @@ function getSyncTypeLabel(value) {
     upstox_current_instruments: "Current Instruments",
     upstox_expired_instruments: "Expired Instruments",
     upstox_ohlcv_daily: "OHLCV",
+    upstox_market_holidays: "Market Calendar",
     current_instruments: "Current Instruments",
     expired_instruments: "Expired Instruments",
     ohlcv_daily: "OHLCV",
+    market_holidays: "Market Calendar",
     bod_complete: "BOD Complete",
     expired_option_contract: "Expired Options",
     expired_future_contract: "Expired Futures",
@@ -572,6 +664,9 @@ function getSyncTypeLabel(value) {
     expired: "Expired",
     historical: "Historical",
     intraday: "Intraday",
+    TRADING_HOLIDAY: "Trading Holiday",
+    SETTLEMENT_HOLIDAY: "Settlement Holiday",
+    upstox: "Upstox",
     "1minute": "1 Min",
     "3minute": "3 Min",
     "5minute": "5 Min",
@@ -1654,6 +1749,142 @@ function OhlcvOptionsModal({
   );
 }
 
+function MarketCalendarContent({
+  previewData,
+  rows,
+  loading,
+  hasActiveJob,
+  isAdminControlAllowed,
+  searchValue,
+  searchActive,
+  holidayType,
+  onHolidayTypeChange,
+  onClearHolidayType,
+  exchange,
+  onExchangeChange,
+  onClearExchange,
+  tradingStatus,
+  onTradingStatusChange,
+  onClearTradingStatus,
+  hasActiveFilter,
+  onSearchChange,
+  onSearchSubmit,
+  onClearSearch,
+  onClearAll,
+  onSchedule,
+  onRun,
+  onRefresh,
+  onPreviousPage,
+  onNextPage,
+  onPageChange,
+  renderCell,
+  filterConfig
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+        <TableToolbar
+          searchValue={searchValue}
+          onSearchChange={onSearchChange}
+          onSearchClear={onClearSearch}
+          onSearchSubmit={onSearchSubmit}
+          searchActive={searchActive}
+          searchPlaceholder="Search market calendar"
+          filters={[
+            {
+              value: holidayType,
+              onChange: (event) => onHolidayTypeChange(event.target.value),
+              options: marketHolidayTypeOptions,
+              onClear: onClearHolidayType,
+              showClear: holidayType !== "all",
+              ariaLabel: "Holiday type",
+              minWidth: "w-44"
+            },
+            {
+              value: exchange,
+              onChange: (event) => onExchangeChange(event.target.value),
+              options: marketHolidayExchangeOptions,
+              onClear: onClearExchange,
+              showClear: exchange !== "all",
+              ariaLabel: "Exchange",
+              minWidth: "w-36"
+            },
+            {
+              value: tradingStatus,
+              onChange: (event) => onTradingStatusChange(event.target.value),
+              options: marketHolidayTradingStatusOptions,
+              onClear: onClearTradingStatus,
+              showClear: tradingStatus !== "all",
+              ariaLabel: "Trading status",
+              minWidth: "w-40"
+            }
+          ]}
+          hasActiveFilter={hasActiveFilter}
+          onClearAll={onClearAll}
+          loading={loading}
+          rightActions={[
+            {
+              icon: Clock3,
+              label: "Schedule Market Calendar",
+              variant: "default",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onSchedule
+            },
+            {
+              icon: Play,
+              label: "Run Market Calendar",
+              variant: "add",
+              disabled: !isAdminControlAllowed || loading || hasActiveJob,
+              onClick: onRun
+            },
+            {
+              icon: RefreshCcw,
+              label: "Refresh",
+              variant: "refresh",
+              disabled: loading,
+              onClick: onRefresh
+            }
+          ]}
+        />
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+        {loading && (
+          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
+            <div className="flex flex-col items-center gap-3 text-oa-muted">
+              <Spinner size="md" color="light" />
+              <span className="oa-code-font text-[12px]">
+                Loading market calendar
+              </span>
+            </div>
+          </div>
+        )}
+
+        <DataTable
+          columns={marketHolidayPreviewColumns}
+          rows={rows}
+          loading={false}
+          loadingMessage="Loading market calendar"
+          emptyMessage="No market holidays found."
+          gridTemplateColumns={marketHolidayPreviewGridTemplateColumns}
+          minWidth="min-w-[2110px]"
+          getRowKey={(row, index) => `${row.holiday_date || "calendar"}-${index}`}
+          renderCell={renderCell}
+          filterConfig={filterConfig}
+        />
+      </div>
+
+      <PaginationFooter
+        previewData={previewData}
+        loading={loading}
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+        onPageChange={onPageChange}
+      />
+    </div>
+  );
+}
+
 function OhlcvTabContent({
   previewData,
   rows,
@@ -1903,6 +2134,23 @@ function DataCollection() {
   const [ohlcvLoading, setOhlcvLoading] = useState(false);
   const [ohlcvPreviewData, setOhlcvPreviewData] = useState(emptyPreviewData);
 
+  const [marketCalendarSearch, setMarketCalendarSearch] = useState("");
+  const [appliedMarketCalendarSearch, setAppliedMarketCalendarSearch] = useState("");
+  const [marketCalendarColumnFilters, setMarketCalendarColumnFilters] = useState({});
+  const [draftMarketCalendarColumnFilters, setDraftMarketCalendarColumnFilters] = useState({});
+  const [activeMarketCalendarFilter, setActiveMarketCalendarFilter] = useState(null);
+  const [marketCalendarSortConfig, setMarketCalendarSortConfig] = useState({
+    key: null,
+    direction: null
+  });
+  const [marketCalendarHolidayType, setMarketCalendarHolidayType] = useState("all");
+  const [marketCalendarExchange, setMarketCalendarExchange] = useState("all");
+  const [marketCalendarTradingStatus, setMarketCalendarTradingStatus] = useState("all");
+  const [marketCalendarPage, setMarketCalendarPage] = useState(1);
+  const [marketCalendarPageSize] = useState(2000);
+  const [marketCalendarLoading, setMarketCalendarLoading] = useState(false);
+  const [marketCalendarPreviewData, setMarketCalendarPreviewData] = useState(emptyPreviewData);
+
   const { showToast } = useToast();
 
   const currentUser = useMemo(() => getStoredCurrentUser(), []);
@@ -1942,6 +2190,16 @@ function DataCollection() {
     isCancelRequested &&
     (runningJob === "ohlcv" || summary.active_job === "upstox_ohlcv_daily");
 
+  const isMarketCalendarJobRunning =
+    !isCancelRequested &&
+    (runningJob === "market_calendar" ||
+      summary.active_job === "upstox_market_holidays");
+
+  const marketCalendarCancelRequested =
+    isCancelRequested &&
+    (runningJob === "market_calendar" ||
+      summary.active_job === "upstox_market_holidays");
+
   const shouldShowCancelButton = hasActiveJob && !isCancelRequested;
 
   const currentLastRun = useMemo(() => {
@@ -1954,6 +2212,11 @@ function DataCollection() {
 
   const ohlcvLastRun = useMemo(() => {
     return getLatestRunByTypes(runs, ["upstox_ohlcv_daily"]);
+  }, [runs]);
+
+
+  const marketCalendarLastRun = useMemo(() => {
+    return getLatestRunByTypes(runs, ["upstox_market_holidays"]);
   }, [runs]);
 
   const selectedSchedules = useMemo(() => {
@@ -2001,6 +2264,18 @@ function DataCollection() {
     const ohlcvRecordsAdded =
       isOhlcvJobRunning &&
       summary.active_job === "upstox_ohlcv_daily" &&
+      summary.active_job_records_added != null
+        ? summary.active_job_records_added
+        : 0;
+
+    const marketCalendarRecords =
+      isMarketCalendarJobRunning && summary.active_job_current_records != null
+        ? summary.active_job_current_records
+        : summary.total_market_holidays ?? 0;
+
+    const marketCalendarRecordsAdded =
+      isMarketCalendarJobRunning &&
+      summary.active_job === "upstox_market_holidays" &&
       summary.active_job_records_added != null
         ? summary.active_job_records_added
         : 0;
@@ -2067,6 +2342,26 @@ function DataCollection() {
         onOptions: openOhlcvOptionsPopup,
         onRun: handleOhlcvSync,
         runLabel: "Run saved"
+      },
+      {
+        id: "market_calendar",
+        title: "Market Calendar",
+        scheduleJobType: "market_holidays",
+        records: marketCalendarRecords,
+        recordsAdded: marketCalendarRecordsAdded,
+        lastSyncedAt: summary.market_holidays_last_sync_at,
+        triggeredBy: marketCalendarLastRun?.triggered_by_name,
+        triggerSource: marketCalendarLastRun?.trigger_source,
+        duration: summary.market_holidays_duration_seconds,
+        lastStatus: marketCalendarCancelRequested
+          ? "cancel_requested"
+          : isMarketCalendarJobRunning
+            ? "running"
+            : marketCalendarLastRun?.status,
+        loading: isMarketCalendarJobRunning,
+        disabled: hasActiveJob && !isMarketCalendarJobRunning,
+        canCancel: isMarketCalendarJobRunning && shouldShowCancelButton,
+        onRun: handleMarketCalendarSync
       }
     ];
   }, [
@@ -2076,10 +2371,13 @@ function DataCollection() {
     isCurrentJobRunning,
     isExpiredJobRunning,
     isOhlcvJobRunning,
+    isMarketCalendarJobRunning,
     currentLastRun,
     expiredLastRun,
     ohlcvLastRun,
+    marketCalendarLastRun,
     ohlcvCancelRequested,
+    marketCalendarCancelRequested,
     hasActiveJob,
     shouldShowCancelButton
   ]);
@@ -2165,6 +2463,36 @@ function DataCollection() {
     return applySort(result, ohlcvSortConfig, getOhlcvColumnValue);
   }, [ohlcvPreviewData.rows, ohlcvColumnFilters, ohlcvSortConfig]);
 
+
+  const marketCalendarHeaderValues = useMemo(() => {
+    return marketHolidayPreviewColumns.reduce((result, column) => {
+      result[column.key] = getFilterValues(
+        marketCalendarPreviewData.rows,
+        column.key,
+        getMarketHolidayColumnValue
+      );
+      return result;
+    }, {});
+  }, [marketCalendarPreviewData.rows]);
+
+  const filteredMarketCalendarRows = useMemo(() => {
+    let result = applyColumnFilters(
+      marketCalendarPreviewData.rows,
+      marketCalendarColumnFilters,
+      getMarketHolidayColumnValue
+    );
+
+    return applySort(
+      result,
+      marketCalendarSortConfig,
+      getMarketHolidayColumnValue
+    );
+  }, [
+    marketCalendarPreviewData.rows,
+    marketCalendarColumnFilters,
+    marketCalendarSortConfig
+  ]);
+
   async function loadPreview(customPage = previewPage) {
     const previewMode = getPreviewMode(activeView);
     setPreviewLoading(true);
@@ -2234,6 +2562,47 @@ function DataCollection() {
     } finally {
       if (showLoading) {
         setOhlcvLoading(false);
+      }
+    }
+  }
+
+
+  async function loadMarketCalendarPreview(
+    customPage = marketCalendarPage,
+    options = {}
+  ) {
+    const { showLoading = true } = options;
+
+    if (showLoading) {
+      setMarketCalendarLoading(true);
+    }
+
+    try {
+      const params = {
+        search: appliedMarketCalendarSearch,
+        holiday_type: marketCalendarHolidayType,
+        exchange: marketCalendarExchange,
+        trading_status: marketCalendarTradingStatus,
+        page: customPage,
+        page_size: marketCalendarPageSize
+      };
+
+      const response = await getUpstoxMarketHolidaysPreview(params);
+      const nextData = response.data.data || response.data || emptyPreviewData;
+
+      setMarketCalendarPreviewData(nextData);
+      setMarketCalendarPage(nextData.page || customPage);
+    } catch (error) {
+      if (showLoading) {
+        setMarketCalendarPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(error, "Unable to load market calendar preview."),
+          "error"
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setMarketCalendarLoading(false);
       }
     }
   }
@@ -2754,6 +3123,72 @@ function DataCollection() {
     }
   }
 
+
+  async function handleMarketCalendarSync() {
+    if (!isAdminControlAllowed) {
+      showToast("Admin access required to run data collection.", "error");
+      return;
+    }
+
+    if (hasActiveJob) {
+      showToast("Another data collection job is already running.", "warning");
+      return;
+    }
+
+    setRunningJob("market_calendar");
+    setCancelRequested(false);
+    setElapsedSeconds(0);
+    activeSyncControllerRef.current = new AbortController();
+    let backgroundStarted = false;
+
+    try {
+      const response = await syncUpstoxMarketHolidays(
+        {},
+        {
+          signal: activeSyncControllerRef.current.signal
+        }
+      );
+
+      if (response.data?.status === "started") {
+        backgroundStarted = true;
+        showToast(
+          response.data.message || "Market Calendar collection started.",
+          "success"
+        );
+        scheduleStartedJobRefresh();
+      } else if (response.data?.status === "cancelled") {
+        showToast(
+          response.data.message || "Market Calendar collection cancelled.",
+          "warning"
+        );
+      } else {
+        showToast(
+          response.data?.message || "Market Calendar collection completed.",
+          "success"
+        );
+      }
+
+      if (!backgroundStarted) {
+        await refreshAfterSync();
+      }
+    } catch (error) {
+      if (isRequestCancelled(error)) {
+        return;
+      }
+
+      showToast(
+        getApiErrorMessage(error, "Unable to run Market Calendar collection."),
+        "error"
+      );
+    } finally {
+      if (!backgroundStarted) {
+        setRunningJob(null);
+      }
+
+      activeSyncControllerRef.current = null;
+    }
+  }
+
   async function openSchedulePopup(jobType) {
     if (!isAdminControlAllowed) {
       showToast("Admin access required to manage schedules.", "error");
@@ -3190,6 +3625,110 @@ function DataCollection() {
     return selectedValues.length > 0;
   }
 
+  function handleMarketCalendarSearchSubmit(event) {
+    event.preventDefault();
+    setAppliedMarketCalendarSearch(marketCalendarSearch.trim());
+    setMarketCalendarPage(1);
+  }
+
+  function handleClearMarketCalendarSearch() {
+    setMarketCalendarSearch("");
+    setAppliedMarketCalendarSearch("");
+    setMarketCalendarPage(1);
+  }
+
+  function clearMarketCalendarHolidayType() {
+    setMarketCalendarHolidayType("all");
+    setMarketCalendarPage(1);
+  }
+
+  function clearMarketCalendarExchange() {
+    setMarketCalendarExchange("all");
+    setMarketCalendarPage(1);
+  }
+
+  function clearMarketCalendarTradingStatus() {
+    setMarketCalendarTradingStatus("all");
+    setMarketCalendarPage(1);
+  }
+
+  function hasAnyActiveMarketCalendarFilter() {
+    return (
+      appliedMarketCalendarSearch.trim() !== "" ||
+      marketCalendarHolidayType !== "all" ||
+      marketCalendarExchange !== "all" ||
+      marketCalendarTradingStatus !== "all" ||
+      marketCalendarSortConfig.key !== null ||
+      Object.values(marketCalendarColumnFilters).some(
+        (value) => Array.isArray(value) && value.length > 0
+      )
+    );
+  }
+
+  function clearAllMarketCalendarFilters() {
+    setMarketCalendarSearch("");
+    setAppliedMarketCalendarSearch("");
+    setMarketCalendarHolidayType("all");
+    setMarketCalendarExchange("all");
+    setMarketCalendarTradingStatus("all");
+    setMarketCalendarColumnFilters({});
+    setDraftMarketCalendarColumnFilters({});
+    setMarketCalendarSortConfig({
+      key: null,
+      direction: null
+    });
+    setActiveMarketCalendarFilter(null);
+    setMarketCalendarPage(1);
+  }
+
+  function openMarketCalendarColumnFilter(key) {
+    setDraftMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: marketCalendarColumnFilters[key] || []
+    }));
+
+    setActiveMarketCalendarFilter((previous) =>
+      previous === key ? null : key
+    );
+  }
+
+  function applyMarketCalendarColumnFilter(key) {
+    setMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: draftMarketCalendarColumnFilters[key] || []
+    }));
+
+    setActiveMarketCalendarFilter(null);
+  }
+
+  function clearMarketCalendarColumnFilter(key) {
+    setMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setDraftMarketCalendarColumnFilters((previous) => ({
+      ...previous,
+      [key]: []
+    }));
+
+    setActiveMarketCalendarFilter(null);
+  }
+
+  function handleMarketCalendarSort(key, direction) {
+    setMarketCalendarSortConfig({
+      key,
+      direction
+    });
+
+    setActiveMarketCalendarFilter(null);
+  }
+
+  function isMarketCalendarColumnFilterActive(key) {
+    const selectedValues = marketCalendarColumnFilters[key] || [];
+    return selectedValues.length > 0;
+  }
+
   function handleViewChange(nextView) {
     if (nextView === activeView) {
       return;
@@ -3226,6 +3765,23 @@ function DataCollection() {
       setActiveOhlcvFilter(null);
       setOhlcvPage(1);
       setOhlcvPreviewData(emptyPreviewData);
+    }
+
+    if (nextView === "market_calendar") {
+      setMarketCalendarSearch("");
+      setAppliedMarketCalendarSearch("");
+      setMarketCalendarHolidayType("all");
+      setMarketCalendarExchange("all");
+      setMarketCalendarTradingStatus("all");
+      setMarketCalendarColumnFilters({});
+      setDraftMarketCalendarColumnFilters({});
+      setMarketCalendarSortConfig({
+        key: null,
+        direction: null
+      });
+      setActiveMarketCalendarFilter(null);
+      setMarketCalendarPage(1);
+      setMarketCalendarPreviewData(emptyPreviewData);
     }
   }
 
@@ -3404,6 +3960,75 @@ function DataCollection() {
     );
   }
 
+  function renderMarketCalendarCell(row, column) {
+    if (column.key === "holiday_date") {
+      return (
+        <span className="truncate oa-code-font font-semibold text-cyan-200">
+          {row.holiday_date || "--"}
+        </span>
+      );
+    }
+
+    if (column.key === "description") {
+      return <span className="truncate text-white">{row.description || "--"}</span>;
+    }
+
+    if (column.key === "holiday_type") {
+      return (
+        <span className={`${oaPillStyles.base} border-zinc-600 bg-zinc-900 text-zinc-200`}>
+          {getSyncTypeLabel(row.holiday_type)}
+        </span>
+      );
+    }
+
+    if (column.key === "is_trading_day") {
+      return (
+        <StatusBadge
+          status={row.is_trading_day ? "active" : "inactive"}
+          label={row.is_trading_day ? "Partially Open" : "Closed"}
+        />
+      );
+    }
+
+    if (column.key === "closed_exchanges") {
+      return (
+        <span className="truncate oa-code-font text-red-200">
+          {formatJsonListCell(row.closed_exchanges)}
+        </span>
+      );
+    }
+
+    if (column.key === "open_exchanges") {
+      return (
+        <span className="truncate oa-code-font text-emerald-200">
+          {formatJsonListCell(row.open_exchanges)}
+        </span>
+      );
+    }
+
+    if (column.key === "source_provider") {
+      return (
+        <span className={`${oaPillStyles.base} border-sky-500/40 bg-sky-950/40 text-sky-200`}>
+          {getSyncTypeLabel(row.source_provider)}
+        </span>
+      );
+    }
+
+    if (column.key === "synced_at" || column.key === "updated_at") {
+      return (
+        <span className="truncate oa-code-font text-white">
+          {formatDateTime(row[column.key])}
+        </span>
+      );
+    }
+
+    return (
+      <span className="truncate oa-code-font text-oa-muted">
+        {getMarketHolidayColumnValue(row, column.key) || "--"}
+      </span>
+    );
+  }
+
   useEffect(() => {
     loadData(false);
     loadSchedules(false);
@@ -3435,6 +4060,23 @@ function DataCollection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, appliedOhlcvSearch, ohlcvPage]);
 
+
+  useEffect(() => {
+    if (activeView !== "market_calendar") {
+      return;
+    }
+
+    loadMarketCalendarPreview(marketCalendarPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeView,
+    appliedMarketCalendarSearch,
+    marketCalendarHolidayType,
+    marketCalendarExchange,
+    marketCalendarTradingStatus,
+    marketCalendarPage
+  ]);
+
   useEffect(() => {
     if (activeView !== "ohlcv" || !isOhlcvJobRunning) {
       return undefined;
@@ -3447,6 +4089,20 @@ function DataCollection() {
     return () => window.clearInterval(pollId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, isOhlcvJobRunning, ohlcvPage]);
+
+
+  useEffect(() => {
+    if (activeView !== "market_calendar" || !isMarketCalendarJobRunning) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadMarketCalendarPreview(marketCalendarPage, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isMarketCalendarJobRunning, marketCalendarPage]);
 
   useEffect(() => {
     if (!hasActiveJob) {
@@ -3694,6 +4350,82 @@ function DataCollection() {
                     onApply: applyOhlcvColumnFilter,
                     onSort: handleOhlcvSort,
                     onClear: clearOhlcvColumnFilter
+                  }}
+                />
+              ) : null}
+
+
+              {activeView === "market_calendar" ? (
+                <MarketCalendarContent
+                  previewData={marketCalendarPreviewData}
+                  rows={filteredMarketCalendarRows}
+                  loading={marketCalendarLoading}
+                  hasActiveJob={hasActiveJob}
+                  isAdminControlAllowed={isAdminControlAllowed}
+                  searchValue={marketCalendarSearch}
+                  onSearchChange={setMarketCalendarSearch}
+                  onSearchSubmit={handleMarketCalendarSearchSubmit}
+                  onClearSearch={handleClearMarketCalendarSearch}
+                  searchActive={appliedMarketCalendarSearch.trim() !== ""}
+                  holidayType={marketCalendarHolidayType}
+                  onHolidayTypeChange={(value) => {
+                    setMarketCalendarHolidayType(value);
+                    setMarketCalendarPage(1);
+                  }}
+                  onClearHolidayType={clearMarketCalendarHolidayType}
+                  exchange={marketCalendarExchange}
+                  onExchangeChange={(value) => {
+                    setMarketCalendarExchange(value);
+                    setMarketCalendarPage(1);
+                  }}
+                  onClearExchange={clearMarketCalendarExchange}
+                  tradingStatus={marketCalendarTradingStatus}
+                  onTradingStatusChange={(value) => {
+                    setMarketCalendarTradingStatus(value);
+                    setMarketCalendarPage(1);
+                  }}
+                  onClearTradingStatus={clearMarketCalendarTradingStatus}
+                  hasActiveFilter={hasAnyActiveMarketCalendarFilter()}
+                  onClearAll={clearAllMarketCalendarFilters}
+                  onSchedule={() => openSchedulePopup("market_holidays")}
+                  onRun={handleMarketCalendarSync}
+                  onRefresh={() => loadMarketCalendarPreview(marketCalendarPage)}
+                  onPreviousPage={() =>
+                    setMarketCalendarPage((value) => Math.max(1, value - 1))
+                  }
+                  onNextPage={() =>
+                    setMarketCalendarPage((value) =>
+                      Math.min(
+                        marketCalendarPreviewData.total_pages || 1,
+                        value + 1
+                      )
+                    )
+                  }
+                  onPageChange={(page) => setMarketCalendarPage(page)}
+                  renderCell={renderMarketCalendarCell}
+                  filterConfig={{
+                    activeFilter: activeMarketCalendarFilter,
+                    headerValues: marketCalendarHeaderValues,
+                    columnFilters: marketCalendarColumnFilters,
+                    draftColumnFilters: draftMarketCalendarColumnFilters,
+                    rightAlignedKeys: [
+                      "holiday_type",
+                      "is_trading_day",
+                      "source_provider",
+                      "synced_at",
+                      "updated_at"
+                    ],
+                    isColumnFilterActive: isMarketCalendarColumnFilterActive,
+                    onOpen: openMarketCalendarColumnFilter,
+                    onClose: () => setActiveMarketCalendarFilter(null),
+                    onChange: (key, values) =>
+                      setDraftMarketCalendarColumnFilters((previous) => ({
+                        ...previous,
+                        [key]: values
+                      })),
+                    onApply: applyMarketCalendarColumnFilter,
+                    onSort: handleMarketCalendarSort,
+                    onClear: clearMarketCalendarColumnFilter
                   }}
                 />
               ) : null}

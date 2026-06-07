@@ -26,6 +26,12 @@ export function getUpstoxOhlcvPreview(params = {}) {
   });
 }
 
+export function getUpstoxMarketHolidaysPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/calendar/preview", {
+    params
+  });
+}
+
 export function getUpstoxOhlcvOptions() {
   return axiosClient.get("/data-collection/upstox/ohlcv/options");
 }
@@ -49,6 +55,14 @@ export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
 export function syncUpstoxOhlcvDaily(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/ohlcv/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxMarketHolidays(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/calendar/run",
     payload,
     config
   );
