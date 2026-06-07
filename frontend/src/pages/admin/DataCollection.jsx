@@ -26,6 +26,7 @@ import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
+  oaCheckboxControlStyles,
   oaFormTextStyles,
   oaPillStyles,
   oaTabStyles
@@ -1624,68 +1625,86 @@ function OhlcvOptionsModal({
         />
 
         <div className="rounded border border-oa-border bg-black p-3">
-          <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
-                Date Range
-              </p>
-              <p className="mt-1 text-[11px] text-oa-muted">
-                Leave From Date empty to continue from the last saved candle, or from Upstox available history.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
-                <input
-                  type="checkbox"
-                  name="auto_date_range"
-                  checked={autoDateRange}
-                  onChange={onChange}
-                  className="h-4 w-4 accent-emerald-500"
-                />
-                <span>Auto start from saved data</span>
-              </label>
-
-              <label className="flex items-center gap-2 rounded border border-oa-border bg-oa-panel/40 px-3 py-2 text-[12px] text-oa-muted transition hover:border-oa-muted/40 hover:bg-oa-card hover:text-white">
-                <input
-                  type="checkbox"
-                  name="use_current_day"
-                  checked={useCurrentDay}
-                  onChange={onChange}
-                  className="h-4 w-4 accent-emerald-500"
-                />
-                <Check size={14} className={useCurrentDay ? "text-emerald-300" : "text-oa-muted"} />
-                <span>Current day</span>
-              </label>
-            </div>
-          </div>
+          <p className="mb-3 text-[12px] font-semibold uppercase tracking-wider text-white">
+            Date Range
+          </p>
 
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className={oaFormTextStyles.label}>From Date</label>
-              <div className={`mt-1 ${autoDateRange ? "opacity-60" : ""}`}>
-                <DatePicker
-                  name="from_date"
-                  value={formData.from_date}
-                  onChange={onChange}
-                  placeholder={autoDateRange ? "Auto from saved / available" : "From date"}
-                  ariaLabel="Select from date"
-                  disabled={autoDateRange}
-                />
+
+              <div className="mt-1 grid grid-cols-[126px_minmax(0,1fr)] items-center gap-1">
+                <Tooltip
+                  text="Start from the last saved candle. If no saved candle exists, start from available Upstox history."
+                  side="top"
+                >
+                  <span className="block h-8">
+                    <label className={oaCheckboxControlStyles.wrapper}>
+                      <input
+                        type="checkbox"
+                        name="auto_date_range"
+                        checked={autoDateRange}
+                        onChange={onChange}
+                        className={oaCheckboxControlStyles.checkbox}
+                        aria-label="Auto start from saved data"
+                      />
+                      <span className={oaCheckboxControlStyles.label}>
+                        Auto start
+                      </span>
+                    </label>
+                  </span>
+                </Tooltip>
+
+                <div className={autoDateRange ? "opacity-60" : ""}>
+                  <DatePicker
+                    name="from_date"
+                    value={formData.from_date}
+                    onChange={onChange}
+                    placeholder={
+                      autoDateRange ? "Auto from saved / available" : "From date"
+                    }
+                    ariaLabel="Select from date"
+                    disabled={autoDateRange}
+                  />
+                </div>
               </div>
             </div>
 
             <div>
               <label className={oaFormTextStyles.label}>To Date</label>
-              <div className={`mt-1 ${useCurrentDay ? "opacity-60" : ""}`}>
-                <DatePicker
-                  name="to_date"
-                  value={useCurrentDay ? "" : formData.to_date}
-                  onChange={onChange}
-                  placeholder={useCurrentDay ? "Current day" : "To date"}
-                  ariaLabel="Select to date"
-                  disabled={useCurrentDay}
-                />
+
+              <div className="mt-1 grid grid-cols-[150px_minmax(0,1fr)] items-center gap-1.5">
+                <Tooltip
+                  text="Use current day as To Date and disable manual To Date selection."
+                  side="top"
+                >
+                  <span className="block h-8">
+                    <label className={oaCheckboxControlStyles.wrapper}>
+                      <input
+                        type="checkbox"
+                        name="use_current_day"
+                        checked={useCurrentDay}
+                        onChange={onChange}
+                        className={oaCheckboxControlStyles.checkbox}
+                        aria-label="Use current day"
+                      />
+                      <span className={oaCheckboxControlStyles.label}>
+                        Current day
+                      </span>
+                    </label>
+                  </span>
+                </Tooltip>
+
+                <div className={useCurrentDay ? "opacity-60" : ""}>
+                  <DatePicker
+                    name="to_date"
+                    value={useCurrentDay ? "" : formData.to_date}
+                    onChange={onChange}
+                    placeholder={useCurrentDay ? "Current day" : "To date"}
+                    ariaLabel="Select to date"
+                    disabled={useCurrentDay}
+                  />
+                </div>
               </div>
             </div>
           </div>
