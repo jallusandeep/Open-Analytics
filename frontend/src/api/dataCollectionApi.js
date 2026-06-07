@@ -40,6 +40,29 @@ export function saveUpstoxOhlcvOptions(payload) {
   return axiosClient.put("/data-collection/upstox/ohlcv/options", payload);
 }
 
+export function getUpstoxCompanyFundamentalsOptions() {
+  return axiosClient.get(
+    "/data-collection/upstox/company-fundamentals/options"
+  );
+}
+
+export function getUpstoxCompanyFundamentalsPreview(params = {}) {
+  return axiosClient.get(
+    "/data-collection/upstox/company-fundamentals/preview",
+    {
+      params
+    }
+  );
+}
+
+export function syncUpstoxCompanyFundamentals(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/company-fundamentals/run",
+    payload,
+    config
+  );
+}
+
 export function syncUpstoxCurrentInstruments(config = {}) {
   return axiosClient.post("/data-collection/upstox/sync-current", null, config);
 }
