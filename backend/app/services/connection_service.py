@@ -47,6 +47,9 @@ UPSTOX_EXPIRED_FUTURE_CONTRACT_PATH = "/expired-instruments/future/contract"
 UPSTOX_EXPIRED_HISTORICAL_CANDLE_PATH = "/expired-instruments/historical-candle"
 
 IST_TIMEZONE = "Asia/Kolkata"
+UPSTOX_REMINDER_START_HOUR = 6
+UPSTOX_REMINDER_END_HOUR = 22
+UPSTOX_REMINDER_REPEAT_MINUTES = 60
 REQUEST_TIMEOUT_SECONDS = 30
 
 
@@ -242,9 +245,14 @@ def refresh_connection_statuses_for_list(conn):
         current_status = safe_strip(upstox_row[8]) or "saved"
 
         next_status = current_status
+        is_access_token_expired = bool(
+            access_token
+            and access_token_expires_at
+            and access_token_expires_at <= now_time
+        )
 
         if current_status != "disconnected":
-            if access_token and access_token_expires_at and access_token_expires_at <= now_time:
+            if is_access_token_expired:
                 next_status = "limited" if analytical_token else "failed"
             elif current_status in ("failed", "limited"):
                 next_status = current_status
@@ -271,6 +279,27 @@ def refresh_connection_statuses_for_list(conn):
             ])
 
             conn.commit()
+
+        should_request_token = (
+            current_status != "disconnected"
+            and (
+                is_access_token_expired
+                or next_status in ("limited", "failed")
+            )
+        )
+
+        if should_request_token:
+            maybe_request_upstox_access_token_and_send_reminder(
+                conn=conn,
+                reason=(
+                    "Upstox access token expired"
+                    if is_access_token_expired
+                    else f"Upstox status is {next_status}"
+                ),
+                previous_status=current_status,
+                current_status=next_status
+            )
+      
 
 def list_connections_service():
     conn = get_connection()
@@ -748,8 +777,9 @@ def save_upstox_connection_service(request, current_user):
             )
         )
 
-    has_partial_api_credentials = bool(api_key or api_secret or redirect_url)
-    has_complete_api_credentials = bool(api_key and api_secret and redirect_url)
+    #Commented as below code is not required
+    #has_partial_api_credentials = bool(api_key or api_secret or redirect_url)
+    #has_complete_api_credentials = bool(api_key and api_secret and redirect_url)
 
     # if has_partial_api_credentials and not has_complete_api_credentials:
     #     raise HTTPException(
@@ -1462,6 +1492,178 @@ def set_app_metadata_value(conn, key: str, value: str):
         VALUES (?, ?, CURRENT_TIMESTAMP);
     """, [key, value])
 
+def is_upstox_reminder_window(now_time: datetime) -> bool:
+    return (
+        now_time.hour >= UPSTOX_REMINDER_START_HOUR
+        and now_time.hour < UPSTOX_REMINDER_END_HOUR
+    )
+
+
+def should_send_upstox_reminder(conn, now_time: datetime) -> bool:
+    last_sent_at = parse_db_datetime(
+        get_app_metadata_value(
+            conn,
+            "upstox_access_token_reminder_last_sent_at"
+        )
+    )
+
+    if not last_sent_at:
+        return True
+
+    return now_time - last_sent_at >= timedelta(
+        minutes=UPSTOX_REMINDER_REPEAT_MINUTES
+    )
+
+
+def should_trigger_upstox_access_token_request(conn, now_time: datetime) -> bool:
+    last_triggered_at = parse_db_datetime(
+        get_app_metadata_value(
+            conn,
+            "upstox_access_token_request_last_triggered_at"
+        )
+    )
+
+    if not last_triggered_at:
+        return True
+
+    return now_time - last_triggered_at >= timedelta(
+        minutes=UPSTOX_REMINDER_REPEAT_MINUTES
+    )
+
+
+def build_upstox_access_token_approval_reminder_message(
+    reason: str,
+    previous_status: str,
+    current_status: str,
+    request_triggered: bool
+) -> str:
+    approval_text = (
+        "A semi-automated Upstox access token request has been triggered. "
+        "Please approve it in the Upstox app/web before the request expires."
+        if request_triggered
+        else
+        "Backend could not trigger the semi-automated Upstox access token request. "
+        "Please open Open Analytics > Connections and generate the Upstox access token."
+    )
+
+    return (
+        "🔔 Upstox access token approval required\n\n"
+        f"Reason: {reason}\n"
+        f"Previous status: {previous_status or '--'}\n"
+        f"Current status: {current_status or '--'}\n\n"
+        f"{approval_text}"
+    )
+
+
+def maybe_request_upstox_access_token_and_send_reminder(
+    conn,
+    reason: str,
+    previous_status: str,
+    current_status: str
+):
+    now_time = get_ist_now()
+
+    if not is_upstox_reminder_window(now_time):
+        return {
+            "status": "skipped",
+            "message": "Outside Upstox reminder window."
+        }
+
+    existing = get_upstox_connection_raw(conn)
+
+    if not existing:
+        return {
+            "status": "skipped",
+            "message": "Upstox connection is not configured."
+        }
+
+    api_key = safe_strip(existing[2])
+    api_secret = safe_strip(existing[3])
+
+    if not api_key or not api_secret:
+        return {
+            "status": "skipped",
+            "message": "Upstox API key and API secret are required."
+        }
+
+    request_triggered = False
+
+    if should_trigger_upstox_access_token_request(conn, now_time):
+        try:
+            upstox_access_token_request_post(
+                client_id=api_key,
+                client_secret=api_secret
+            )
+
+            set_app_metadata_value(
+                conn,
+                "upstox_access_token_request_last_triggered_at",
+                now_time.strftime("%Y-%m-%d %H:%M:%S")
+            )
+
+            request_triggered = True
+
+        except Exception as error:
+            print(f"Unable to trigger Upstox access token request: {error}")
+
+    if not should_send_upstox_reminder(conn, now_time):
+        conn.commit()
+
+        return {
+            "status": "skipped",
+            "message": "Upstox reminder was already sent recently."
+        }
+
+    try:
+        bot_token = get_telegram_bot_token(conn)
+        chat_ids = get_admin_super_admin_telegram_chat_ids(conn)
+
+        reminder_message = build_upstox_access_token_approval_reminder_message(
+            reason=reason,
+            previous_status=previous_status,
+            current_status=current_status,
+            request_triggered=request_triggered
+        )
+
+        for chat_id in chat_ids:
+            try:
+                send_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    message=reminder_message
+                )
+            except Exception as error:
+                print(f"Unable to send Upstox approval reminder Telegram alert: {error}")
+
+        set_app_metadata_value(
+            conn,
+            "upstox_access_token_reminder_last_sent_at",
+            now_time.strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "message": (
+                "Upstox token request triggered and Telegram reminder sent."
+                if request_triggered
+                else "Telegram reminder sent."
+            )
+        }
+
+    except Exception as error:
+        print(f"Unable to send Upstox access token reminder: {error}")
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        return {
+            "status": "failed",
+            "message": str(error)
+        }
 
 def clear_upstox_expiry_notification_marker(conn):
     ensure_app_metadata_table(conn)
