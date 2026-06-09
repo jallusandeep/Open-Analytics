@@ -6,6 +6,7 @@ from app.dependencies import require_admin_or_super_admin
 from app.services.data_collection_service import (
     get_data_collection_runs_service,
     get_data_collection_summary_service,
+    get_ipo_gmp_scraper_preview_service,
     get_upstox_company_fundamentals_options_service,
     get_upstox_company_fundamentals_preview_service,
     get_upstox_equity_news_preview_service,
@@ -17,6 +18,7 @@ from app.services.data_collection_service import (
     get_upstox_ohlcv_preview_service,
     request_cancel_active_sync_runs_service,
     save_upstox_ohlcv_options_service,
+    sync_ipo_gmp_scraper_service,
     sync_upstox_company_fundamentals_service,
     sync_upstox_current_instruments_service,
     sync_upstox_equity_news_service,
@@ -338,6 +340,88 @@ def sync_upstox_ipos_legacy(
     return {
         "status": "started",
         "message": "IPO Calendar collection started. Monitor will update while it runs."
+    }
+
+
+@router.get("/upstox/ipo-scraper/preview")
+def get_ipo_gmp_scraper_preview(
+    search: str = Query(
+        "",
+        description="Search IPO name, GMP, price band, date, type, status, or last updated."
+    ),
+    ipo_status: str = Query("all", description="Filter by IPO scraper status."),
+    ipo_type: str = Query("all", description="Filter by IPO scraper type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_ipo_gmp_scraper_preview_service(
+            search=search,
+            ipo_status=ipo_status,
+            ipo_type=ipo_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.get("/upstox/ipo-gmp-scraper/preview")
+def get_ipo_gmp_scraper_preview_legacy(
+    search: str = Query(
+        "",
+        description="Search IPO name, GMP, price band, date, type, status, or last updated."
+    ),
+    ipo_status: str = Query("all", description="Filter by IPO scraper status."),
+    ipo_type: str = Query("all", description="Filter by IPO scraper type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(2000, ge=10, le=2000),
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return {
+        "status": "success",
+        "data": get_ipo_gmp_scraper_preview_service(
+            search=search,
+            ipo_status=ipo_status,
+            ipo_type=ipo_type,
+            page=page,
+            page_size=page_size
+        )
+    }
+
+
+@router.post("/upstox/ipo-scraper/run")
+def sync_ipo_gmp_scraper(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_ipo_gmp_scraper_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "IPO Scrapper collection started. Monitor will update while it runs."
+    }
+
+
+@router.post("/upstox/ipo-gmp-scraper/run")
+def sync_ipo_gmp_scraper_legacy(
+    payload: dict | None = None,
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    start_detached_collection_job(
+        sync_ipo_gmp_scraper_service,
+        current_user=current_user,
+        config=payload or {}
+    )
+
+    return {
+        "status": "started",
+        "message": "IPO Scrapper collection started. Monitor will update while it runs."
     }
 
 
