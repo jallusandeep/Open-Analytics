@@ -14,7 +14,7 @@ from app.services.connection_service import (
     parse_db_datetime,
     safe_strip,
     set_app_metadata_value,
-    upstox_access_token_request_post
+    trigger_upstox_access_token_request
 )
 from app.telegram_alerts_msg.message_templates import (
     build_upstox_access_token_reminder_message,
@@ -244,16 +244,6 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
         now = get_ist_now()
 
-        if not is_upstox_reminder_window():
-            return {
-                "status": "skipped",
-                "message": (
-                    "Outside Upstox reminder window. Reminder allowed only "
-                    "between 06:00 AM and 10:00 PM IST."
-                ),
-                "token_valid": False
-            }
-
         access_expiry_date = parse_db_datetime(access_expiry_value)
         analytical_expiry_date = get_analytical_token_expiry(
             token=analytical_token,
@@ -285,6 +275,8 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 "token_valid": True
             }
 
+        reminder_window_open = is_upstox_reminder_window()
+
         access_last_sent_value = get_app_metadata_value(
             conn,
             "upstox_access_token_reminder_last_sent_at"
@@ -297,45 +289,41 @@ def notify_admin_super_admins_upstox_token_expiry_service():
         )
         analytical_last_sent_at = parse_db_datetime(analytical_last_sent_value)
 
-        access_should_send = access_needs_reminder and not (
+        access_should_send = reminder_window_open and access_needs_reminder and not (
             access_last_sent_at
             and now - access_last_sent_at < timedelta(hours=1)
         )
 
-        analytical_should_send = analytical_needs_reminder and not (
+        analytical_should_send = reminder_window_open and analytical_needs_reminder and not (
             analytical_last_sent_at
             and now - analytical_last_sent_at < timedelta(hours=1)
         )
 
-        if not access_should_send and not analytical_should_send:
-            conn.commit()
-
-            return {
-                "status": "skipped",
-                "message": "Upstox token reminder already sent within the last hour.",
-                "token_valid": False
-            }
-
         auto_request_status = "skipped"
         auto_request_message = "Upstox API key or API secret is missing."
+        access_request_last_attempted_value = get_app_metadata_value(
+            conn,
+            "upstox_access_token_request_last_attempted_at"
+        )
+        access_request_last_attempted_at = parse_db_datetime(
+            access_request_last_attempted_value
+        )
+        access_should_request = access_needs_reminder and not (
+            access_request_last_attempted_at
+            and now - access_request_last_attempted_at < timedelta(hours=1)
+        )
 
-        if access_should_send and api_key and api_secret:
+        if access_should_request and api_key and api_secret:
             try:
-                token_request_response = upstox_access_token_request_post(
+                token_request_response = trigger_upstox_access_token_request(
+                    conn=conn,
                     client_id=api_key,
                     client_secret=api_secret
                 )
 
                 auto_request_status = "success"
-                auto_request_message = (
-                    token_request_response.get("message")
-                    or "Upstox access token approval request triggered."
-                )
-
-                set_app_metadata_value(
-                    conn,
-                    "upstox_access_token_request_last_triggered_at",
-                    now.strftime("%Y-%m-%d %H:%M:%S")
+                auto_request_message = token_request_response.get("message") or (
+                    "Upstox access token approval request triggered."
                 )
 
             except HTTPException as request_error:
@@ -354,6 +342,34 @@ def notify_admin_super_admins_upstox_token_expiry_service():
             except Exception as request_error:
                 auto_request_status = "failed"
                 auto_request_message = str(request_error)
+
+        elif access_needs_reminder and api_key and api_secret:
+            auto_request_status = "skipped"
+            auto_request_message = "Upstox access token request already attempted within the last hour."
+
+        if not reminder_window_open:
+            conn.commit()
+
+            return {
+                "status": auto_request_status,
+                "message": (
+                    "Upstox token request check processed outside Telegram "
+                    f"reminder window. Request status: {auto_request_message}"
+                ),
+                "token_valid": False
+            }
+
+        if not access_should_send and not analytical_should_send:
+            conn.commit()
+
+            return {
+                "status": "skipped",
+                "message": (
+                    "Upstox token request check processed. Telegram reminder "
+                    "was already sent within the last hour."
+                ),
+                "token_valid": False
+            }
 
         try:
             bot_token = get_telegram_bot_token(conn)
