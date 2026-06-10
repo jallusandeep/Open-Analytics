@@ -29,6 +29,8 @@ IST_TZINFO = timezone(timedelta(hours=5, minutes=30))
 
 UPSTOX_TOKEN_CHECK_HOUR = 3
 UPSTOX_TOKEN_CHECK_MINUTE = 30
+UPSTOX_REMINDER_START_HOUR = 6
+UPSTOX_REMINDER_END_HOUR = 22
 UPSTOX_REMINDER_INTERVAL_SECONDS = 60 * 60
 
 _connection_scheduler_thread = None
@@ -65,6 +67,15 @@ def get_seconds_until_next_upstox_check(now: datetime | None = None) -> int:
     wait_seconds = int((next_check - current_time).total_seconds())
 
     return max(wait_seconds, 60)
+
+
+def is_upstox_reminder_window(now: datetime | None = None) -> bool:
+    current_time = now or get_connection_scheduler_ist_now()
+
+    return (
+        current_time.hour >= UPSTOX_REMINDER_START_HOUR
+        and current_time.hour < UPSTOX_REMINDER_END_HOUR
+    )
 
 
 def get_upstox_token_status():
@@ -181,6 +192,19 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
         elif api_key and api_secret:
             auto_request_message = "Upstox access token request already attempted within the last hour."
+
+        if not is_upstox_reminder_window(now):
+            conn.commit()
+
+            return {
+                "status": auto_request_status,
+                "message": (
+                    "Upstox token request check processed outside the "
+                    "06:00-22:00 IST Telegram reminder window. "
+                    f"Request status: {auto_request_message}"
+                ),
+                "token_valid": False
+            }
 
         last_sent_value = get_app_metadata_value(
             conn,
