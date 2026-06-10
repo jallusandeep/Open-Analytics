@@ -20,25 +20,113 @@ export function getUpstoxExpiredInstrumentsPreview(params = {}) {
   });
 }
 
-export function syncUpstoxCurrentInstruments(config = {}) {
-  return axiosClient.post("/data-collection/upstox/sync-current", null, config);
-}
-
-export function getUpstoxOHLCVPreview(params = {}) {
-  return axiosClient.get("/data-collection/upstox/ohlcv", {
+export function getUpstoxOhlcvPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ohlcv/preview", {
     params
   });
 }
 
-export function syncUpstoxOHLCV() {
-  return axiosClient.post(
-    "/data-collection/upstox/sync-ohlcv"
+export function getUpstoxMarketHolidaysPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/calendar/preview", {
+    params
+  });
+}
+
+export function getUpstoxEquityNewsPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/equity-news/preview", {
+    params
+  });
+}
+
+export function getUpstoxIpoCalendarPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ipo-calendar/preview", {
+    params
+  });
+}
+export function getIpoGmpScraperPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ipo-scraper/preview", {
+    params
+  });
+}
+
+export function getUpstoxOhlcvOptions() {
+  return axiosClient.get("/data-collection/upstox/ohlcv/options");
+}
+
+export function saveUpstoxOhlcvOptions(payload) {
+  return axiosClient.put("/data-collection/upstox/ohlcv/options", payload);
+}
+
+export function getUpstoxCompanyFundamentalsOptions() {
+  return axiosClient.get(
+    "/data-collection/upstox/company-fundamentals/options"
   );
+}
+
+export function getUpstoxCompanyFundamentalsPreview(params = {}) {
+  return axiosClient.get(
+    "/data-collection/upstox/company-fundamentals/preview",
+    {
+      params
+    }
+  );
+}
+
+export function syncUpstoxCompanyFundamentals(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/company-fundamentals/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxCurrentInstruments(config = {}) {
+  return axiosClient.post("/data-collection/upstox/sync-current", null, config);
 }
 
 export function syncUpstoxExpiredInstruments(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/sync-expired",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxOhlcvDaily(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/ohlcv/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxMarketHolidays(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/calendar/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxEquityNews(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/equity-news/run",
+    payload,
+    config
+  );
+}
+
+export function syncUpstoxIpoCalendar(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/ipo-calendar/run",
+    payload,
+    config
+  );
+}
+
+export function syncIpoGmpScraper(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/ipo-scraper/run",
     payload,
     config
   );
