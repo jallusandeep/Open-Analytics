@@ -6137,8 +6137,10 @@ def find_ipo_gmp_table_from_html(url: str):
 
 
 def find_ipo_gmp_table_with_selenium(url: str):
+    import os
     try:
         from selenium import webdriver
+        from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
@@ -6152,21 +6154,67 @@ def find_ipo_gmp_table_with_selenium(url: str):
         )
 
     options = webdriver.ChromeOptions()
+
+    # Use the system Chromium installed in Docker
+    options.binary_location = os.environ.get(
+        "CHROME_BIN",
+        "/usr/bin/chromium",
+    )
+
     options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
     options.add_argument("--window-size=1920,1080")
 
-    driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 25)
+    chromedriver_path = os.environ.get(
+        "CHROMEDRIVER_PATH",
+        "/usr/bin/chromedriver",
+    )
+
+    if not os.path.exists(chromedriver_path):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"ChromeDriver not found: {chromedriver_path}",
+        )
+
+    if not os.path.exists(options.binary_location):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chromium binary not found: {options.binary_location}",
+        )
+
+    service = Service(executable_path=chromedriver_path)
+
+    driver = None
 
     try:
+        driver = webdriver.Chrome(
+            service=service,
+            options=options,
+        )
+
+        wait = WebDriverWait(driver, 25)
+
         driver.get(url)
-        wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "table")))
+
+        wait.until(
+            EC.presence_of_all_elements_located(
+                (By.TAG_NAME, "table")
+            )
+        )
+
         time.sleep(2)
 
         tables = driver.find_elements(By.TAG_NAME, "table")
+
         html_table = None
 
         for table in tables:
@@ -6184,15 +6232,31 @@ def find_ipo_gmp_table_with_selenium(url: str):
         if html_table is None:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Target IPO GMP table was not found with Selenium."
+                detail="Target IPO GMP table was not found with Selenium.",
             )
 
         df = pd.read_html(StringIO(html_table))[0]
         df.columns = [str(column).strip() for column in df.columns]
+
         return df
 
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Selenium failed using "
+                f"Chrome='{options.binary_location}', "
+                f"ChromeDriver='{chromedriver_path}'. "
+                f"Error: {exc}"
+            ),
+        )
+
     finally:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
 
 def get_ipo_gmp_dataframe(url: str = IPO_GMP_SCRAPER_URL):
