@@ -49,6 +49,10 @@ VALID_JOB_TYPES = {
     "ipo_calendar": {
         "label": "IPO Calendar",
         "sync_type": "upstox_ipo_calendar"
+    },
+    "ipo_scraper": {
+        "label": "IPO Scrapper",
+        "sync_type": "ipo_gmp_scraper"
     }
 }
 
@@ -147,7 +151,7 @@ def validate_job_type(job_type: str) -> str:
             detail=(
                 "Invalid job type. Use current_instruments, expired_instruments, "
                 "ohlcv_daily, company_fundamentals, market_holidays, "
-                "equity_news, or ipo_calendar."
+                "equity_news, ipo_calendar, or ipo_scraper."
             )
         )
 
@@ -637,6 +641,13 @@ def run_schedule_job(schedule_id: str, job_type: str):
             config={},
             clear_cancel_at_start=True
         )
+    
+    if job_type == "ipo_scraper":
+        return sync_ipo_gmp_scraper_service(
+            current_user=system_user,
+            config={},
+            clear_cancel_at_start=True
+        )
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -719,6 +730,7 @@ def execute_due_schedules_once():
     finally:
         conn.close()
         _scheduler_lock.release()
+
 
 
 def scheduler_loop():
