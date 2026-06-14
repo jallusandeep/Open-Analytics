@@ -20,6 +20,7 @@ from app.services.connection_service import (
     get_upstox_authorize_url_service,
     handle_upstox_notifier_webhook_service,
     list_connections_service,
+    request_upstox_access_token_service,
     save_telegram_connection_service,
     save_upstox_connection_service,
     start_my_telegram_connection_service,
@@ -61,6 +62,13 @@ def exchange_upstox_auth_code(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return exchange_upstox_auth_code_service(request, current_user)
+
+
+@router.post("/upstox/access-token/request", response_model=ConnectionActionResponse)
+def request_upstox_access_token(
+    current_user: dict = Depends(require_admin_or_super_admin)
+):
+    return request_upstox_access_token_service(current_user)
 
 
 @router.post("/upstox/notifier", response_model=ConnectionActionResponse)
