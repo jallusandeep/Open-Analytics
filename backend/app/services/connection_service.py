@@ -62,6 +62,18 @@ def get_upstox_notifier_webhook_url() -> str:
     return safe_strip(settings.UPSTOX_NOTIFIER_WEBHOOK_URL)
 
 
+def mask_identifier(value: str) -> str:
+    clean_value = safe_strip(value)
+
+    if not clean_value:
+        return ""
+
+    if len(clean_value) <= 8:
+        return "***"
+
+    return f"***{clean_value[-8:]}"
+
+
 def get_ist_now():
     try:
         return datetime.now(ZoneInfo(IST_TIMEZONE)).replace(tzinfo=None)
@@ -821,6 +833,34 @@ def request_upstox_access_token_service(current_user):
         conn.close()
 
 
+def record_upstox_notifier_webhook_event(
+    conn,
+    status_text: str,
+    message: str,
+    client_id: str = "",
+    has_access_token: bool = False,
+    message_type: str = "",
+    expires_at: str = "",
+    issued_at: str = ""
+):
+    now_time = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
+
+    set_app_metadata_value(conn, "upstox_notifier_webhook_last_received_at", now_time)
+    set_app_metadata_value(conn, "upstox_notifier_webhook_last_status", safe_strip(status_text) or "unknown")
+    set_app_metadata_value(conn, "upstox_notifier_webhook_last_message", safe_strip(message)[:1000])
+    set_app_metadata_value(conn, "upstox_notifier_webhook_last_client_id", mask_identifier(client_id))
+    set_app_metadata_value(conn, "upstox_notifier_webhook_last_has_access_token", "true" if has_access_token else "false")
+
+    if message_type:
+        set_app_metadata_value(conn, "upstox_notifier_webhook_last_message_type", safe_strip(message_type))
+
+    if expires_at:
+        set_app_metadata_value(conn, "upstox_notifier_webhook_last_expires_at", safe_strip(expires_at))
+
+    if issued_at:
+        set_app_metadata_value(conn, "upstox_notifier_webhook_last_issued_at", safe_strip(issued_at))
+
+
 def handle_upstox_notifier_webhook_service(request):
     client_id = safe_strip(getattr(request, "client_id", None))
     access_token = normalize_upstox_token(getattr(request, "access_token", None))
@@ -829,30 +869,88 @@ def handle_upstox_notifier_webhook_service(request):
     expires_at = safe_strip(getattr(request, "expires_at", None))
     issued_at = safe_strip(getattr(request, "issued_at", None))
 
-    if message_type and message_type != "access_token":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid Upstox notifier message type."
-        )
-
-    if not client_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox notifier client_id is required."
-        )
-
-    if not access_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upstox notifier access_token is required."
-        )
-
     conn = get_connection()
 
     try:
+        record_upstox_notifier_webhook_event(
+            conn=conn,
+            status_text="received",
+            message="Upstox notifier webhook received.",
+            client_id=client_id,
+            has_access_token=bool(access_token),
+            message_type=message_type,
+            expires_at=expires_at,
+            issued_at=issued_at
+        )
+
+        if message_type and message_type != "access_token":
+            record_upstox_notifier_webhook_event(
+                conn=conn,
+                status_text="failed",
+                message="Invalid Upstox notifier message type.",
+                client_id=client_id,
+                has_access_token=bool(access_token),
+                message_type=message_type,
+                expires_at=expires_at,
+                issued_at=issued_at
+            )
+            conn.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Upstox notifier message type."
+            )
+
+        if not client_id:
+            record_upstox_notifier_webhook_event(
+                conn=conn,
+                status_text="failed",
+                message="Upstox notifier client_id is required.",
+                has_access_token=bool(access_token),
+                message_type=message_type,
+                expires_at=expires_at,
+                issued_at=issued_at
+            )
+            conn.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upstox notifier client_id is required."
+            )
+
+        if not access_token:
+            record_upstox_notifier_webhook_event(
+                conn=conn,
+                status_text="failed",
+                message="Upstox notifier access_token is required.",
+                client_id=client_id,
+                has_access_token=False,
+                message_type=message_type,
+                expires_at=expires_at,
+                issued_at=issued_at
+            )
+            conn.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upstox notifier access_token is required."
+            )
+
         existing = get_upstox_connection_raw(conn)
 
         if not existing:
+            record_upstox_notifier_webhook_event(
+                conn=conn,
+                status_text="failed",
+                message="Upstox connection is not configured.",
+                client_id=client_id,
+                has_access_token=bool(access_token),
+                message_type=message_type,
+                expires_at=expires_at,
+                issued_at=issued_at
+            )
+            conn.commit()
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Upstox connection is not configured."
@@ -865,6 +963,18 @@ def handle_upstox_notifier_webhook_service(request):
         analytical_token = normalize_upstox_token(existing[5])
 
         if saved_api_key and saved_api_key != client_id:
+            record_upstox_notifier_webhook_event(
+                conn=conn,
+                status_text="failed",
+                message="Upstox notifier client_id does not match saved API key.",
+                client_id=client_id,
+                has_access_token=bool(access_token),
+                message_type=message_type,
+                expires_at=expires_at,
+                issued_at=issued_at
+            )
+            conn.commit()
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Upstox notifier client_id does not match saved API key."
@@ -909,6 +1019,16 @@ def handle_upstox_notifier_webhook_service(request):
         ])
 
         clear_upstox_expiry_notification_marker(conn)
+        record_upstox_notifier_webhook_event(
+            conn=conn,
+            status_text="success",
+            message="Upstox access token received from notifier and saved successfully.",
+            client_id=client_id,
+            has_access_token=True,
+            message_type=message_type,
+            expires_at=expires_at,
+            issued_at=issued_at
+        )
 
         try:
             bot_token = get_telegram_bot_token(conn)
