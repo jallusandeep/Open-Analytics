@@ -1,8 +1,12 @@
 import gzip
+import hashlib
 import json
+import re
 import time
 from collections import deque
+from io import StringIO
 import uuid
+import pandas as pd
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,6 +47,18 @@ UPSTOX_NEWS_MAX_PAGE_NUMBER = 100
 UPSTOX_NEWS_DEFAULT_RETRY_COUNT = 3
 
 UPSTOX_IPO_SYNC_TYPE = "upstox_ipo_calendar"
+IPO_GMP_SCRAPER_SYNC_TYPE = "ipo_gmp_scraper"
+IPO_GMP_SCRAPER_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
+IPO_GMP_SCRAPER_REQUIRED_COLUMNS = [
+    "IPO Name",
+    "IPO GMP",
+    "Price Band",
+    "Date",
+    "Type",
+    "Status",
+    "Last Updated"
+]
+
 UPSTOX_IPO_LIST_URL = "https://api.upstox.com/v2/ipos"
 UPSTOX_IPO_DETAIL_URL = "https://api.upstox.com/v2/ipos/{ipo_id}"
 UPSTOX_IPO_MAX_RECORDS_PER_CALL = 30
@@ -2204,7 +2220,8 @@ def table_name_for_sync_type(sync_type: Optional[str]) -> Optional[str]:
         UPSTOX_MARKET_HOLIDAYS_SYNC_TYPE: "upstox_market_holidays",
         UPSTOX_COMPANY_FUNDAMENTALS_SYNC_TYPE: "upstox_company_fundamentals",
         UPSTOX_EQUITY_NEWS_SYNC_TYPE: "equity_news",
-        UPSTOX_IPO_SYNC_TYPE: "upstox_ipo_list"
+        UPSTOX_IPO_SYNC_TYPE: "upstox_ipo_list",
+        IPO_GMP_SCRAPER_SYNC_TYPE: "ipo_gmp_scraper"
     }.get(sync_type or "")
 
 
@@ -2215,6 +2232,9 @@ def safe_active_job_started_count(conn, sync_type: Optional[str], started_at) ->
         return None
 
     timestamp_column = "ingested_at" if table_name in ("upstox_ohlcv_candles", "equity_news", "upstox_ipo_list") else "synced_at"
+
+    if table_name == "ipo_gmp_scraper":
+        timestamp_column = "scraped_at"
 
     try:
         row = conn.execute(f"""
@@ -2241,6 +2261,7 @@ def get_data_collection_summary_service():
         market_holidays_count = safe_table_count(conn, "upstox_market_holidays")
         equity_news_count = safe_table_count(conn, "equity_news")
         ipo_count = safe_table_count(conn, "upstox_ipo_list")
+        ipo_gmp_scraper_count = safe_table_count(conn, "ipo_gmp_scraper")
         company_fundamentals_count = safe_table_count(conn, "upstox_company_fundamentals")
         legacy_fundamentals_count = safe_table_count(conn, "fundamentals")
         corporate_actions_count = safe_table_count(conn, "corporate_actions")
@@ -2257,7 +2278,8 @@ def get_data_collection_summary_service():
                 'upstox_market_holidays',
                 'upstox_company_fundamentals',
                 'upstox_equity_news',
-                'upstox_ipo_calendar'
+                'upstox_ipo_calendar',
+                'ipo_gmp_scraper'
             );
         """)
         total_runs = int(total_runs_row[0] or 0) if total_runs_row else 0
@@ -2279,7 +2301,8 @@ def get_data_collection_summary_service():
                 'upstox_market_holidays',
                 'upstox_company_fundamentals',
                 'upstox_equity_news',
-                'upstox_ipo_calendar'
+                'upstox_ipo_calendar',
+                'ipo_gmp_scraper'
             )
             ORDER BY started_at DESC
             LIMIT 1;
@@ -2292,6 +2315,7 @@ def get_data_collection_summary_service():
         market_holidays_run = safe_last_success_run(conn, UPSTOX_MARKET_HOLIDAYS_SYNC_TYPE)
         equity_news_run = safe_last_success_run(conn, UPSTOX_EQUITY_NEWS_SYNC_TYPE)
         ipo_run = safe_last_success_run(conn, UPSTOX_IPO_SYNC_TYPE)
+        ipo_gmp_scraper_run = safe_last_success_run(conn, IPO_GMP_SCRAPER_SYNC_TYPE)
         company_fundamentals_run = safe_last_success_run(conn, UPSTOX_COMPANY_FUNDAMENTALS_SYNC_TYPE)
 
         active_run = safe_fetchone(conn, """
@@ -2325,6 +2349,8 @@ def get_data_collection_summary_service():
             "total_equity_news": equity_news_count,
             "total_ipo_calendar": ipo_count,
             "total_ipos": ipo_count,
+            "total_ipo_gmp_scraper": ipo_gmp_scraper_count,
+            "total_ipo_scraper": ipo_gmp_scraper_count,
             "total_company_fundamentals": company_fundamentals_count,
             "total_fundamentals": company_fundamentals_count,
             "total_legacy_fundamentals": legacy_fundamentals_count,
@@ -2347,6 +2373,10 @@ def get_data_collection_summary_service():
             "equity_news_duration_seconds": equity_news_run[1] if equity_news_run else None,
             "ipo_calendar_last_sync_at": str(ipo_run[0]) if ipo_run and ipo_run[0] else None,
             "ipo_calendar_duration_seconds": ipo_run[1] if ipo_run else None,
+            "ipo_gmp_scraper_last_sync_at": str(ipo_gmp_scraper_run[0]) if ipo_gmp_scraper_run and ipo_gmp_scraper_run[0] else None,
+            "ipo_gmp_scraper_duration_seconds": ipo_gmp_scraper_run[1] if ipo_gmp_scraper_run else None,
+            "ipo_scraper_last_sync_at": str(ipo_gmp_scraper_run[0]) if ipo_gmp_scraper_run and ipo_gmp_scraper_run[0] else None,
+            "ipo_scraper_duration_seconds": ipo_gmp_scraper_run[1] if ipo_gmp_scraper_run else None,
             "company_fundamentals_last_sync_at": str(company_fundamentals_run[0]) if company_fundamentals_run and company_fundamentals_run[0] else None,
             "company_fundamentals_duration_seconds": company_fundamentals_run[1] if company_fundamentals_run else None,
             "active_job": active_job,
@@ -2393,7 +2423,8 @@ def get_data_collection_runs_service():
                 'upstox_market_holidays',
                 'upstox_company_fundamentals',
                 'upstox_equity_news',
-                'upstox_ipo_calendar'
+                'upstox_ipo_calendar',
+                'ipo_gmp_scraper'
             )
             ORDER BY started_at DESC
             LIMIT 25;
@@ -4665,6 +4696,102 @@ def ensure_upstox_news_ipo_tables(conn):
     """)
 
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ipo_gmp_scraper (
+            ipo_name VARCHAR PRIMARY KEY,
+            ipo_gmp VARCHAR,
+            price_band VARCHAR,
+            ipo_date VARCHAR,
+            ipo_type VARCHAR,
+            ipo_status VARCHAR,
+            last_updated VARCHAR,
+            source_url VARCHAR DEFAULT 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/',
+            raw_json JSON,
+            source_sync_id VARCHAR,
+            data_hash VARCHAR,
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    for column_sql in [
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN ipo_gmp VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN price_band VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN ipo_date VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN ipo_type VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN ipo_status VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN last_updated VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN source_url VARCHAR DEFAULT 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/';",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN raw_json JSON;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN source_sync_id VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN data_hash VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
+        "ALTER TABLE ipo_gmp_scraper ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"
+    ]:
+        try:
+            conn.execute(column_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ipo_gmp_scraper_snapshots (
+            snapshot_id VARCHAR PRIMARY KEY,
+            source_sync_id VARCHAR NOT NULL,
+            ipo_name VARCHAR NOT NULL,
+            ipo_gmp VARCHAR,
+            price_band VARCHAR,
+            ipo_date VARCHAR,
+            ipo_type VARCHAR,
+            ipo_status VARCHAR,
+            last_updated VARCHAR,
+            source_url VARCHAR DEFAULT 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/',
+            raw_json JSON,
+            data_hash VARCHAR,
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    for column_sql in [
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN snapshot_id VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN source_sync_id VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN ipo_name VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN ipo_gmp VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN price_band VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN ipo_date VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN ipo_type VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN ipo_status VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN last_updated VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN source_url VARCHAR DEFAULT 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/';",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN raw_json JSON;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN data_hash VARCHAR;",
+        "ALTER TABLE ipo_gmp_scraper_snapshots ADD COLUMN scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"
+    ]:
+        try:
+            conn.execute(column_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    for index_sql in [
+        "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_status ON ipo_gmp_scraper (ipo_status);",
+        "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_updated ON ipo_gmp_scraper (updated_at);",
+        "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_snapshots_ipo_name ON ipo_gmp_scraper_snapshots (ipo_name);",
+        "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_snapshots_sync ON ipo_gmp_scraper_snapshots (source_sync_id);"
+    ]:
+        try:
+            conn.execute(index_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+
 def get_saved_upstox_market_data_token(conn) -> str:
     row = conn.execute("""
         SELECT analytical_token, access_token, connection_status
@@ -5930,6 +6057,603 @@ def get_upstox_ipo_calendar_preview_service(search: str = "", ipo_status: str = 
             "total_pages": total_pages,
             "total_records": total_records
         }
+    finally:
+        conn.close()
+
+
+
+def normalize_ipo_gmp_value(value: Any) -> str:
+    if value is None:
+        return ""
+
+    clean_value = str(value).strip()
+
+    if clean_value.lower() in ("nan", "none", "null"):
+        return ""
+
+    return clean_value
+
+
+def parse_ipo_gmp_number(value: Any) -> Optional[float]:
+    clean_value = normalize_ipo_gmp_value(value)
+
+    if not clean_value:
+        return None
+
+    normalized_value = (
+        clean_value
+        .replace(",", "")
+        .replace("₹", "")
+        .replace("Rs.", "")
+        .replace("Rs", "")
+        .replace("INR", "")
+        .strip()
+    )
+    matches = re.findall(r"-?\d+(?:\.\d+)?", normalized_value)
+
+    if not matches:
+        return None
+
+    try:
+        values = [float(match) for match in matches]
+    except ValueError:
+        return None
+
+    return max(values) if values else None
+
+
+def format_ipo_gmp_money(value: float) -> str:
+    if value == int(value):
+        return f"₹{int(value)}"
+
+    return f"₹{value:.2f}"
+
+
+def calculate_ipo_gmp_gain(ipo_gmp: Any, price_band: Any) -> Optional[str]:
+    gmp_value = parse_ipo_gmp_number(ipo_gmp)
+    price_band_value = parse_ipo_gmp_number(price_band)
+
+    if gmp_value is None or price_band_value in (None, 0):
+        return None
+
+    estimated_listing = price_band_value + gmp_value
+    gain_percent = (gmp_value / price_band_value) * 100
+
+    return f"{format_ipo_gmp_money(estimated_listing)} ({gain_percent:.2f}%)"
+
+
+def find_ipo_gmp_table_from_html(url: str):
+    tables = pd.read_html(url)
+
+    for df in tables:
+        cols = [str(column).strip() for column in df.columns]
+
+        if "IPO Name" in cols and "IPO GMP" in cols:
+            df = df.copy()
+            df.columns = cols
+            return df
+
+    raise ValueError("Target IPO GMP table was not found with pandas.read_html.")
+
+
+def find_ipo_gmp_table_with_selenium(url: str):
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "pandas.read_html failed and Selenium is not installed. "
+                "Install selenium and ChromeDriver support, or fix read_html dependencies."
+            )
+        )
+
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+
+    driver = webdriver.Chrome(options=options)
+    wait = WebDriverWait(driver, 25)
+
+    try:
+        driver.get(url)
+        wait.until(EC.presence_of_all_elements_located((By.TAG_NAME, "table")))
+        time.sleep(2)
+
+        tables = driver.find_elements(By.TAG_NAME, "table")
+        html_table = None
+
+        for table in tables:
+            table_text = table.text.strip()
+
+            if (
+                "IPO Name" in table_text
+                and "IPO GMP" in table_text
+                and "Price Band" in table_text
+                and "Last Updated" in table_text
+            ):
+                html_table = table.get_attribute("outerHTML")
+                break
+
+        if html_table is None:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Target IPO GMP table was not found with Selenium."
+            )
+
+        df = pd.read_html(StringIO(html_table))[0]
+        df.columns = [str(column).strip() for column in df.columns]
+        return df
+
+    finally:
+        driver.quit()
+
+
+def get_ipo_gmp_dataframe(url: str = IPO_GMP_SCRAPER_URL):
+    try:
+        return find_ipo_gmp_table_from_html(url)
+    except Exception as error:
+        print("IPO GMP read_html failed, trying Selenium fallback.")
+        print(f"Reason: {error}")
+
+    return find_ipo_gmp_table_with_selenium(url)
+
+
+def normalize_ipo_gmp_dataframe(df):
+    normalized_df = df.copy()
+    normalized_df.columns = [str(column).strip() for column in normalized_df.columns]
+
+    if (
+        not set(IPO_GMP_SCRAPER_REQUIRED_COLUMNS).issubset(set(normalized_df.columns))
+        and not normalized_df.empty
+    ):
+        first_row_values = [
+            normalize_ipo_gmp_value(value)
+            for value in normalized_df.iloc[0].tolist()
+        ]
+
+        if "IPO Name" in first_row_values and "IPO GMP" in first_row_values:
+            normalized_df = normalized_df.iloc[1:].copy()
+            normalized_df.columns = first_row_values
+
+    normalized_df.columns = [str(column).strip() for column in normalized_df.columns]
+    return normalized_df.reset_index(drop=True)
+
+
+def normalize_ipo_gmp_record(row: dict, source_url: str) -> Optional[dict]:
+    ipo_name = normalize_ipo_gmp_value(row.get("IPO Name"))
+
+    if not ipo_name:
+        return None
+
+    raw_record = {
+        key: normalize_ipo_gmp_value(value)
+        for key, value in row.items()
+    }
+
+    return {
+        "ipo_name": ipo_name,
+        "ipo_gmp": normalize_ipo_gmp_value(row.get("IPO GMP")),
+        "price_band": normalize_ipo_gmp_value(row.get("Price Band")),
+        "ipo_date": normalize_ipo_gmp_value(row.get("Date")),
+        "ipo_type": normalize_ipo_gmp_value(row.get("Type")),
+        "ipo_status": normalize_ipo_gmp_value(row.get("Status")),
+        "last_updated": normalize_ipo_gmp_value(row.get("Last Updated")),
+        "source_url": source_url,
+        "raw_json": json_dumps_for_db(raw_record)
+    }
+
+
+def get_ipo_gmp_record_hash(record: dict) -> str:
+    comparable_record = {
+        key: record.get(key) or ""
+        for key in (
+            "ipo_name",
+            "ipo_gmp",
+            "price_band",
+            "ipo_date",
+            "ipo_type",
+            "ipo_status",
+            "last_updated"
+        )
+    }
+
+    payload = json.dumps(
+        comparable_record,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":")
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def scrape_ipo_gmp_records(source_url: str = IPO_GMP_SCRAPER_URL) -> List[dict]:
+    df = normalize_ipo_gmp_dataframe(get_ipo_gmp_dataframe(source_url))
+
+    missing_columns = [
+        column
+        for column in IPO_GMP_SCRAPER_REQUIRED_COLUMNS
+        if column not in df.columns
+    ]
+
+    if missing_columns:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "IPO GMP scraper table is missing required columns: "
+                + ", ".join(missing_columns)
+            )
+        )
+
+    records = []
+
+    for row in df.to_dict(orient="records"):
+        record = normalize_ipo_gmp_record(row, source_url)
+
+        if record:
+            records.append(record)
+
+    return list({
+        record["ipo_name"].lower(): record
+        for record in records
+        if record.get("ipo_name")
+    }.values())
+
+
+def insert_ipo_gmp_scraper_records(
+    conn,
+    records: List[dict],
+    source_sync_id: str
+) -> int:
+    rows = list({
+        safe_strip(record.get("ipo_name")).lower(): record
+        for record in records
+        if safe_strip(record.get("ipo_name"))
+    }.values())
+
+    if not rows:
+        return 0
+
+    for row in rows:
+        row["data_hash"] = get_ipo_gmp_record_hash(row)
+
+    conn.executemany("""
+        INSERT OR REPLACE INTO ipo_gmp_scraper (
+            ipo_name,
+            ipo_gmp,
+            price_band,
+            ipo_date,
+            ipo_type,
+            ipo_status,
+            last_updated,
+            source_url,
+            raw_json,
+            source_sync_id,
+            data_hash,
+            scraped_at,
+            updated_at
+        )
+        SELECT
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            TRY_CAST(? AS JSON),
+            ?,
+            ?,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP;
+    """, [
+        (
+            row.get("ipo_name"),
+            row.get("ipo_gmp"),
+            row.get("price_band"),
+            row.get("ipo_date"),
+            row.get("ipo_type"),
+            row.get("ipo_status"),
+            row.get("last_updated"),
+            row.get("source_url"),
+            row.get("raw_json"),
+            source_sync_id,
+            row.get("data_hash")
+        )
+        for row in rows
+    ])
+
+    conn.executemany("""
+        INSERT INTO ipo_gmp_scraper_snapshots (
+            snapshot_id,
+            source_sync_id,
+            ipo_name,
+            ipo_gmp,
+            price_band,
+            ipo_date,
+            ipo_type,
+            ipo_status,
+            last_updated,
+            source_url,
+            raw_json,
+            data_hash,
+            scraped_at
+        )
+        SELECT
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            TRY_CAST(? AS JSON),
+            ?,
+            CURRENT_TIMESTAMP;
+    """, [
+        (
+            str(uuid.uuid4()),
+            source_sync_id,
+            row.get("ipo_name"),
+            row.get("ipo_gmp"),
+            row.get("price_band"),
+            row.get("ipo_date"),
+            row.get("ipo_type"),
+            row.get("ipo_status"),
+            row.get("last_updated"),
+            row.get("source_url"),
+            row.get("raw_json"),
+            row.get("data_hash")
+        )
+        for row in rows
+    ])
+
+    return len(rows)
+
+
+def sync_ipo_gmp_scraper_service(
+    current_user: dict,
+    config: Optional[dict] = None,
+    clear_cancel_at_start: bool = True
+):
+    conn = get_connection()
+    started_at = datetime.now()
+    sync_id = None
+    total_records = 0
+
+    try:
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        ensure_no_active_sync_run(conn)
+        ensure_upstox_news_ipo_tables(conn)
+
+        payload = config or {}
+        source_url = safe_strip(payload.get("source_url")) or IPO_GMP_SCRAPER_URL
+
+        sync_id = create_sync_run(
+            conn,
+            IPO_GMP_SCRAPER_SYNC_TYPE,
+            "running",
+            "IPO GMP scraper started.",
+            current_user=current_user
+        )
+
+        check_sync_cancelled(conn, sync_id)
+
+        records = scrape_ipo_gmp_records(source_url=source_url)
+
+        check_sync_cancelled(conn, sync_id)
+
+        conn.execute("BEGIN TRANSACTION")
+        total_records = insert_ipo_gmp_scraper_records(
+            conn,
+            records,
+            sync_id
+        )
+        conn.execute("COMMIT")
+
+        finish_sync_run(
+            conn,
+            sync_id,
+            "success",
+            "IPO GMP scraper completed successfully.",
+            total_records,
+            started_at
+        )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "success",
+            "message": "IPO GMP scraper completed successfully.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
+
+    except SyncCancelled:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "cancelled",
+                "IPO GMP scraper cancelled.",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        return {
+            "status": "cancelled",
+            "message": "IPO GMP scraper cancelled.",
+            "total_records": total_records,
+            "duration_seconds": duration_seconds(started_at)
+        }
+
+    except HTTPException as error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"IPO GMP scraper failed: {error.detail}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise
+
+    except Exception as error:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        if sync_id:
+            finish_sync_run(
+                conn,
+                sync_id,
+                "failed",
+                f"IPO GMP scraper failed: {error}",
+                total_records,
+                started_at
+            )
+
+        if clear_cancel_at_start:
+            clear_cancel_signal()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to run IPO GMP scraper: {error}"
+        )
+
+    finally:
+        conn.close()
+
+
+def get_ipo_gmp_scraper_preview_service(
+    search: str = "",
+    ipo_status: str = "all",
+    ipo_type: str = "all",
+    page: int = 1,
+    page_size: int = 50
+):
+    conn = get_connection()
+
+    try:
+        ensure_upstox_news_ipo_tables(conn)
+
+        current_page = normalize_page(page)
+        current_page_size = normalize_page_size(page_size)
+        offset = (current_page - 1) * current_page_size
+        where_clauses = []
+        params = []
+
+        if search:
+            search_value = f"%{search.strip().lower()}%"
+            where_clauses.append("""
+                (
+                    LOWER(COALESCE(ipo_name, '')) LIKE ?
+                    OR LOWER(COALESCE(ipo_gmp, '')) LIKE ?
+                    OR LOWER(COALESCE(price_band, '')) LIKE ?
+                    OR LOWER(COALESCE(ipo_date, '')) LIKE ?
+                    OR LOWER(COALESCE(ipo_type, '')) LIKE ?
+                    OR LOWER(COALESCE(ipo_status, '')) LIKE ?
+                    OR LOWER(COALESCE(last_updated, '')) LIKE ?
+                )
+            """)
+            params.extend([search_value] * 7)
+
+        if ipo_status != "all":
+            where_clauses.append("LOWER(COALESCE(ipo_status, '')) = ?")
+            params.append(ipo_status.lower())
+
+        if ipo_type != "all":
+            where_clauses.append("LOWER(COALESCE(ipo_type, '')) = ?")
+            params.append(ipo_type.lower())
+
+        where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        total_records = conn.execute(f"""
+            SELECT COUNT(*)
+            FROM ipo_gmp_scraper
+            {where_sql};
+        """, params).fetchone()[0]
+
+        rows = conn.execute(f"""
+            SELECT
+                ipo_name,
+                ipo_gmp,
+                price_band,
+                ipo_date,
+                ipo_type,
+                ipo_status,
+                last_updated,
+                source_url,
+                scraped_at,
+                updated_at
+            FROM ipo_gmp_scraper
+            {where_sql}
+            ORDER BY updated_at DESC, ipo_name
+            LIMIT ?
+            OFFSET ?;
+        """, params + [current_page_size, offset]).fetchall()
+
+        total_pages = max(
+            1,
+            int((total_records + current_page_size - 1) / current_page_size)
+        )
+
+        return {
+            "rows": [
+                {
+                    "ipo_name": row[0],
+                    "ipo_gmp": row[1],
+                    "price_band": row[2],
+                    "gain": calculate_ipo_gmp_gain(row[1], row[2]),
+                    "ipo_date": row[3],
+                    "ipo_type": row[4],
+                    "ipo_status": row[5],
+                    "last_updated": row[6],
+                    "source_url": row[7],
+                    "scraped_at": str(row[8]) if row[8] else None,
+                    "updated_at": str(row[9]) if row[9] else None
+                }
+                for row in rows
+            ],
+            "page": current_page,
+            "page_size": current_page_size,
+            "total_pages": total_pages,
+            "total_records": total_records
+        }
+
     finally:
         conn.close()
 

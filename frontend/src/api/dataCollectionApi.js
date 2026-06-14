@@ -43,6 +43,11 @@ export function getUpstoxIpoCalendarPreview(params = {}) {
     params
   });
 }
+export function getIpoGmpScraperPreview(params = {}) {
+  return axiosClient.get("/data-collection/upstox/ipo-scraper/preview", {
+    params
+  });
+}
 
 export function getUpstoxOhlcvOptions() {
   return axiosClient.get("/data-collection/upstox/ohlcv/options");
@@ -114,6 +119,14 @@ export function syncUpstoxEquityNews(payload = {}, config = {}) {
 export function syncUpstoxIpoCalendar(payload = {}, config = {}) {
   return axiosClient.post(
     "/data-collection/upstox/ipo-calendar/run",
+    payload,
+    config
+  );
+}
+
+export function syncIpoGmpScraper(payload = {}, config = {}) {
+  return axiosClient.post(
+    "/data-collection/upstox/ipo-scraper/run",
     payload,
     config
   );

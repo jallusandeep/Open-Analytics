@@ -605,6 +605,143 @@ def upstox_access_token_request_post(client_id: str, client_secret: str):
         )
 
 
+def format_upstox_access_token_request_response(response: dict) -> str:
+    if not isinstance(response, dict):
+        return "Upstox access token approval request triggered."
+
+    status_text = safe_strip(response.get("status"))
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    authorization_expiry = safe_strip(data.get("authorization_expiry"))
+    notifier_url = safe_strip(data.get("notifier_url"))
+
+    message_parts = []
+
+    if status_text:
+        message_parts.append(f"status={status_text}")
+
+    if authorization_expiry:
+        expiry_date = parse_upstox_epoch_millis(authorization_expiry)
+        expiry_label = (
+            expiry_date.strftime("%d %b %Y, %I:%M %p IST")
+            if expiry_date
+            else authorization_expiry
+        )
+        message_parts.append(f"authorization_expiry={expiry_label}")
+
+    if notifier_url:
+        message_parts.append(f"notifier_url={notifier_url}")
+
+    if not message_parts:
+        return "Upstox access token approval request triggered."
+
+    return "Upstox access token approval request triggered: " + "; ".join(message_parts)
+
+
+def get_upstox_error_message(error) -> str:
+    detail = getattr(error, "detail", None)
+
+    if isinstance(detail, dict):
+        message = safe_strip(detail.get("message"))
+        error_code = safe_strip(detail.get("error_code"))
+
+        if error_code and message:
+            return f"{error_code}: {message}"
+
+        if message:
+            return message
+
+        return str(detail)
+
+    if detail:
+        return str(detail)
+
+    return str(error)
+
+
+def record_upstox_access_token_request_result(
+    conn,
+    status_text: str,
+    message: str,
+    response: dict | None = None
+):
+    now_time = get_ist_now()
+    clean_status = safe_strip(status_text) or "unknown"
+    clean_message = safe_strip(message)
+
+    set_app_metadata_value(
+        conn,
+        "upstox_access_token_request_last_attempted_at",
+        now_time.strftime("%Y-%m-%d %H:%M:%S")
+    )
+    set_app_metadata_value(
+        conn,
+        "upstox_access_token_request_last_status",
+        clean_status
+    )
+
+    if clean_message:
+        set_app_metadata_value(
+            conn,
+            "upstox_access_token_request_last_message",
+            clean_message[:1000]
+        )
+
+    if clean_status == "success":
+        set_app_metadata_value(
+            conn,
+            "upstox_access_token_request_last_triggered_at",
+            now_time.strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        if isinstance(response, dict):
+            data = response.get("data") if isinstance(response.get("data"), dict) else {}
+            notifier_url = safe_strip(data.get("notifier_url"))
+            authorization_expiry = safe_strip(data.get("authorization_expiry"))
+
+            if notifier_url:
+                set_app_metadata_value(
+                    conn,
+                    "upstox_access_token_request_notifier_url",
+                    notifier_url
+                )
+
+            if authorization_expiry:
+                set_app_metadata_value(
+                    conn,
+                    "upstox_access_token_request_authorization_expiry",
+                    authorization_expiry
+                )
+
+
+def trigger_upstox_access_token_request(conn, client_id: str, client_secret: str):
+    try:
+        response = upstox_access_token_request_post(
+            client_id=client_id,
+            client_secret=client_secret
+        )
+        message = format_upstox_access_token_request_response(response)
+        record_upstox_access_token_request_result(
+            conn=conn,
+            status_text="success",
+            message=message,
+            response=response
+        )
+        return {
+            "status": "success",
+            "message": message,
+            "response": response
+        }
+
+    except Exception as error:
+        message = get_upstox_error_message(error)
+        record_upstox_access_token_request_result(
+            conn=conn,
+            status_text="failed",
+            message=message
+        )
+        raise
+
+
 def handle_upstox_notifier_webhook_service(request):
     client_id = safe_strip(getattr(request, "client_id", None))
     access_token = normalize_upstox_token(getattr(request, "access_token", None))
@@ -1535,7 +1672,8 @@ def build_upstox_access_token_approval_reminder_message(
     reason: str,
     previous_status: str,
     current_status: str,
-    request_triggered: bool
+    request_triggered: bool,
+    request_message: str = ""
 ) -> str:
     approval_text = (
         "A semi-automated Upstox access token request has been triggered. "
@@ -1551,7 +1689,8 @@ def build_upstox_access_token_approval_reminder_message(
         f"Reason: {reason}\n"
         f"Previous status: {previous_status or '--'}\n"
         f"Current status: {current_status or '--'}\n\n"
-        f"{approval_text}"
+        f"{approval_text}\n\n"
+        f"Details: {request_message or '--'}"
     )
 
 
@@ -1587,24 +1726,21 @@ def maybe_request_upstox_access_token_and_send_reminder(
         }
 
     request_triggered = False
+    request_message = ""
 
     if should_trigger_upstox_access_token_request(conn, now_time):
         try:
-            upstox_access_token_request_post(
+            request_result = trigger_upstox_access_token_request(
+                conn=conn,
                 client_id=api_key,
                 client_secret=api_secret
             )
-
-            set_app_metadata_value(
-                conn,
-                "upstox_access_token_request_last_triggered_at",
-                now_time.strftime("%Y-%m-%d %H:%M:%S")
-            )
-
             request_triggered = True
+            request_message = request_result.get("message") or ""
 
         except Exception as error:
-            print(f"Unable to trigger Upstox access token request: {error}")
+            request_message = get_upstox_error_message(error)
+            print(f"Unable to trigger Upstox access token request: {request_message}")
 
     if not should_send_upstox_reminder(conn, now_time):
         conn.commit()
@@ -1622,7 +1758,8 @@ def maybe_request_upstox_access_token_and_send_reminder(
             reason=reason,
             previous_status=previous_status,
             current_status=current_status,
-            request_triggered=request_triggered
+            request_triggered=request_triggered,
+            request_message=request_message
         )
 
         for chat_id in chat_ids:
@@ -1675,7 +1812,12 @@ def clear_upstox_expiry_notification_marker(conn):
             'upstox_analytics_token_expiry_notified_expiry',
             'upstox_analytical_token_reminder_last_sent_at',
             'upstox_access_token_reminder_last_sent_at',
-            'upstox_access_token_request_last_triggered_at'
+            'upstox_access_token_request_last_triggered_at',
+            'upstox_access_token_request_last_attempted_at',
+            'upstox_access_token_request_last_status',
+            'upstox_access_token_request_last_message',
+            'upstox_access_token_request_notifier_url',
+            'upstox_access_token_request_authorization_expiry'
         );
     """)
 
