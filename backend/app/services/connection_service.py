@@ -658,6 +658,19 @@ def get_upstox_error_message(error) -> str:
     return str(error)
 
 
+def format_upstox_access_token_request_error(message: str) -> str:
+    clean_message = safe_strip(message)
+
+    if "invalid notifier url" in clean_message.lower():
+        return (
+            f"{clean_message}. Configure the Upstox app's Notifier Webhook "
+            "Endpoint to the production backend URL: "
+            "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
+        )
+
+    return clean_message
+
+
 def record_upstox_access_token_request_result(
     conn,
     status_text: str,
@@ -1739,7 +1752,9 @@ def maybe_request_upstox_access_token_and_send_reminder(
             request_message = request_result.get("message") or ""
 
         except Exception as error:
-            request_message = get_upstox_error_message(error)
+            request_message = format_upstox_access_token_request_error(
+                get_upstox_error_message(error)
+            )
             print(f"Unable to trigger Upstox access token request: {request_message}")
 
     if not should_send_upstox_reminder(conn, now_time):
