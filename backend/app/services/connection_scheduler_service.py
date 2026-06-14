@@ -168,6 +168,19 @@ def format_token_status(label: str, state: str, expiry_date) -> str:
     return f"{label}: valid until {expiry_label} IST"
 
 
+def format_upstox_access_token_request_error(message: str) -> str:
+    clean_message = safe_strip(message)
+
+    if "invalid notifier url" in clean_message.lower():
+        return (
+            "Invalid notifier url. Configure the Upstox app's Notifier Webhook "
+            "Endpoint to the production backend URL: "
+            "https://openanalytics.co.in/api/v1/connections/upstox/notifier"
+        )
+
+    return clean_message
+
+
 def get_upstox_token_status():
     conn = get_connection()
 
@@ -337,11 +350,16 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 else:
                     auto_request_message = str(request_detail)
 
+                auto_request_message = format_upstox_access_token_request_error(
+                    auto_request_message
+                )
                 auto_request_status = "failed"
 
             except Exception as request_error:
                 auto_request_status = "failed"
-                auto_request_message = str(request_error)
+                auto_request_message = format_upstox_access_token_request_error(
+                    str(request_error)
+                )
 
         elif access_needs_reminder and api_key and api_secret:
             auto_request_status = "skipped"
