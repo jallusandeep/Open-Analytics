@@ -175,7 +175,7 @@ def format_upstox_access_token_request_error(message: str) -> str:
         return (
             "Invalid notifier url. Configure the Upstox app's Notifier Webhook "
             "Endpoint to the production backend URL: "
-            "https://openanalytics.co.in/api/v1/connections/upstox/notifier"
+            "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
         )
 
     return clean_message
