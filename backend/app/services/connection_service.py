@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 
+from app.config import settings
 from app.database import get_connection
 from app.telegram_alerts_msg.message_templates import (
     build_telegram_connected_message,
@@ -55,6 +56,10 @@ REQUEST_TIMEOUT_SECONDS = 30
 
 def safe_strip(value):
     return value.strip() if isinstance(value, str) else ""
+
+
+def get_upstox_notifier_webhook_url() -> str:
+    return safe_strip(settings.UPSTOX_NOTIFIER_WEBHOOK_URL)
 
 
 def get_ist_now():
@@ -665,7 +670,7 @@ def format_upstox_access_token_request_error(message: str) -> str:
         return (
             f"{clean_message}. Configure the Upstox app's Notifier Webhook "
             "Endpoint to the production backend URL: "
-            "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
+            f"{get_upstox_notifier_webhook_url()}"
         )
 
     return clean_message
@@ -753,6 +758,67 @@ def trigger_upstox_access_token_request(conn, client_id: str, client_secret: str
             message=message
         )
         raise
+
+
+def request_upstox_access_token_service(current_user):
+    conn = get_connection()
+
+    try:
+        existing = get_upstox_connection_raw(conn)
+
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upstox connection is not configured."
+            )
+
+        api_key = safe_strip(existing[2])
+        api_secret = safe_strip(existing[3])
+
+        if not api_key or not api_secret:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upstox API key and API secret are required."
+            )
+
+        try:
+            result = trigger_upstox_access_token_request(
+                conn=conn,
+                client_id=api_key,
+                client_secret=api_secret
+            )
+            conn.commit()
+
+            return {
+                "status": "success",
+                "message": result.get("message") or "Upstox access token approval request triggered."
+            }
+
+        except HTTPException as error:
+            detail = error.detail
+
+            if isinstance(detail, dict):
+                message = detail.get("message") or str(detail)
+            else:
+                message = str(detail)
+
+            conn.commit()
+
+            raise HTTPException(
+                status_code=error.status_code,
+                detail=format_upstox_access_token_request_error(message)
+            )
+
+        except Exception as error:
+            conn.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=format_upstox_access_token_request_error(str(error))
+            )
+
+    finally:
+        conn.close()
 
 
 def handle_upstox_notifier_webhook_service(request):

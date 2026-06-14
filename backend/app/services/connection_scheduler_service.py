@@ -10,6 +10,7 @@ from app.database import get_connection
 from app.services.connection_service import (
     get_app_metadata_value,
     get_ist_now,
+    get_upstox_notifier_webhook_url,
     get_upstox_connection_raw,
     parse_db_datetime,
     safe_strip,
@@ -175,7 +176,7 @@ def format_upstox_access_token_request_error(message: str) -> str:
         return (
             "Invalid notifier url. Configure the Upstox app's Notifier Webhook "
             "Endpoint to the production backend URL: "
-            "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
+            f"{get_upstox_notifier_webhook_url()}"
         )
 
     return clean_message
