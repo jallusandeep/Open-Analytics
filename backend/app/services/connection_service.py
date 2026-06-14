@@ -106,7 +106,7 @@ def get_upstox_save_status(
     analytical_token: str,
     access_token: str
 ):
-    has_api_credentials = bool(api_key and api_secret and redirect_url)
+    has_api_credentials = bool(api_key and api_secret)
     has_analytical_token = bool(analytical_token)
     has_access_token = bool(access_token)
 
@@ -271,8 +271,6 @@ def refresh_connection_statuses_for_list(conn):
         if current_status != "disconnected":
             if is_access_token_expired:
                 next_status = "limited" if analytical_token else "failed"
-            elif current_status in ("failed", "limited"):
-                next_status = current_status
             else:
                 next_status = get_upstox_save_status(
                     api_key=api_key,
@@ -1673,7 +1671,7 @@ def test_upstox_connection_service(current_user):
         has_usable_analytical_token = is_upstox_token_usable(analytical_result)
         has_usable_access_token = is_upstox_token_usable(access_result)
 
-        if has_usable_access_token and api_key and api_secret and redirect_url:
+        if has_usable_access_token and api_key and api_secret:
             test_status = "connected"
         elif has_usable_access_token or has_usable_analytical_token:
             test_status = "limited"
