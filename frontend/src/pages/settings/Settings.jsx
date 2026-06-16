@@ -1222,21 +1222,16 @@ function Settings() {
               onClick={closeDetailsModal}
             />
 
-            <Tooltip text="Update details" side="top">
-              <button
-                type="submit"
-                form="edit-details-form"
-                disabled={updatingDetails}
-                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Update details"
-              >
-                {updatingDetails ? (
-                  <Spinner size="xs" color="light" />
-                ) : (
-                  <Check size={15} />
-                )}
-              </button>
-            </Tooltip>
+            <IconButton
+              icon={Check}
+              label="Update details"
+              type="submit"
+              form="edit-details-form"
+              variant="add"
+              tooltipSide="top"
+              loading={updatingDetails}
+              iconSize={15}
+            />
           </>
         }
       >
@@ -1288,21 +1283,16 @@ function Settings() {
               onClick={closePasswordModal}
             />
 
-            <Tooltip text="Update password" side="top">
-              <button
-                type="submit"
-                form="change-password-form"
-                disabled={savingPassword}
-                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Update password"
-              >
-                {savingPassword ? (
-                  <Spinner size="xs" color="light" />
-                ) : (
-                  <Check size={15} />
-                )}
-              </button>
-            </Tooltip>
+            <IconButton
+              icon={Check}
+              label="Update password"
+              type="submit"
+              form="change-password-form"
+              variant="add"
+              tooltipSide="top"
+              loading={savingPassword}
+              iconSize={15}
+            />
           </>
         }
       >
