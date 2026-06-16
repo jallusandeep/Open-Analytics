@@ -37,6 +37,7 @@ from app.services.data_collection_scheduler_service import (
 
 
 router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
+PREVIEW_PAGE_SIZE_DEFAULT = 500
 
 
 def start_detached_collection_job(target, **kwargs):
@@ -83,7 +84,7 @@ def get_upstox_instruments_preview(
     segment: str = Query("all", description="Filter by segment."),
     instrument_type: str = Query("all", description="Filter by instrument type."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -109,7 +110,7 @@ def get_upstox_expired_instruments_preview(
     segment: str = Query("all", description="Filter by segment."),
     instrument_type: str = Query("all", description="Filter by instrument type."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -135,7 +136,7 @@ def get_upstox_market_holidays_preview(
     exchange: str = Query("all", description="Filter by exchange."),
     trading_status: str = Query("all", description="Filter by open or closed trading status."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -161,7 +162,7 @@ def get_upstox_calendar_preview(
     exchange: str = Query("all", description="Filter by exchange."),
     trading_status: str = Query("all", description="Filter by open or closed trading status."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -186,7 +187,7 @@ def get_upstox_equity_news_preview(
     segment: str = Query("all", description="Filter by segment."),
     source: str = Query("all", description="Filter by news source."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -210,7 +211,7 @@ def get_upstox_news_preview_legacy(
     segment: str = Query("all", description="Filter by segment."),
     source: str = Query("all", description="Filter by news source."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -269,7 +270,7 @@ def get_upstox_ipo_calendar_preview(
     issue_type: str = Query("all", description="Filter by issue type."),
     industry: str = Query("all", description="Accepted from frontend; industry filtering is handled by search/service when available."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -294,7 +295,7 @@ def get_upstox_ipos_preview_legacy(
     issue_type: str = Query("all", description="Filter by issue type."),
     industry: str = Query("all", description="Accepted from frontend; industry filtering is handled by search/service when available."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -352,7 +353,7 @@ def get_ipo_gmp_scraper_preview(
     ipo_status: str = Query("all", description="Filter by IPO scraper status."),
     ipo_type: str = Query("all", description="Filter by IPO scraper type."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -376,7 +377,7 @@ def get_ipo_gmp_scraper_preview_legacy(
     ipo_status: str = Query("all", description="Filter by IPO scraper status."),
     ipo_type: str = Query("all", description="Filter by IPO scraper type."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -436,7 +437,7 @@ def get_upstox_ohlcv_preview_legacy(
     interval: str = Query("all", description="Filter by OHLCV interval."),
     segment: str = Query("all", description="Filter by segment."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -464,7 +465,7 @@ def get_upstox_ohlcv_preview(
     interval: str = Query("all", description="Filter by OHLCV interval."),
     segment: str = Query("all", description="Filter by segment."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {
@@ -546,7 +547,7 @@ def get_upstox_company_fundamentals_preview(
     time_period: str = Query("all", description="Filter by yearly or quarterly."),
     segment: str = Query("all", description="Filter by segment."),
     page: int = Query(1, ge=1),
-    page_size: int = Query(2000, ge=10, le=2000),
+    page_size: int = Query(PREVIEW_PAGE_SIZE_DEFAULT, ge=10, le=2000),
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     return {

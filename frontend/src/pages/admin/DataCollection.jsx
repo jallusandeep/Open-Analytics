@@ -104,10 +104,12 @@ const emptySummary = {
 const emptyPreviewData = {
   rows: [],
   page: 1,
-  page_size: 2000,
+  page_size: 500,
   total_pages: 1,
   total_records: 0
 };
+
+const DATA_COLLECTION_PREVIEW_PAGE_SIZE = 500;
 
 const emptyScheduleForm = {
   schedule_id: "",
@@ -2938,7 +2940,7 @@ function DataCollection() {
   const [previewSegment, setPreviewSegment] = useState("all");
   const [previewInstrumentType, setPreviewInstrumentType] = useState("all");
   const [previewPage, setPreviewPage] = useState(1);
-  const [previewPageSize] = useState(2000);
+  const [previewPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewData, setPreviewData] = useState(emptyPreviewData);
 
@@ -2956,7 +2958,7 @@ function DataCollection() {
     direction: null
   });
   const [ohlcvPage, setOhlcvPage] = useState(1);
-  const [ohlcvPageSize] = useState(2000);
+  const [ohlcvPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [ohlcvLoading, setOhlcvLoading] = useState(false);
   const [ohlcvPreviewData, setOhlcvPreviewData] = useState(emptyPreviewData);
 
@@ -2973,7 +2975,7 @@ function DataCollection() {
   const [marketCalendarExchange, setMarketCalendarExchange] = useState("all");
   const [marketCalendarTradingStatus, setMarketCalendarTradingStatus] = useState("all");
   const [marketCalendarPage, setMarketCalendarPage] = useState(1);
-  const [marketCalendarPageSize] = useState(2000);
+  const [marketCalendarPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [marketCalendarLoading, setMarketCalendarLoading] = useState(false);
   const [marketCalendarPreviewData, setMarketCalendarPreviewData] = useState(emptyPreviewData);
 
@@ -2989,7 +2991,7 @@ function DataCollection() {
     direction: null
   });
   const [equityNewsPage, setEquityNewsPage] = useState(1);
-  const [equityNewsPageSize] = useState(2000);
+  const [equityNewsPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [equityNewsLoading, setEquityNewsLoading] = useState(false);
   const [equityNewsPreviewData, setEquityNewsPreviewData] = useState(emptyPreviewData);
 
@@ -3006,7 +3008,7 @@ function DataCollection() {
     direction: null
   });
   const [ipoCalendarPage, setIpoCalendarPage] = useState(1);
-  const [ipoCalendarPageSize] = useState(2000);
+  const [ipoCalendarPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [ipoCalendarLoading, setIpoCalendarLoading] = useState(false);
   const [ipoCalendarPreviewData, setIpoCalendarPreviewData] = useState(emptyPreviewData);
   const [ipoCalendarSubTab, setIpoCalendarSubTab] = useState("ipo");
@@ -3023,7 +3025,7 @@ function DataCollection() {
     direction: null
   });
   const [ipoScraperPage, setIpoScraperPage] = useState(1);
-  const [ipoScraperPageSize] = useState(2000);
+  const [ipoScraperPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [ipoScraperLoading, setIpoScraperLoading] = useState(false);
   const [ipoScraperPreviewData, setIpoScraperPreviewData] = useState(emptyPreviewData);
 
@@ -3041,7 +3043,7 @@ function DataCollection() {
     direction: null
   });
   const [companyFundamentalsPage, setCompanyFundamentalsPage] = useState(1);
-  const [companyFundamentalsPageSize] = useState(2000);
+  const [companyFundamentalsPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [companyFundamentalsLoading, setCompanyFundamentalsLoading] = useState(false);
   const [companyFundamentalsPreviewData, setCompanyFundamentalsPreviewData] = useState(emptyPreviewData);
 
