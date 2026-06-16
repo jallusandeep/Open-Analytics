@@ -1,3 +1,4 @@
+import calendar
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -59,6 +60,7 @@ VALID_JOB_TYPES = {
 
 SCHEDULABLE_JOB_TYPES = tuple(VALID_JOB_TYPES.keys())
 SCHEDULABLE_JOB_TYPE_SQL = ", ".join(["?"] * len(SCHEDULABLE_JOB_TYPES))
+VALID_SCHEDULE_FREQUENCIES = ("daily", "weekly", "monthly")
 
 _scheduler_thread = None
 _scheduler_stop_event = threading.Event()
@@ -168,33 +170,72 @@ def normalize_time_format(time_format: str) -> str:
     return clean_time_format
 
 
+def normalize_schedule_frequency(schedule_frequency: str) -> str:
+    clean_frequency = str(schedule_frequency or "daily").strip().lower()
+
+    if clean_frequency not in VALID_SCHEDULE_FREQUENCIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Schedule repeat must be daily, weekly, or monthly."
+        )
+
+    return clean_frequency
+
+
+def add_month_preserving_day(value: datetime) -> datetime:
+    next_month = value.month + 1
+    next_year = value.year
+
+    if next_month > 12:
+        next_month = 1
+        next_year += 1
+
+    max_day = calendar.monthrange(next_year, next_month)[1]
+    return value.replace(year=next_year, month=next_month, day=min(value.day, max_day))
+
+
+def add_frequency_interval(value: datetime, schedule_frequency: str) -> datetime:
+    frequency = normalize_schedule_frequency(schedule_frequency)
+
+    if frequency == "weekly":
+        return value + timedelta(days=7)
+
+    if frequency == "monthly":
+        return add_month_preserving_day(value)
+
+    return value + timedelta(days=1)
+
+
 def calculate_next_run_at(
     schedule_time: str,
-    is_active: bool = True
+    is_active: bool = True,
+    schedule_frequency: str = "daily"
 ) -> Optional[datetime]:
     if not is_active:
         return None
 
+    frequency = normalize_schedule_frequency(schedule_frequency)
     hour, minute = parse_schedule_time(schedule_time)
     now = get_ist_now()
     next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
     if next_run <= now:
-        next_run += timedelta(days=1)
+        next_run = add_frequency_interval(next_run, frequency)
 
     return next_run.replace(tzinfo=None)
 
 
-def calculate_next_run_at_after_today(
+def calculate_next_run_at_after_run(
     schedule_time: str,
+    schedule_frequency: str,
+    run_at: datetime,
     is_active: bool = True
 ) -> Optional[datetime]:
     if not is_active:
         return None
 
     hour, minute = parse_schedule_time(schedule_time)
-    now = get_ist_now()
-    next_run = (now + timedelta(days=1)).replace(
+    next_run = add_frequency_interval(run_at, schedule_frequency).replace(
         hour=hour,
         minute=minute,
         second=0,
@@ -212,14 +253,15 @@ def row_to_schedule(row) -> Dict[str, Any]:
         "schedule_time": row[2],
         "schedule_label": row[3],
         "time_format": row[4],
-        "timezone": row[5],
-        "is_active": bool(row[6]),
-        "last_run_date": str(row[7]) if row[7] else None,
-        "last_run_at": str(row[8]) if row[8] else None,
-        "next_run_at": str(row[9]) if row[9] else None,
-        "created_at": str(row[10]) if row[10] else None,
-        "updated_at": str(row[11]) if row[11] else None,
-        "updated_by": row[12]
+        "schedule_frequency": row[5] or "daily",
+        "timezone": row[6],
+        "is_active": bool(row[7]),
+        "last_run_date": str(row[8]) if row[8] else None,
+        "last_run_at": str(row[9]) if row[9] else None,
+        "next_run_at": str(row[10]) if row[10] else None,
+        "created_at": str(row[11]) if row[11] else None,
+        "updated_at": str(row[12]) if row[12] else None,
+        "updated_by": row[13]
     }
 
 
@@ -234,6 +276,7 @@ def get_data_collection_schedules_service():
                 schedule_time,
                 schedule_label,
                 time_format,
+                schedule_frequency,
                 timezone,
                 is_active,
                 last_run_date,
@@ -245,7 +288,7 @@ def get_data_collection_schedules_service():
             FROM upstox_data_collection_schedules
             WHERE record_status = 'S'
               AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
-            ORDER BY job_type, schedule_time;
+            ORDER BY job_type, schedule_frequency, schedule_time;
         """, list(SCHEDULABLE_JOB_TYPES)).fetchall()
 
         return [row_to_schedule(row) for row in rows]
@@ -259,10 +302,11 @@ def create_data_collection_schedule_service(payload: dict, current_user: dict):
     schedule_time = normalize_schedule_time(payload.get("schedule_time"))
     schedule_label = format_schedule_label(schedule_time)
     time_format = normalize_time_format(payload.get("time_format"))
+    schedule_frequency = normalize_schedule_frequency(payload.get("schedule_frequency"))
     is_active = bool(payload.get("is_active", True))
     schedule_id = str(__import__("uuid").uuid4())
     user_id = get_user_id(current_user)
-    next_run_at = calculate_next_run_at(schedule_time, is_active)
+    next_run_at = calculate_next_run_at(schedule_time, is_active, schedule_frequency)
 
     conn = get_connection()
 
@@ -272,9 +316,10 @@ def create_data_collection_schedule_service(payload: dict, current_user: dict):
             FROM upstox_data_collection_schedules
             WHERE job_type = ?
               AND schedule_time = ?
+              AND schedule_frequency = ?
               AND record_status = 'S'
             LIMIT 1;
-        """, [job_type, schedule_time]).fetchone()
+        """, [job_type, schedule_time, schedule_frequency]).fetchone()
 
         if existing:
             raise HTTPException(
@@ -289,6 +334,7 @@ def create_data_collection_schedule_service(payload: dict, current_user: dict):
                 schedule_time,
                 schedule_label,
                 time_format,
+                schedule_frequency,
                 timezone,
                 is_active,
                 last_run_date,
@@ -299,13 +345,14 @@ def create_data_collection_schedule_service(payload: dict, current_user: dict):
                 created_by,
                 updated_by
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'S', 1, ?, ?);
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 'S', 1, ?, ?);
         """, [
             schedule_id,
             job_type,
             schedule_time,
             schedule_label,
             time_format,
+            schedule_frequency,
             IST_TIMEZONE,
             is_active,
             next_run_at,
@@ -334,9 +381,10 @@ def update_data_collection_schedule_service(
     schedule_time = normalize_schedule_time(payload.get("schedule_time"))
     schedule_label = format_schedule_label(schedule_time)
     time_format = normalize_time_format(payload.get("time_format"))
+    schedule_frequency = normalize_schedule_frequency(payload.get("schedule_frequency"))
     is_active = bool(payload.get("is_active", True))
     user_id = get_user_id(current_user)
-    next_run_at = calculate_next_run_at(schedule_time, is_active)
+    next_run_at = calculate_next_run_at(schedule_time, is_active, schedule_frequency)
 
     conn = get_connection()
 
@@ -361,10 +409,11 @@ def update_data_collection_schedule_service(
             FROM upstox_data_collection_schedules
             WHERE job_type = ?
               AND schedule_time = ?
+              AND schedule_frequency = ?
               AND schedule_id <> ?
               AND record_status = 'S'
             LIMIT 1;
-        """, [job_type, schedule_time, schedule_id]).fetchone()
+        """, [job_type, schedule_time, schedule_frequency, schedule_id]).fetchone()
 
         if existing:
             raise HTTPException(
@@ -379,6 +428,7 @@ def update_data_collection_schedule_service(
                 schedule_time = ?,
                 schedule_label = ?,
                 time_format = ?,
+                schedule_frequency = ?,
                 timezone = ?,
                 is_active = ?,
                 next_run_at = ?,
@@ -393,6 +443,7 @@ def update_data_collection_schedule_service(
             schedule_time,
             schedule_label,
             time_format,
+            schedule_frequency,
             IST_TIMEZONE,
             is_active,
             next_run_at,
@@ -417,7 +468,7 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
 
     try:
         row = conn.execute(f"""
-            SELECT schedule_time, is_active
+            SELECT schedule_time, is_active, schedule_frequency
             FROM upstox_data_collection_schedules
             WHERE schedule_id = ?
               AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
@@ -433,7 +484,12 @@ def toggle_data_collection_schedule_service(schedule_id: str, current_user: dict
 
         schedule_time = row[0]
         next_is_active = not bool(row[1])
-        next_run_at = calculate_next_run_at(schedule_time, next_is_active)
+        schedule_frequency = normalize_schedule_frequency(row[2])
+        next_run_at = calculate_next_run_at(
+            schedule_time,
+            next_is_active,
+            schedule_frequency
+        )
 
         conn.execute(f"""
             UPDATE upstox_data_collection_schedules
@@ -522,7 +578,8 @@ def get_due_schedules(conn):
             schedule_time,
             last_run_date,
             is_active,
-            next_run_at
+            next_run_at,
+            schedule_frequency
         FROM upstox_data_collection_schedules
         WHERE record_status = 'S'
           AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
@@ -546,8 +603,11 @@ def mark_schedule_started(
     conn,
     schedule_id: str,
     schedule_time: str,
+    schedule_frequency: str,
     run_date: str
 ):
+    run_at = get_ist_now()
+
     conn.execute(f"""
         UPDATE upstox_data_collection_schedules
         SET
@@ -561,7 +621,12 @@ def mark_schedule_started(
           AND record_status = 'S';
     """, [
         run_date,
-        calculate_next_run_at_after_today(schedule_time, True),
+        calculate_next_run_at_after_run(
+            schedule_time=schedule_time,
+            schedule_frequency=schedule_frequency,
+            run_at=run_at,
+            is_active=True
+        ),
         schedule_id
     ] + list(SCHEDULABLE_JOB_TYPES))
 
@@ -572,6 +637,7 @@ def update_schedule_next_run(
     conn,
     schedule_id: str,
     schedule_time: str,
+    schedule_frequency: str,
     is_active: bool
 ):
     conn.execute(f"""
@@ -584,7 +650,7 @@ def update_schedule_next_run(
           AND job_type IN ({SCHEDULABLE_JOB_TYPE_SQL})
           AND record_status = 'S';
     """, [
-        calculate_next_run_at(schedule_time, is_active),
+        calculate_next_run_at(schedule_time, is_active, schedule_frequency),
         schedule_id
     ] + list(SCHEDULABLE_JOB_TYPES))
 
@@ -676,6 +742,7 @@ def execute_due_schedules_once():
             schedule_time = row[2]
             last_run_date = str(row[3]) if row[3] else None
             is_active = bool(row[4])
+            schedule_frequency = normalize_schedule_frequency(row[6])
 
             if not is_active:
                 continue
@@ -688,6 +755,7 @@ def execute_due_schedules_once():
                     conn=conn,
                     schedule_id=schedule_id,
                     schedule_time=schedule_time,
+                    schedule_frequency=schedule_frequency,
                     run_date=today
                 )
 
@@ -707,6 +775,7 @@ def execute_due_schedules_once():
                         conn=conn,
                         schedule_id=schedule_id,
                         schedule_time=schedule_time,
+                        schedule_frequency=schedule_frequency,
                         is_active=True
                     )
                 except Exception as update_error:
@@ -723,6 +792,7 @@ def execute_due_schedules_once():
                         conn=conn,
                         schedule_id=schedule_id,
                         schedule_time=schedule_time,
+                        schedule_frequency=schedule_frequency,
                         is_active=True
                     )
                 except Exception as update_error:

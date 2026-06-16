@@ -857,6 +857,7 @@ def init_database():
                 schedule_time VARCHAR NOT NULL,
                 schedule_label VARCHAR,
                 time_format VARCHAR DEFAULT '24',
+                schedule_frequency VARCHAR DEFAULT 'daily',
                 timezone VARCHAR DEFAULT 'Asia/Kolkata',
                 is_active BOOLEAN DEFAULT TRUE,
                 last_run_date VARCHAR,
@@ -875,6 +876,7 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_time VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_label VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN time_format VARCHAR DEFAULT '24';")
+        safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN schedule_frequency VARCHAR DEFAULT 'daily';")
         safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN timezone VARCHAR DEFAULT 'Asia/Kolkata';")
         safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN is_active BOOLEAN DEFAULT TRUE;")
         safe_execute(conn, "ALTER TABLE upstox_data_collection_schedules ADD COLUMN last_run_date VARCHAR;")
@@ -895,6 +897,12 @@ def init_database():
             UPDATE upstox_data_collection_schedules
             SET time_format = '24'
             WHERE time_format IS NULL OR TRIM(time_format) = '';
+        """)
+
+        conn.execute("""
+            UPDATE upstox_data_collection_schedules
+            SET schedule_frequency = 'daily'
+            WHERE schedule_frequency IS NULL OR TRIM(schedule_frequency) = '';
         """)
 
         conn.execute("""
