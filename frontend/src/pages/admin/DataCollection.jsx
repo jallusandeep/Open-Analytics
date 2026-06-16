@@ -114,6 +114,7 @@ const emptyScheduleForm = {
   job_type: "current_instruments",
   schedule_time: "",
   time_format: "24",
+  schedule_frequency: "daily",
   is_active: true
 };
 
@@ -151,6 +152,12 @@ const viewOptions = [
 const timeFormatOptions = [
   { value: "24", label: "24 Hours" },
   { value: "12", label: "12 Hours" }
+];
+
+const scheduleFrequencyOptions = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" }
 ];
 
 const timePeriodOptions = [
@@ -294,11 +301,12 @@ const dumpJobGridTemplateColumns =
 
 const scheduleColumns = [
   { key: "schedule_time", label: "Time" },
+  { key: "schedule_frequency", label: "Repeat" },
   { key: "next_run_at", label: "Next Run" },
   { key: "is_active", label: "Status" }
 ];
 
-const scheduleGridTemplateColumns = "1fr 1.35fr 0.75fr 112px";
+const scheduleGridTemplateColumns = "0.9fr 0.8fr 1.35fr 0.7fr 112px";
 
 const previewColumns = [
   { key: "instrument_key", label: "Instrument Key" },
@@ -1245,6 +1253,14 @@ function formatScheduleTime(schedule) {
   return schedule.schedule_time || "--";
 }
 
+function formatScheduleFrequency(scheduleFrequency) {
+  const option = scheduleFrequencyOptions.find(
+    (item) => item.value === String(scheduleFrequency || "").toLowerCase()
+  );
+
+  return option?.label || "Daily";
+}
+
 function getScheduleTimeParts(scheduleTime) {
   const match = String(scheduleTime || "").match(/^(\d{1,2}):(\d{2})$/);
 
@@ -1455,7 +1471,8 @@ function ScheduleManagerModal({
     isAdminControlAllowed &&
     formData.job_type &&
     formData.schedule_time &&
-    formData.time_format;
+    formData.time_format &&
+    formData.schedule_frequency;
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -1482,6 +1499,14 @@ function ScheduleManagerModal({
       return (
         <span className="truncate oa-code-font text-white">
           {formatDateTime(schedule.next_run_at)}
+        </span>
+      );
+    }
+
+    if (column.key === "schedule_frequency") {
+      return (
+        <span className="truncate text-oa-text">
+          {formatScheduleFrequency(schedule.schedule_frequency)}
         </span>
       );
     }
@@ -1608,7 +1633,7 @@ function ScheduleManagerModal({
             </p>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-3">
             <div>
               <label className={oaFormTextStyles.label}>Schedule Time</label>
 
@@ -1685,6 +1710,21 @@ function ScheduleManagerModal({
                   onChange={onInputChange}
                   options={timeFormatOptions}
                   ariaLabel="Time format"
+                  minWidth="w-full"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className={oaFormTextStyles.label}>Repeat</label>
+
+              <div className="mt-1">
+                <Select
+                  name="schedule_frequency"
+                  value={formData.schedule_frequency}
+                  onChange={onInputChange}
+                  options={scheduleFrequencyOptions}
+                  ariaLabel="Schedule repeat"
                   minWidth="w-full"
                 />
               </div>
@@ -4845,6 +4885,7 @@ function DataCollection() {
       job_type: schedule.job_type || selectedScheduleJob || "current_instruments",
       schedule_time: schedule.schedule_time || "",
       time_format: schedule.time_format || "24",
+      schedule_frequency: schedule.schedule_frequency || "daily",
       is_active: Boolean(schedule.is_active)
     });
   }
@@ -4874,6 +4915,7 @@ function DataCollection() {
       job_type: scheduleFormData.job_type || selectedScheduleJob,
       schedule_time: scheduleFormData.schedule_time,
       time_format: scheduleFormData.time_format,
+      schedule_frequency: scheduleFormData.schedule_frequency || "daily",
       is_active: Boolean(scheduleFormData.is_active)
     };
 
