@@ -6327,6 +6327,16 @@ def find_ipo_gmp_table_from_html(url: str):
     raise ValueError("Target IPO GMP table was not found with pandas.read_html.")
 
 
+def first_existing_path(paths: List[str]) -> Optional[str]:
+    for path in paths:
+        clean_path = safe_strip(path)
+
+        if clean_path and Path(clean_path).exists():
+            return clean_path
+
+    return None
+
+
 def find_ipo_gmp_table_with_selenium(url: str):
     import os
     try:
@@ -6346,11 +6356,20 @@ def find_ipo_gmp_table_with_selenium(url: str):
 
     options = webdriver.ChromeOptions()
 
-    # Use the system Chromium installed in Docker
-    options.binary_location = os.environ.get(
-        "CHROME_BIN",
-        "/usr/bin/chromium",
+    chrome_binary = first_existing_path(
+        [
+            os.environ.get("CHROME_BIN"),
+            "/usr/bin/chromium",
+            "/usr/bin/google-chrome",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        ]
     )
+
+    if chrome_binary:
+        options.binary_location = chrome_binary
 
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -6365,24 +6384,13 @@ def find_ipo_gmp_table_with_selenium(url: str):
     options.add_argument("--disable-renderer-backgrounding")
     options.add_argument("--window-size=1920,1080")
 
-    chromedriver_path = os.environ.get(
-        "CHROMEDRIVER_PATH",
-        "/usr/bin/chromedriver",
+    chromedriver_path = first_existing_path(
+        [
+            os.environ.get("CHROMEDRIVER_PATH"),
+            "/usr/bin/chromedriver"
+        ]
     )
-
-    if not os.path.exists(chromedriver_path):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"ChromeDriver not found: {chromedriver_path}",
-        )
-
-    if not os.path.exists(options.binary_location):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Chromium binary not found: {options.binary_location}",
-        )
-
-    service = Service(executable_path=chromedriver_path)
+    service = Service(executable_path=chromedriver_path) if chromedriver_path else Service()
 
     driver = None
 
@@ -6436,8 +6444,8 @@ def find_ipo_gmp_table_with_selenium(url: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
                 f"Selenium failed using "
-                f"Chrome='{options.binary_location}', "
-                f"ChromeDriver='{chromedriver_path}'. "
+                f"Chrome='{chrome_binary or 'auto'}', "
+                f"ChromeDriver='{chromedriver_path or 'Selenium Manager'}'. "
                 f"Error: {exc}"
             ),
         )
