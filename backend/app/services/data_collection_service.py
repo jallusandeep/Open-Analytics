@@ -5716,8 +5716,16 @@ def should_continue_ipo_pagination(response: dict, page_number: int, item_count:
         return False
 
     data = response.get("data") if isinstance(response, dict) else {}
+    meta_data = response.get("meta_data") if isinstance(response, dict) else {}
+    metadata = response.get("metadata") if isinstance(response, dict) else {}
 
-    for container in (data, response):
+    page_containers = []
+
+    for metadata_container in (meta_data, metadata):
+        if isinstance(metadata_container, dict) and isinstance(metadata_container.get("page"), dict):
+            page_containers.append(metadata_container.get("page"))
+
+    for container in page_containers + [data, meta_data, metadata, response]:
         if not isinstance(container, dict):
             continue
         total_pages = container.get("total_pages") or container.get("totalPages")
@@ -5734,6 +5742,15 @@ def should_continue_ipo_pagination(response: dict, page_number: int, item_count:
                 pass
 
     return item_count >= UPSTOX_IPO_MAX_RECORDS_PER_CALL
+
+
+def extract_ipo_detail_record(response: dict) -> Optional[dict]:
+    data = response.get("data") if isinstance(response, dict) else None
+
+    if isinstance(data, dict):
+        return data
+
+    return response if isinstance(response, dict) else None
 
 
 def normalize_ipo_date(value: Any) -> Optional[str]:
@@ -5768,6 +5785,56 @@ def normalize_ipo_list_record(record: dict, sync_id: str) -> Optional[dict]:
     }
 
 
+def normalize_ipo_detail_record(record: dict, sync_id: str) -> Optional[dict]:
+    if not isinstance(record, dict):
+        return None
+
+    ipo_id = safe_strip(record.get("id") or record.get("ipo_id"))
+    if not ipo_id:
+        return None
+
+    timeline = record.get("timeline") if isinstance(record.get("timeline"), dict) else {}
+    registrar_info = record.get("registrar_info") if isinstance(record.get("registrar_info"), dict) else {}
+
+    return {
+        "ipo_id": ipo_id,
+        "provider": UPSTOX_PROVIDER,
+        "symbol": record.get("symbol"),
+        "name": record.get("name"),
+        "status": record.get("status"),
+        "isin": record.get("isin"),
+        "issue_type": record.get("issue_type"),
+        "issue_size": safe_float(record.get("issue_size")),
+        "industry": record.get("industry") or record.get("company_sector"),
+        "minimum_price": safe_float(record.get("minimum_price") or record.get("price_band_min")),
+        "maximum_price": safe_float(record.get("maximum_price") or record.get("price_band_max")),
+        "lot_size": normalize_optional_positive_int(record.get("lot_size"), 1, 1000000000),
+        "minimum_quantity": normalize_optional_positive_int(record.get("minimum_quantity"), 1, 1000000000),
+        "face_value": safe_float(record.get("face_value")),
+        "tick_size": safe_float(record.get("tick_size")),
+        "cut_off_price": safe_float(record.get("cut_off_price")),
+        "listing_price": safe_float(record.get("listing_price")),
+        "listing_exchange": record.get("listing_exchange"),
+        "bidding_start_date": normalize_ipo_date(record.get("bidding_start_date") or timeline.get("application_start_date")),
+        "bidding_end_date": normalize_ipo_date(record.get("bidding_end_date") or timeline.get("application_end_date")),
+        "daily_start_time": record.get("daily_start_time"),
+        "daily_end_time": record.get("daily_end_time"),
+        "allotment_date": normalize_ipo_date(timeline.get("allotment_date") or record.get("allotment_date")),
+        "refund_date": normalize_ipo_date(timeline.get("refund_initiation_date") or record.get("refund_date")),
+        "listing_date": normalize_ipo_date(timeline.get("listing_date") or record.get("listing_date")),
+        "rhp_url": record.get("rhp_url"),
+        "drhp_url": record.get("drhp_url"),
+        "registrar_name": registrar_info.get("name") or registrar_info.get("registrar"),
+        "registrar_email": registrar_info.get("email"),
+        "registrar_phone": registrar_info.get("contact_number") or registrar_info.get("phone"),
+        "total_subscription": safe_float(record.get("total_subscription")),
+        "timeline_json": json_dumps_for_db(timeline),
+        "registrar_info_json": json_dumps_for_db(registrar_info),
+        "raw_json": json_dumps_for_db(record),
+        "source_sync_id": sync_id
+    }
+
+
 def insert_ipo_list_records(conn, records: List[dict]) -> int:
     rows = list({record.get("ipo_id"): record for record in records if record.get("ipo_id")}.values())
     if not rows:
@@ -5793,12 +5860,59 @@ def insert_ipo_list_records(conn, records: List[dict]) -> int:
     return len(rows)
 
 
+def insert_ipo_detail_records(conn, records: List[dict]) -> int:
+    rows = list({record.get("ipo_id"): record for record in records if record.get("ipo_id")}.values())
+    if not rows:
+        return 0
+
+    conn.executemany("""
+        INSERT OR REPLACE INTO upstox_ipo_details (
+            ipo_id, provider, symbol, name, status, isin, issue_type, issue_size,
+            industry, minimum_price, maximum_price, lot_size, minimum_quantity,
+            face_value, tick_size, cut_off_price, listing_price, listing_exchange,
+            bidding_start_date, bidding_end_date, daily_start_time, daily_end_time,
+            allotment_date, refund_date, listing_date, rhp_url, drhp_url,
+            registrar_name, registrar_email, registrar_phone, total_subscription,
+            timeline_json, registrar_info_json, raw_json, source_sync_id,
+            ingested_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               TRY_CAST(? AS DATE), TRY_CAST(? AS DATE), ?, ?,
+               TRY_CAST(? AS DATE), TRY_CAST(? AS DATE), TRY_CAST(? AS DATE),
+               ?, ?, ?, ?, ?, ?, TRY_CAST(? AS JSON), TRY_CAST(? AS JSON),
+               TRY_CAST(? AS JSON), ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP;
+    """, [
+        (
+            row.get("ipo_id"), row.get("provider"), row.get("symbol"), row.get("name"),
+            row.get("status"), row.get("isin"), row.get("issue_type"), row.get("issue_size"),
+            row.get("industry"), row.get("minimum_price"), row.get("maximum_price"),
+            row.get("lot_size"), row.get("minimum_quantity"), row.get("face_value"),
+            row.get("tick_size"), row.get("cut_off_price"), row.get("listing_price"),
+            row.get("listing_exchange"), row.get("bidding_start_date"), row.get("bidding_end_date"),
+            row.get("daily_start_time"), row.get("daily_end_time"), row.get("allotment_date"),
+            row.get("refund_date"), row.get("listing_date"), row.get("rhp_url"), row.get("drhp_url"),
+            row.get("registrar_name"), row.get("registrar_email"), row.get("registrar_phone"),
+            row.get("total_subscription"), row.get("timeline_json"), row.get("registrar_info_json"),
+            row.get("raw_json"), row.get("source_sync_id")
+        )
+        for row in rows
+    ])
+
+    return len(rows)
+
+
 def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] = None, clear_cancel_at_start: bool = True):
     conn = get_connection()
     started_at = datetime.now()
     sync_id = None
     total_records = 0
-    metrics = {"api_calls_attempted": 0, "api_calls_skipped": 0, "list_records_saved": 0, "failed_groups": 0}
+    metrics = {
+        "api_calls_attempted": 0,
+        "api_calls_skipped": 0,
+        "list_records_saved": 0,
+        "detail_records_saved": 0,
+        "failed_groups": 0
+    }
 
     try:
         if clear_cancel_at_start:
@@ -5831,6 +5945,7 @@ def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] 
                 page_number = 1
                 page_count = 0
                 group_count = 0
+                detail_count = 0
 
                 try:
                     while True:
@@ -5855,12 +5970,46 @@ def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] 
                         group_count += saved_count
                         metrics["list_records_saved"] += saved_count
 
+                        if normalized_config["include_details"] and records:
+                            detail_records = []
+
+                            for record in records:
+                                check_sync_cancelled(conn, sync_id)
+                                ipo_id = record.get("ipo_id")
+
+                                if not ipo_id:
+                                    continue
+
+                                detail_response = fetch_upstox_json_with_retry(
+                                    url=build_ipo_detail_url(ipo_id),
+                                    token=token,
+                                    retry_count=normalized_config["retry_count"],
+                                    rate_limiter=rate_limiter,
+                                    purpose="IPO Detail"
+                                )
+                                metrics["api_calls_attempted"] += 1
+
+                                detail_record = normalize_ipo_detail_record(
+                                    extract_ipo_detail_record(detail_response),
+                                    sync_id
+                                )
+
+                                if detail_record:
+                                    detail_records.append(detail_record)
+
+                            if detail_records:
+                                conn.execute("BEGIN TRANSACTION")
+                                saved_detail_count = insert_ipo_detail_records(conn, detail_records)
+                                conn.execute("COMMIT")
+                                detail_count += saved_detail_count
+                                metrics["detail_records_saved"] += saved_detail_count
+
                         if not should_continue_ipo_pagination(response, page_number, len(response_rows)):
                             break
                         page_number += 1
 
                     conn.execute("BEGIN TRANSACTION")
-                    record_ipo_status(conn, status_filter, issue_type_filter, "success", group_count, page_count, 0, sync_id)
+                    record_ipo_status(conn, status_filter, issue_type_filter, "success", group_count, page_count, detail_count, sync_id)
                     conn.execute("COMMIT")
 
                 except SyncCancelled:
@@ -6000,6 +6149,21 @@ def get_upstox_ipo_calendar_preview_service(search: str = "", ipo_status: str = 
         current_page = normalize_page(page)
         current_page_size = normalize_page_size(page_size)
         offset = (current_page - 1) * current_page_size
+        status_sql = """
+            CASE
+                WHEN LOWER(COALESCE(detail.status, ipo.status, '')) = 'listed'
+                     OR detail.listing_date <= CURRENT_DATE THEN 'listed'
+                WHEN COALESCE(detail.bidding_start_date, ipo.bidding_start_date) IS NOT NULL
+                     AND CURRENT_DATE < COALESCE(detail.bidding_start_date, ipo.bidding_start_date) THEN 'upcoming'
+                WHEN COALESCE(detail.bidding_start_date, ipo.bidding_start_date) IS NOT NULL
+                     AND COALESCE(detail.bidding_end_date, ipo.bidding_end_date) IS NOT NULL
+                     AND CURRENT_DATE BETWEEN COALESCE(detail.bidding_start_date, ipo.bidding_start_date)
+                                         AND COALESCE(detail.bidding_end_date, ipo.bidding_end_date) THEN 'open'
+                WHEN COALESCE(detail.bidding_end_date, ipo.bidding_end_date) IS NOT NULL
+                     AND CURRENT_DATE > COALESCE(detail.bidding_end_date, ipo.bidding_end_date) THEN 'closed'
+                ELSE LOWER(COALESCE(detail.status, ipo.status, 'upcoming'))
+            END
+        """
         where_clauses = []
         params = []
 
@@ -6007,34 +6171,61 @@ def get_upstox_ipo_calendar_preview_service(search: str = "", ipo_status: str = 
             search_value = f"%{search.strip().lower()}%"
             where_clauses.append("""
                 (
-                    LOWER(COALESCE(ipo_id, '')) LIKE ?
-                    OR LOWER(COALESCE(symbol, '')) LIKE ?
-                    OR LOWER(COALESCE(name, '')) LIKE ?
-                    OR LOWER(COALESCE(isin, '')) LIKE ?
-                    OR LOWER(COALESCE(industry, '')) LIKE ?
-                    OR LOWER(COALESCE(status, '')) LIKE ?
-                    OR LOWER(COALESCE(issue_type, '')) LIKE ?
+                    LOWER(COALESCE(ipo.ipo_id, '')) LIKE ?
+                    OR LOWER(COALESCE(detail.symbol, ipo.symbol, '')) LIKE ?
+                    OR LOWER(COALESCE(detail.name, ipo.name, '')) LIKE ?
+                    OR LOWER(COALESCE(detail.isin, ipo.isin, '')) LIKE ?
+                    OR LOWER(COALESCE(detail.industry, ipo.industry, '')) LIKE ?
+                    OR LOWER(COALESCE(ipo.derived_status, '')) LIKE ?
+                    OR LOWER(COALESCE(detail.issue_type, ipo.issue_type, '')) LIKE ?
                 )
             """)
             params.extend([search_value] * 7)
 
         if ipo_status != "all":
-            where_clauses.append("LOWER(COALESCE(status, '')) = ?")
+            where_clauses.append("ipo.derived_status = ?")
             params.append(ipo_status.lower())
 
         if issue_type != "all":
-            where_clauses.append("LOWER(COALESCE(issue_type, '')) = ?")
+            where_clauses.append("LOWER(COALESCE(detail.issue_type, ipo.issue_type, '')) = ?")
             params.append(issue_type.lower())
 
         where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-        total_records = conn.execute(f"SELECT COUNT(*) FROM upstox_ipo_list {where_sql};", params).fetchone()[0]
+        from_sql = f"""
+            FROM (
+                SELECT
+                    ipo.*,
+                    {status_sql} AS derived_status
+                FROM upstox_ipo_list ipo
+                LEFT JOIN upstox_ipo_details detail
+                    ON detail.ipo_id = ipo.ipo_id
+            ) ipo
+            LEFT JOIN upstox_ipo_details detail
+                ON detail.ipo_id = ipo.ipo_id
+        """
+        total_records = conn.execute(f"SELECT COUNT(*) {from_sql} {where_sql};", params).fetchone()[0]
         rows = conn.execute(f"""
-            SELECT ipo_id, symbol, name, status, isin, issue_type, issue_size, industry,
-                   minimum_price, maximum_price, bidding_start_date, bidding_end_date,
-                   total_subscription, source_sync_id, ingested_at, updated_at
-            FROM upstox_ipo_list
+            SELECT
+                ipo.ipo_id,
+                COALESCE(detail.symbol, ipo.symbol),
+                COALESCE(detail.name, ipo.name),
+                ipo.derived_status,
+                COALESCE(detail.isin, ipo.isin),
+                COALESCE(detail.issue_type, ipo.issue_type),
+                COALESCE(detail.issue_size, ipo.issue_size),
+                COALESCE(detail.industry, ipo.industry),
+                COALESCE(detail.minimum_price, ipo.minimum_price),
+                COALESCE(detail.maximum_price, ipo.maximum_price),
+                COALESCE(detail.bidding_start_date, ipo.bidding_start_date),
+                COALESCE(detail.bidding_end_date, ipo.bidding_end_date),
+                COALESCE(detail.total_subscription, ipo.total_subscription),
+                COALESCE(detail.source_sync_id, ipo.source_sync_id),
+                ipo.ingested_at,
+                COALESCE(detail.updated_at, ipo.updated_at)
+            {from_sql}
             {where_sql}
-            ORDER BY bidding_start_date DESC NULLS LAST, name
+            ORDER BY COALESCE(detail.bidding_start_date, ipo.bidding_start_date) DESC NULLS LAST,
+                     COALESCE(detail.name, ipo.name)
             LIMIT ? OFFSET ?;
         """, params + [current_page_size, offset]).fetchall()
         total_pages = max(1, int((total_records + current_page_size - 1) / current_page_size))
