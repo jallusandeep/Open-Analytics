@@ -11,7 +11,13 @@ if not exist node_modules (
     npm install
 )
 
+:restart_frontend
 echo Starting React Vite frontend...
 npm run dev
+
+echo.
+echo Frontend server stopped. Restarting in 2 seconds...
+timeout /t 2 /nobreak > nul
+goto restart_frontend
 
 pause
