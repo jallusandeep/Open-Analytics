@@ -3351,7 +3351,7 @@ def get_upstox_company_fundamentals_options_service():
 
 
 def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
-    params = []
+    filter_params = []
 
     where_sql = """
     WHERE isin IS NOT NULL
@@ -3360,17 +3360,18 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
 
     if config.get("single_isin"):
         where_sql += " AND UPPER(isin) = ?"
-        params.append(config["single_isin"])
+        filter_params.append(config["single_isin"])
 
     if config.get("single_instrument_key"):
         where_sql += " AND instrument_key = ?"
-        params.append(config["single_instrument_key"])
+        filter_params.append(config["single_instrument_key"])
 
     limit_sql = ""
+    query_params = filter_params + filter_params
 
     if config.get("instrument_limit"):
         limit_sql = "LIMIT ?"
-        params.append(config["instrument_limit"])
+        query_params.append(config["instrument_limit"])
 
     rows = conn.execute(f"""
         SELECT *
@@ -3399,10 +3400,8 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
             FROM upstox_instruments
             {where_sql}
               AND source_type = 'bod_complete'
-              AND (
-                  UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
-                  OR UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
-              )
+              AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
+              AND UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
         )
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(isin)
@@ -3410,7 +3409,7 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
         ) = 1
         ORDER BY trading_symbol, isin
         {limit_sql};
-    """, params + params + ([] if not config.get("instrument_limit") else [config["instrument_limit"]])).fetchall()
+    """, query_params).fetchall()
 
     return [
         {
@@ -5493,10 +5492,8 @@ def fetch_equity_news_instruments(conn, config: Optional[dict] = None) -> List[d
             WHERE instrument_key IS NOT NULL
               AND TRIM(instrument_key) <> ''
               AND source_type = 'bod_complete'
-              AND (
-                  UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
-                  OR UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
-              )
+              AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
+              AND UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
               {single_filter_sql}
         )
         QUALIFY ROW_NUMBER() OVER (
