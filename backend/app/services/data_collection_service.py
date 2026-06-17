@@ -149,6 +149,7 @@ UPSTOX_COMPANY_FUNDAMENTAL_ALLOWED_TIME_PERIODS = ["yearly", "quarterly"]
 UPSTOX_COMPANY_FUNDAMENTAL_DEFAULT_BATCH_SIZE = 25
 UPSTOX_COMPANY_FUNDAMENTAL_DEFAULT_REQUEST_DELAY_MS = 250
 UPSTOX_COMPANY_FUNDAMENTAL_DEFAULT_RETRY_COUNT = 3
+UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY = False
 
 
 REQUEST_TIMEOUT_SECONDS = 180
@@ -179,6 +180,7 @@ OHLCV_CURRENT_SOURCE = "current"
 OHLCV_EXPIRED_SOURCE = "expired"
 OHLCV_HISTORICAL_MODE = "historical"
 OHLCV_INTRADAY_MODE = "intraday"
+OHLCV_SAVED_BOUNDS_INSTRUMENT_FILTER_LIMIT = 1000
 
 OHLCV_ALLOWED_SOURCES = {OHLCV_CURRENT_SOURCE, OHLCV_EXPIRED_SOURCE}
 OHLCV_ALLOWED_MODES = {OHLCV_HISTORICAL_MODE, OHLCV_INTRADAY_MODE}
@@ -2774,6 +2776,11 @@ def safe_float(value: Any) -> Optional[float]:
 
 
 def ensure_upstox_company_fundamentals_tables(conn):
+    global UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY
+
+    if UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY:
+        return
+
     def table_exists(table_name: str) -> bool:
         row = conn.execute("""
             SELECT COUNT(*)
@@ -3193,6 +3200,8 @@ def ensure_upstox_company_fundamentals_tables(conn):
         );
     """)
 
+    UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY = True
+
 def normalize_company_fundamentals_config(payload: Optional[dict]) -> dict:
     payload = payload or {}
 
@@ -3429,6 +3438,132 @@ def company_fundamentals_status_exists(
     ]).fetchone()
 
     return bool(status_row)
+
+
+def get_company_fundamentals_task_key(
+    isin: str,
+    endpoint: str,
+    statement_type: Optional[str],
+    time_period: Optional[str],
+    include_full_statement: bool
+) -> tuple:
+    return (
+        safe_strip(isin).upper(),
+        safe_strip(endpoint),
+        safe_strip(statement_type),
+        safe_strip(time_period),
+        bool(include_full_statement)
+    )
+
+
+def build_company_fundamentals_existing_status_cache(
+    conn,
+    instruments: List[dict],
+    tasks: List[dict]
+) -> set:
+    isins = unique_preserve_order([
+        safe_strip(instrument.get("isin")).upper()
+        for instrument in instruments
+        if safe_strip(instrument.get("isin"))
+    ])
+
+    if not isins or not tasks:
+        return set()
+
+    seen_task_keys = set()
+    task_keys = []
+
+    for task in tasks:
+        task_key = (
+            safe_strip(task.get("endpoint")),
+            safe_strip(task.get("statement_type")),
+            safe_strip(task.get("time_period")),
+            bool(task.get("include_full_statement"))
+        )
+
+        if task_key[0] and task_key not in seen_task_keys:
+            seen_task_keys.add(task_key)
+            task_keys.append(task_key)
+
+    if not task_keys:
+        return set()
+
+    task_clauses = []
+    params = [UPSTOX_PROVIDER]
+
+    for endpoint, statement_type, time_period, include_full_statement in task_keys:
+        task_clauses.append("""
+            (
+                endpoint = ?
+                AND COALESCE(statement_type, '') = ?
+                AND COALESCE(time_period, '') = ?
+                AND include_full_statement = ?
+            )
+        """)
+        params.extend([
+            endpoint,
+            statement_type,
+            time_period,
+            include_full_statement
+        ])
+
+    isin_placeholders = ", ".join(["?"] * len(isins))
+    params.extend(isins)
+
+    existing_keys = set()
+
+    rows = conn.execute(f"""
+        SELECT isin, endpoint, statement_type, time_period, include_full_statement
+        FROM upstox_company_fundamentals
+        WHERE provider = ?
+          AND ({" OR ".join(task_clauses)})
+          AND UPPER(isin) IN ({isin_placeholders});
+    """, params).fetchall()
+
+    for row in rows:
+        existing_keys.add(get_company_fundamentals_task_key(
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4]
+        ))
+
+    status_params = []
+
+    for endpoint, statement_type, time_period, include_full_statement in task_keys:
+        status_params.extend([
+            endpoint,
+            statement_type,
+            time_period,
+            include_full_statement
+        ])
+
+    status_params.extend(isins)
+
+    status_rows = conn.execute(f"""
+        SELECT isin, endpoint, statement_type, time_period, include_full_statement
+        FROM upstox_company_fundamentals_sync_status
+        WHERE status = 'success'
+          AND ({" OR ".join(task_clauses)})
+          AND UPPER(isin) IN ({isin_placeholders});
+    """, status_params).fetchall()
+
+    for row in status_rows:
+        existing_keys.add(get_company_fundamentals_task_key(
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4]
+        ))
+
+    print(
+        "[Company Fundamentals] Loaded saved status cache "
+        f"for {len(existing_keys)} instrument/task combinations."
+    )
+
+    return existing_keys
 
 
 def record_company_fundamentals_status(
@@ -4029,6 +4164,12 @@ def sync_upstox_company_fundamentals_service(
         )
 
         rate_limiter = UpstoxRollingRateLimiter()
+        existing_status_cache = (
+            build_company_fundamentals_existing_status_cache(conn, instruments, tasks)
+            if normalized_config["skip_existing"]
+            and not normalized_config["force_refresh"]
+            else set()
+        )
 
         print(
             "[Company Fundamentals] Starting sync "
@@ -4064,14 +4205,13 @@ def sync_upstox_company_fundamentals_service(
                 if (
                     normalized_config["skip_existing"]
                     and not normalized_config["force_refresh"]
-                    and company_fundamentals_status_exists(
-                        conn=conn,
+                    and get_company_fundamentals_task_key(
                         isin=isin,
                         endpoint=endpoint,
                         statement_type=statement_type,
                         time_period=time_period,
                         include_full_statement=include_full_statement
-                    )
+                    ) in existing_status_cache
                 ):
                     metrics["api_calls_skipped"] += 1
                     print(
@@ -5224,6 +5364,41 @@ def equity_news_batch_recently_checked(conn, instrument_keys: List[str]) -> bool
 
     return bool(row and int(row[0] or 0) >= len(clean_keys))
 
+
+def build_equity_news_recent_status_cache(conn, instruments: List[dict]) -> set:
+    instrument_keys = unique_preserve_order([
+        safe_strip(instrument.get("instrument_key"))
+        for instrument in instruments
+        if safe_strip(instrument.get("instrument_key"))
+    ])
+
+    if not instrument_keys:
+        return set()
+
+    placeholders = ", ".join(["?"] * len(instrument_keys))
+
+    try:
+        rows = conn.execute(f"""
+            SELECT instrument_key
+            FROM upstox_equity_news_sync_status
+            WHERE instrument_key IN ({placeholders})
+              AND status = 'success'
+              AND checked_at >= CURRENT_TIMESTAMP - INTERVAL '1 day';
+        """, instrument_keys).fetchall()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return set()
+
+    return {
+        safe_strip(row[0])
+        for row in rows
+        if row and safe_strip(row[0])
+    }
+
+
 def fetch_equity_news_instruments(conn, config: Optional[dict] = None) -> List[dict]:
     config = config or {}
 
@@ -5396,6 +5571,11 @@ def sync_upstox_equity_news_service(
         retry_count = int(normalized_config.get("retry_count") or 3)
         force_refresh = bool(normalized_config.get("force_refresh", False))
         skip_existing = bool(normalized_config.get("skip_existing", True))
+        recent_status_cache = (
+            build_equity_news_recent_status_cache(conn, instruments)
+            if skip_existing and not force_refresh
+            else set()
+        )
 
         print(
             "[Equity News] Starting sync "
@@ -5420,7 +5600,8 @@ def sync_upstox_equity_news_service(
             if (
                 skip_existing
                 and not force_refresh
-                and equity_news_batch_recently_checked(conn, instrument_keys)
+                and instrument_keys
+                and all(instrument_key in recent_status_cache for instrument_key in instrument_keys)
             ):
                 metrics["api_calls_skipped"] += 1
                 print(
@@ -7866,39 +8047,32 @@ def build_ohlcv_saved_bounds_cache(
     if not interval_rows:
         return {}
 
-    try:
-        conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_instruments")
-        conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_intervals")
+    interval_clauses = []
+    params = [
+        UPSTOX_PROVIDER,
+        source
+    ]
 
-        conn.execute("""
-            CREATE TEMP TABLE temp_ohlcv_plan_instruments (
-                instrument_key VARCHAR
-            );
-        """)
-
-        conn.execute("""
-            CREATE TEMP TABLE temp_ohlcv_plan_intervals (
-                candle_mode VARCHAR,
-                unit VARCHAR,
-                interval_value INTEGER
-            );
-        """)
-
-        conn.executemany("""
-            INSERT INTO temp_ohlcv_plan_instruments (instrument_key)
-            VALUES (?);
-        """, [(instrument_key,) for instrument_key in instrument_keys])
-
-        conn.executemany("""
-            INSERT INTO temp_ohlcv_plan_intervals (
-                candle_mode,
-                unit,
-                interval_value
+    for mode, unit, interval_value in interval_rows:
+        interval_clauses.append("""
+            (
+                candles.candle_mode = ?
+                AND candles.unit = ?
+                AND candles.interval_value = ?
             )
-            VALUES (?, ?, ?);
-        """, interval_rows)
+        """)
+        params.extend([mode, unit, interval_value])
 
-        rows = conn.execute("""
+    instrument_filter_sql = ""
+
+    if len(instrument_keys) <= OHLCV_SAVED_BOUNDS_INSTRUMENT_FILTER_LIMIT:
+        instrument_placeholders = ", ".join(["?"] * len(instrument_keys))
+        instrument_filter_sql = (
+            f" AND candles.instrument_key IN ({instrument_placeholders})"
+        )
+        params.extend(instrument_keys)
+
+    rows = conn.execute(f"""
             SELECT
                 candles.candle_mode,
                 candles.instrument_key,
@@ -7908,51 +8082,37 @@ def build_ohlcv_saved_bounds_cache(
                 MAX(candles.candle_date) AS max_date,
                 COUNT(1) AS row_count
             FROM upstox_ohlcv_candles candles
-            INNER JOIN temp_ohlcv_plan_instruments instruments
-                ON instruments.instrument_key = candles.instrument_key
-            INNER JOIN temp_ohlcv_plan_intervals intervals
-                ON intervals.candle_mode = candles.candle_mode
-               AND intervals.unit = candles.unit
-               AND intervals.interval_value = candles.interval_value
             WHERE candles.provider = ?
               AND candles.instrument_source = ?
+              AND ({" OR ".join(interval_clauses)})
+              {instrument_filter_sql}
             GROUP BY
                 candles.candle_mode,
                 candles.instrument_key,
                 candles.unit,
                 candles.interval_value;
-        """, [
-            UPSTOX_PROVIDER,
-            source
-        ]).fetchall()
+        """, params).fetchall()
 
-        cache = {}
+    cache = {}
 
-        for row in rows:
-            cache[(
-                row[0],
-                row[1],
-                row[2],
-                int(row[3] or 0)
-            )] = {
-                "min_date": row[4],
-                "max_date": row[5],
-                "count": int(row[6] or 0)
-            }
+    for row in rows:
+        cache[(
+            row[0],
+            row[1],
+            row[2],
+            int(row[3] or 0)
+        )] = {
+            "min_date": row[4],
+            "max_date": row[5],
+            "count": int(row[6] or 0)
+        }
 
-        log_ohlcv_message(
-            f"Loaded saved OHLCV bounds cache for source={source}: "
-            f"{len(cache)} instrument/mode/interval groups."
-        )
+    log_ohlcv_message(
+        f"Loaded saved OHLCV bounds cache for source={source}: "
+        f"{len(cache)} instrument/mode/interval groups."
+    )
 
-        return cache
-
-    finally:
-        try:
-            conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_intervals")
-            conn.execute("DROP TABLE IF EXISTS temp_ohlcv_plan_instruments")
-        except Exception:
-            pass
+    return cache
 
 def get_saved_ohlcv_date_bounds(
     conn,
