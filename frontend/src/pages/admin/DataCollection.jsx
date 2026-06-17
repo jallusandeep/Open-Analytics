@@ -1193,11 +1193,11 @@ function getQueuedDumpJobId(jobName) {
 }
 
 function getStatusClass(status) {
-  if (status === "success" || status === "connected" || status === "active") {
+  if (status === "success" || status === "connected" || status === "active" || status === "open") {
     return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
   }
 
-  if (status === "queued") {
+  if (status === "queued" || status === "upcoming" || status === "partial_success") {
     return "border-amber-500/40 bg-amber-950/50 text-amber-200";
   }
 
@@ -1205,11 +1205,11 @@ function getStatusClass(status) {
     return "border-cyan-500/40 bg-cyan-950/50 text-cyan-200";
   }
 
-  if (status === "failed" || status === "cancelled" || status === "inactive") {
+  if (status === "failed" || status === "cancelled" || status === "inactive" || status === "closed") {
     return "border-red-500/40 bg-red-950/50 text-red-200";
   }
 
-  if (status === "saved") {
+  if (status === "saved" || status === "listed") {
     return "border-sky-500/40 bg-sky-950/50 text-sky-200";
   }
 
@@ -1218,6 +1218,7 @@ function getStatusClass(status) {
 
 function getStatusLabel(status) {
   if (status === "success") return "Success";
+  if (status === "partial_success") return "Partial Success";
   if (status === "queued") return "Queued";
   if (status === "running") return "Running";
   if (status === "cancel_requested") return "Cancelling";
@@ -1225,6 +1226,10 @@ function getStatusLabel(status) {
   if (status === "failed") return "Failed";
   if (status === "active") return "Active";
   if (status === "inactive") return "Inactive";
+  if (status === "upcoming") return "Upcoming";
+  if (status === "open") return "Open";
+  if (status === "closed") return "Closed";
+  if (status === "listed") return "Listed";
 
   return status || "Idle";
 }

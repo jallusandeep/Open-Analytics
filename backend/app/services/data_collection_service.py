@@ -6082,6 +6082,57 @@ def insert_ipo_detail_records(conn, records: List[dict]) -> int:
     return len(rows)
 
 
+def refresh_ipo_calendar_statuses(conn):
+    conn.execute("""
+        UPDATE upstox_ipo_details
+        SET status = derived.next_status,
+            updated_at = CURRENT_TIMESTAMP
+        FROM (
+            SELECT
+                ipo_id,
+                CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'listed'
+                         OR listing_date <= CURRENT_DATE THEN 'listed'
+                    WHEN bidding_start_date IS NOT NULL
+                         AND CURRENT_DATE < bidding_start_date THEN 'upcoming'
+                    WHEN bidding_start_date IS NOT NULL
+                         AND bidding_end_date IS NOT NULL
+                         AND CURRENT_DATE BETWEEN bidding_start_date AND bidding_end_date THEN 'open'
+                    WHEN bidding_end_date IS NOT NULL
+                         AND CURRENT_DATE > bidding_end_date THEN 'closed'
+                    ELSE LOWER(COALESCE(status, 'upcoming'))
+                END AS next_status
+            FROM upstox_ipo_details
+        ) derived
+        WHERE upstox_ipo_details.ipo_id = derived.ipo_id
+          AND COALESCE(LOWER(upstox_ipo_details.status), '') <> derived.next_status;
+    """)
+
+    conn.execute("""
+        UPDATE upstox_ipo_list
+        SET status = derived.next_status,
+            updated_at = CURRENT_TIMESTAMP
+        FROM (
+            SELECT
+                ipo_id,
+                CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'listed' THEN 'listed'
+                    WHEN bidding_start_date IS NOT NULL
+                         AND CURRENT_DATE < bidding_start_date THEN 'upcoming'
+                    WHEN bidding_start_date IS NOT NULL
+                         AND bidding_end_date IS NOT NULL
+                         AND CURRENT_DATE BETWEEN bidding_start_date AND bidding_end_date THEN 'open'
+                    WHEN bidding_end_date IS NOT NULL
+                         AND CURRENT_DATE > bidding_end_date THEN 'closed'
+                    ELSE LOWER(COALESCE(status, 'upcoming'))
+                END AS next_status
+            FROM upstox_ipo_list
+        ) derived
+        WHERE upstox_ipo_list.ipo_id = derived.ipo_id
+          AND COALESCE(LOWER(upstox_ipo_list.status), '') <> derived.next_status;
+    """)
+
+
 def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] = None, clear_cancel_at_start: bool = True):
     conn = get_connection()
     started_at = datetime.now()
@@ -6214,6 +6265,7 @@ def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] 
                     print(f"[IPO Calendar] Group failed {status_filter}/{issue_type_filter}: {error_text}")
                     continue
 
+        refresh_ipo_calendar_statuses(conn)
         status_text = "success" if metrics["failed_groups"] == 0 else "partial_success"
         message = "IPO Calendar synced successfully." if status_text == "success" else "IPO Calendar synced with some failed groups."
         finish_sync_run(conn, sync_id, status_text, message, total_records, started_at)
@@ -6262,6 +6314,7 @@ def get_upstox_equity_news_preview_service(search: str = "", segment: str = "all
     conn = get_connection()
     try:
         ensure_upstox_news_ipo_tables(conn)
+        refresh_ipo_calendar_statuses(conn)
         current_page = normalize_page(page)
         current_page_size = normalize_page_size(page_size)
         offset = (current_page - 1) * current_page_size
@@ -6444,6 +6497,94 @@ def normalize_ipo_gmp_value(value: Any) -> str:
         return ""
 
     return clean_value
+
+
+def parse_ipo_gmp_date_range(value: Any) -> Optional[dict]:
+    clean_value = normalize_ipo_gmp_value(value)
+
+    if not clean_value:
+        return None
+
+    normalized = re.sub(r"\s+", " ", clean_value.replace("–", "-").replace("—", "-")).strip()
+    current_year = date.today().year
+
+    match = re.search(
+        r"(?P<start_day>\d{1,2})\s*-\s*(?P<end_day>\d{1,2})\s+"
+        r"(?P<month>[A-Za-z]{3,9})(?:\s+(?P<year>\d{4}))?",
+        normalized
+    )
+
+    if match:
+        try:
+            month = datetime.strptime(match.group("month")[:3], "%b").month
+            year = int(match.group("year") or current_year)
+            return {
+                "start_date": date(year, month, int(match.group("start_day"))),
+                "end_date": date(year, month, int(match.group("end_day")))
+            }
+        except Exception:
+            return None
+
+    match = re.search(
+        r"(?P<start_day>\d{1,2})\s+"
+        r"(?P<start_month>[A-Za-z]{3,9})\s*-\s*"
+        r"(?P<end_day>\d{1,2})\s+"
+        r"(?P<end_month>[A-Za-z]{3,9})(?:\s+(?P<year>\d{4}))?",
+        normalized
+    )
+
+    if match:
+        try:
+            start_month = datetime.strptime(match.group("start_month")[:3], "%b").month
+            end_month = datetime.strptime(match.group("end_month")[:3], "%b").month
+            start_year = int(match.group("year") or current_year)
+            end_year = start_year + 1 if end_month < start_month else start_year
+            return {
+                "start_date": date(start_year, start_month, int(match.group("start_day"))),
+                "end_date": date(end_year, end_month, int(match.group("end_day")))
+            }
+        except Exception:
+            return None
+
+    match = re.search(
+        r"(?P<day>\d{1,2})\s+(?P<month>[A-Za-z]{3,9})(?:\s+(?P<year>\d{4}))?",
+        normalized
+    )
+
+    if match:
+        try:
+            month = datetime.strptime(match.group("month")[:3], "%b").month
+            year = int(match.group("year") or current_year)
+            parsed_date = date(year, month, int(match.group("day")))
+            return {
+                "start_date": parsed_date,
+                "end_date": parsed_date
+            }
+        except Exception:
+            return None
+
+    return None
+
+
+def derive_ipo_gmp_status(ipo_date: Any, current_status: Any = None) -> str:
+    status_value = normalize_ipo_gmp_value(current_status)
+    parsed_range = parse_ipo_gmp_date_range(ipo_date)
+
+    if not parsed_range:
+        return status_value
+
+    today = date.today()
+
+    if today < parsed_range["start_date"]:
+        return "Upcoming"
+
+    if parsed_range["start_date"] <= today <= parsed_range["end_date"]:
+        return "Open"
+
+    if today > parsed_range["end_date"]:
+        return "Closed"
+
+    return status_value
 
 
 def parse_ipo_gmp_number(value: Any) -> Optional[float]:
@@ -6687,7 +6828,7 @@ def normalize_ipo_gmp_record(row: dict, source_url: str) -> Optional[dict]:
         "price_band": normalize_ipo_gmp_value(row.get("Price Band")),
         "ipo_date": normalize_ipo_gmp_value(row.get("Date")),
         "ipo_type": normalize_ipo_gmp_value(row.get("Type")),
-        "ipo_status": normalize_ipo_gmp_value(row.get("Status")),
+        "ipo_status": derive_ipo_gmp_status(row.get("Date"), row.get("Status")),
         "last_updated": normalize_ipo_gmp_value(row.get("Last Updated")),
         "source_url": source_url,
         "raw_json": json_dumps_for_db(raw_record)
@@ -6866,6 +7007,33 @@ def insert_ipo_gmp_scraper_records(
     return len(rows)
 
 
+def refresh_ipo_gmp_statuses(conn):
+    rows = conn.execute("""
+        SELECT ipo_name, ipo_date, ipo_status
+        FROM ipo_gmp_scraper;
+    """).fetchall()
+
+    updates = []
+
+    for row in rows:
+        next_status = derive_ipo_gmp_status(row[1], row[2])
+
+        if next_status and next_status.lower() != normalize_ipo_gmp_value(row[2]).lower():
+            updates.append((next_status, row[0]))
+
+    if not updates:
+        return 0
+
+    conn.executemany("""
+        UPDATE ipo_gmp_scraper
+        SET ipo_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE ipo_name = ?;
+    """, updates)
+
+    return len(updates)
+
+
 def sync_ipo_gmp_scraper_service(
     current_user: dict,
     config: Optional[dict] = None,
@@ -6906,6 +7074,7 @@ def sync_ipo_gmp_scraper_service(
             records,
             sync_id
         )
+        refresh_ipo_gmp_statuses(conn)
         conn.execute("COMMIT")
 
         finish_sync_run(
@@ -7013,6 +7182,7 @@ def get_ipo_gmp_scraper_preview_service(
 
     try:
         ensure_upstox_news_ipo_tables(conn)
+        refresh_ipo_gmp_statuses(conn)
 
         current_page = normalize_page(page)
         current_page_size = normalize_page_size(page_size)
