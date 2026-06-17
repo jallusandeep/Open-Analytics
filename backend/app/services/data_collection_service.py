@@ -8020,7 +8020,8 @@ def should_skip_ohlcv_chunk_by_saved_bounds(
     unit: str,
     interval_value: int,
     from_date: date,
-    to_date: date
+    to_date: date,
+    saved_bounds_cache: Optional[dict] = None
 ) -> bool:
     bounds = get_saved_ohlcv_date_bounds(
         conn=conn,
@@ -8028,7 +8029,8 @@ def should_skip_ohlcv_chunk_by_saved_bounds(
         mode=mode,
         instrument_key=instrument_key,
         unit=unit,
-        interval_value=interval_value
+        interval_value=interval_value,
+        saved_bounds_cache=saved_bounds_cache
     )
 
     min_date = bounds.get("min_date")
@@ -8959,7 +8961,8 @@ def sync_upstox_ohlcv_daily_service(
                                 unit=interval["unit"],
                                 interval_value=interval["interval_value"],
                                 from_date=chunk_from,
-                                to_date=chunk_to
+                                to_date=chunk_to,
+                                saved_bounds_cache=saved_bounds_cache
                             ):
                                 skipped_days = (chunk_to - chunk_from).days + 1
                                 metrics["api_calls_skipped"] += 1

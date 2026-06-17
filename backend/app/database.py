@@ -1166,6 +1166,30 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN raw_json JSON;")
         safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
         safe_execute(conn, "ALTER TABLE upstox_ohlcv_candles ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_ohlcv_candles_bounds
+            ON upstox_ohlcv_candles (
+                provider,
+                instrument_source,
+                candle_mode,
+                instrument_key,
+                unit,
+                interval_value,
+                candle_date
+            );
+        """)
+        safe_execute(conn, """
+            CREATE INDEX IF NOT EXISTS idx_upstox_ohlcv_candles_identity
+            ON upstox_ohlcv_candles (
+                provider,
+                instrument_source,
+                candle_mode,
+                instrument_key,
+                unit,
+                interval_value,
+                candle_timestamp
+            );
+        """)
 
         # -----------------------------
         # OHLCV Daily compatibility table
