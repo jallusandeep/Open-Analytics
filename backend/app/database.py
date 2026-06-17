@@ -782,6 +782,13 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN candles_inserted BIGINT DEFAULT 0;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN candles_skipped BIGINT DEFAULT 0;")
         safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN failed_instruments BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_sync_runs ADD COLUMN last_heartbeat_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+        conn.execute("""
+            UPDATE upstox_sync_runs
+            SET last_heartbeat_at = COALESCE(last_heartbeat_at, finished_at, started_at, CURRENT_TIMESTAMP)
+            WHERE last_heartbeat_at IS NULL;
+        """)
 
         conn.execute("""
             UPDATE upstox_sync_runs

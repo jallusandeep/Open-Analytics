@@ -158,10 +158,13 @@ UPSTOX_STANDARD_MAX_REQUESTS_PER_MINUTE = 450
 UPSTOX_STANDARD_MAX_REQUESTS_PER_30_MINUTES = 1800
 UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS = 0.05
 STALE_RUNNING_RUN_HOURS = 2
+STALE_RUNNING_HEARTBEAT_MINUTES = 15
+SYNC_RUN_HEARTBEAT_SECONDS = 30
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4
 
 CANCEL_SIGNAL_DIR = APP_ROOT / "runtime"
 CANCEL_SIGNAL_FILE = CANCEL_SIGNAL_DIR / "upstox_data_collection.cancel"
+SYNC_RUN_HEARTBEATS: Dict[str, datetime] = {}
 
 DEFAULT_EXPIRED_UNDERLYING_KEYS = [
     "NSE_INDEX|Nifty 50",
@@ -442,8 +445,12 @@ def mark_stale_sync_runs(conn):
             duration_seconds = date_diff('second', started_at, CURRENT_TIMESTAMP),
             message = 'Sync run was interrupted before completion.'
         WHERE status IN ('running', 'cancel_requested')
-          AND started_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 hour');
-    """, [STALE_RUNNING_RUN_HOURS])
+          AND (
+              COALESCE(last_heartbeat_at, started_at)
+                  < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')
+              OR started_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 hour')
+          );
+    """, [STALE_RUNNING_HEARTBEAT_MINUTES, STALE_RUNNING_RUN_HOURS])
 
     conn.commit()
 
@@ -506,6 +513,7 @@ def create_sync_run(
             sync_type,
             status,
             started_at,
+            last_heartbeat_at,
             finished_at,
             duration_seconds,
             message,
@@ -515,7 +523,7 @@ def create_sync_run(
             triggered_by_name,
             triggered_by_role
         )
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP, NULL, NULL, ?, 0, ?, ?, ?, ?);
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, ?, 0, ?, ?, ?, ?);
     """, [
         sync_id,
         sync_type,
@@ -531,6 +539,30 @@ def create_sync_run(
     return sync_id
 
 
+def heartbeat_sync_run(conn, sync_id: Optional[str], force: bool = False):
+    if not sync_id:
+        return
+
+    now = datetime.now()
+    last_heartbeat = SYNC_RUN_HEARTBEATS.get(sync_id)
+
+    if (
+        not force
+        and last_heartbeat
+        and (now - last_heartbeat).total_seconds() < SYNC_RUN_HEARTBEAT_SECONDS
+    ):
+        return
+
+    conn.execute("""
+        UPDATE upstox_sync_runs
+        SET last_heartbeat_at = CURRENT_TIMESTAMP
+        WHERE sync_id = ?
+          AND status IN ('running', 'cancel_requested');
+    """, [sync_id])
+    conn.commit()
+    SYNC_RUN_HEARTBEATS[sync_id] = now
+
+
 def finish_sync_run(
     conn,
     sync_id: str,
@@ -544,6 +576,7 @@ def finish_sync_run(
         SET
             status = ?,
             finished_at = CURRENT_TIMESTAMP,
+            last_heartbeat_at = CURRENT_TIMESTAMP,
             duration_seconds = ?,
             message = ?,
             total_records = ?
@@ -557,9 +590,12 @@ def finish_sync_run(
     ])
 
     conn.commit()
+    SYNC_RUN_HEARTBEATS.pop(sync_id, None)
 
 
 def check_sync_cancelled(conn, sync_id: str):
+    heartbeat_sync_run(conn, sync_id)
+
     if has_cancel_signal():
         raise SyncCancelled()
 
@@ -8047,7 +8083,8 @@ def finish_ohlcv_sync_run_metrics(conn, sync_id: str, metrics: dict):
             api_calls_skipped = ?,
             candles_inserted = ?,
             candles_skipped = ?,
-            failed_instruments = ?
+            failed_instruments = ?,
+            last_heartbeat_at = CURRENT_TIMESTAMP
         WHERE sync_id = ?;
     """, [
         int(metrics.get("api_calls_attempted") or 0),
