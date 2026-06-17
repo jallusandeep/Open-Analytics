@@ -17,6 +17,7 @@ from app.services.data_collection_service import (
     sync_upstox_market_holidays_service,
     sync_upstox_ohlcv_daily_service
 )
+from app.services.data_collection_queue_service import enqueue_data_collection_job
 
 
 IST_TIMEZONE = "Asia/Kolkata"
@@ -759,9 +760,13 @@ def execute_due_schedules_once():
                     run_date=today
                 )
 
-                run_schedule_job(
-                    schedule_id=schedule_id,
-                    job_type=job_type
+                enqueue_data_collection_job(
+                    run_schedule_job,
+                    job_name=f"scheduled:{job_type}",
+                    kwargs={
+                        "schedule_id": schedule_id,
+                        "job_type": job_type
+                    }
                 )
 
             except HTTPException as error:

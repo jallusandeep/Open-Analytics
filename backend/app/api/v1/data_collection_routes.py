@@ -1,5 +1,3 @@
-import threading
-
 from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import require_admin_or_super_admin
@@ -34,6 +32,7 @@ from app.services.data_collection_scheduler_service import (
     toggle_data_collection_schedule_service,
     update_data_collection_schedule_service
 )
+from app.services.data_collection_queue_service import enqueue_data_collection_job
 
 
 router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
@@ -41,17 +40,29 @@ PREVIEW_PAGE_SIZE_DEFAULT = 500
 
 
 def start_detached_collection_job(target, **kwargs):
-    def run_job():
-        try:
-            target(**kwargs)
-        except Exception as error:
-            import traceback
+    return enqueue_data_collection_job(
+        target,
+        job_name=target.__name__,
+        kwargs=kwargs
+    )
 
-            print(f"Detached data collection job failed: {error}")
-            traceback.print_exc()
 
-    worker = threading.Thread(target=run_job, daemon=True)
-    worker.start()
+def collection_job_response(queue_position: int, started_message: str):
+    if queue_position <= 1:
+        return {
+            "status": "started",
+            "queue_position": queue_position,
+            "message": started_message
+        }
+
+    return {
+        "status": "queued",
+        "queue_position": queue_position,
+        "message": (
+            f"{started_message} It is queued at position {queue_position} "
+            "and will start after earlier data collection jobs complete."
+        )
+    }
 
 
 @router.get("/upstox/summary")
@@ -231,16 +242,16 @@ def sync_upstox_equity_news(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_equity_news_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "Equity News collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Equity News collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/news/run")
@@ -248,16 +259,16 @@ def sync_upstox_news_legacy(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_equity_news_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "Equity News collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Equity News collection started. Monitor will update while it runs."
+    )
 
 
 @router.get("/upstox/ipo-calendar/preview")
@@ -315,16 +326,16 @@ def sync_upstox_ipo_calendar(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_ipo_calendar_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "IPO Calendar collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "IPO Calendar collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/ipos/run")
@@ -332,16 +343,16 @@ def sync_upstox_ipos_legacy(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_ipo_calendar_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "IPO Calendar collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "IPO Calendar collection started. Monitor will update while it runs."
+    )
 
 
 @router.get("/upstox/ipo-scraper/preview")
@@ -397,16 +408,16 @@ def sync_ipo_gmp_scraper(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_ipo_gmp_scraper_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "IPO Scrapper collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "IPO Scrapper collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/ipo-gmp-scraper/run")
@@ -414,16 +425,16 @@ def sync_ipo_gmp_scraper_legacy(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_ipo_gmp_scraper_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "IPO Scrapper collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "IPO Scrapper collection started. Monitor will update while it runs."
+    )
 
 
 @router.get("/upstox/ohlcv-preview")
@@ -569,16 +580,16 @@ def sync_upstox_company_fundamentals(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_company_fundamentals_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "Company Fundamentals collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Company Fundamentals collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/sync-company-fundamentals")
@@ -586,31 +597,31 @@ def sync_upstox_company_fundamentals_legacy(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_company_fundamentals_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "Company Fundamentals collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Company Fundamentals collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/sync-current")
 def sync_upstox_current_instruments(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_current_instruments_service,
         current_user=current_user
     )
 
-    return {
-        "status": "started",
-        "message": "Current Instruments collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Current Instruments collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/sync-expired")
@@ -618,61 +629,61 @@ def sync_upstox_expired_instruments(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_expired_instruments_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "Expired Instruments collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Expired Instruments collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/sync-market-holidays")
 def sync_upstox_market_holidays_legacy(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_market_holidays_service,
         current_user=current_user
     )
 
-    return {
-        "status": "started",
-        "message": "Market Holidays calendar collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Market Holidays calendar collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/market-holidays/run")
 def sync_upstox_market_holidays(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_market_holidays_service,
         current_user=current_user
     )
 
-    return {
-        "status": "started",
-        "message": "Market Holidays calendar collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Market Holidays calendar collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/calendar/run")
 def sync_upstox_calendar(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_market_holidays_service,
         current_user=current_user
     )
 
-    return {
-        "status": "started",
-        "message": "Market Holidays calendar collection started. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "Market Holidays calendar collection started. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/sync-ohlcv")
@@ -680,16 +691,16 @@ def sync_upstox_ohlcv_daily_legacy(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_ohlcv_daily_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "OHLCV collection started using selected options. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "OHLCV collection started using selected options. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/ohlcv/run")
@@ -697,16 +708,16 @@ def sync_upstox_ohlcv_daily(
     payload: dict | None = None,
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
-    start_detached_collection_job(
+    queue_position = start_detached_collection_job(
         sync_upstox_ohlcv_daily_service,
         current_user=current_user,
         config=payload or {}
     )
 
-    return {
-        "status": "started",
-        "message": "OHLCV collection started using selected options. Monitor will update while it runs."
-    }
+    return collection_job_response(
+        queue_position,
+        "OHLCV collection started using selected options. Monitor will update while it runs."
+    )
 
 
 @router.post("/upstox/cancel")
