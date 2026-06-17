@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Clock3,
   Edit3,
+  HardDrive,
   Play,
   Power,
   RefreshCcw,
@@ -99,6 +100,13 @@ const emptySummary = {
   active_job_current_records: null,
   active_job_records_at_start: null,
   active_job_records_added: null,
+  disk_space: {
+    total_bytes: null,
+    used_bytes: null,
+    free_bytes: null,
+    used_percent: null,
+    free_percent: null
+  },
   queued_jobs: {
     count: 0,
     jobs: []
@@ -686,6 +694,30 @@ function formatCompactNumber(value) {
   }
 
   return formatNumber(numericValue);
+}
+
+function formatBytes(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
+  }
+
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return "--";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let unitIndex = 0;
+  let nextValue = numericValue;
+
+  while (nextValue >= 1024 && unitIndex < units.length - 1) {
+    nextValue /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = nextValue >= 100 || unitIndex === 0 ? 0 : 1;
+  return `${nextValue.toFixed(precision)} ${units[unitIndex]}`;
 }
 
 function formatDuration(seconds) {
@@ -1470,14 +1502,36 @@ function DumpJobActions({
   );
 }
 
-function DataCollectionShell({ activeView, onViewChange, children }) {
+function DataCollectionShell({
+  activeView,
+  onViewChange,
+  diskSpace,
+  children
+}) {
+  const diskUsedText = formatBytes(diskSpace?.used_bytes);
+  const diskTotalText = formatBytes(diskSpace?.total_bytes);
+  const diskPercent =
+    diskSpace?.used_percent !== null && diskSpace?.used_percent !== undefined
+      ? `${Number(diskSpace.used_percent).toFixed(1)}%`
+      : "--";
+
   return (
     <div
       className={`${oaCardStyles.wrapper} flex h-[calc(100vh-24px)] min-h-0 flex-col overflow-hidden`}
     >
       <div className="shrink-0">
-        <div className={oaCardStyles.header}>
+        <div
+          className={`${oaCardStyles.header} flex min-h-[45px] items-center justify-between gap-3`}
+        >
           <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
+          <div className="flex min-w-0 items-center gap-2 rounded border border-oa-border bg-black px-2.5 py-1 font-mono text-[11px] text-oa-muted">
+            <HardDrive size={14} className="shrink-0 text-sky-300" />
+            <span className="shrink-0 uppercase tracking-[0.08em]">Disk</span>
+            <span className="min-w-0 truncate text-white">
+              {diskUsedText} / {diskTotalText}
+            </span>
+            <span className="shrink-0 text-oa-muted">({diskPercent})</span>
+          </div>
         </div>
 
         <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
@@ -6761,6 +6815,7 @@ function DataCollection() {
             <DataCollectionShell
               activeView={activeView}
               onViewChange={handleViewChange}
+              diskSpace={summary.disk_space}
             >
               {activeView === "monitor" ? (
                 <MonitorContent

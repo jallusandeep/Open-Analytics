@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import json
 import re
+import shutil
 import time
 from collections import deque
 from io import StringIO
@@ -2286,6 +2287,31 @@ def safe_active_job_started_count(conn, sync_type: Optional[str], started_at) ->
         return None
 
 
+def get_disk_space_summary() -> dict:
+    try:
+        usage = shutil.disk_usage(APP_ROOT)
+    except Exception:
+        return {
+            "path": str(APP_ROOT),
+            "total_bytes": None,
+            "used_bytes": None,
+            "free_bytes": None,
+            "used_percent": None,
+            "free_percent": None
+        }
+
+    used_bytes = usage.total - usage.free
+
+    return {
+        "path": str(APP_ROOT),
+        "total_bytes": usage.total,
+        "used_bytes": used_bytes,
+        "free_bytes": usage.free,
+        "used_percent": round((used_bytes / usage.total) * 100, 2) if usage.total else None,
+        "free_percent": round((usage.free / usage.total) * 100, 2) if usage.total else None
+    }
+
+
 def get_data_collection_summary_service():
     conn = get_connection()
 
@@ -2380,6 +2406,7 @@ def get_data_collection_summary_service():
 
         return {
             "connection_status": connection_status,
+            "disk_space": get_disk_space_summary(),
             "total_current_instruments": current_count,
             "total_expired_instruments": expired_count,
             "total_equity_instruments": equity_count,
