@@ -1520,12 +1520,10 @@ function DataCollectionShell({
       className={`${oaCardStyles.wrapper} flex h-[calc(100vh-24px)] min-h-0 flex-col overflow-hidden`}
     >
       <div className="shrink-0">
-        <div
-          className={`${oaCardStyles.header} flex min-h-[45px] items-center justify-between gap-3`}
-        >
+        <div className={`${oaCardStyles.header} flex items-center justify-between gap-3`}>
           <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
-          <div className="flex min-w-0 items-center gap-2 rounded border border-oa-border bg-black px-2.5 py-1 font-mono text-[11px] text-oa-muted">
-            <HardDrive size={14} className="shrink-0 text-sky-300" />
+          <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-none text-oa-muted">
+            <HardDrive size={13} className="shrink-0 text-sky-300" />
             <span className="shrink-0 uppercase tracking-[0.08em]">Disk</span>
             <span className="min-w-0 truncate text-white">
               {diskUsedText} / {diskTotalText}
