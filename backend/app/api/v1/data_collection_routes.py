@@ -32,7 +32,10 @@ from app.services.data_collection_scheduler_service import (
     toggle_data_collection_schedule_service,
     update_data_collection_schedule_service
 )
-from app.services.data_collection_queue_service import enqueue_data_collection_job
+from app.services.data_collection_queue_service import (
+    enqueue_data_collection_job,
+    get_data_collection_queue_summary
+)
 
 
 router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
@@ -69,9 +72,12 @@ def collection_job_response(queue_position: int, started_message: str):
 def get_upstox_data_collection_summary(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
+    data = get_data_collection_summary_service()
+    data["queued_jobs"] = get_data_collection_queue_summary()
+
     return {
         "status": "success",
-        "data": get_data_collection_summary_service()
+        "data": data
     }
 
 

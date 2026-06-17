@@ -69,6 +69,19 @@ def ensure_data_collection_queue_worker_started():
         _worker_thread.start()
 
 
+def get_data_collection_queue_summary() -> Dict[str, Any]:
+    with _job_queue.mutex:
+        jobs = [
+            item.get("job_name") or item["target"].__name__
+            for item in list(_job_queue.queue)
+        ]
+
+    return {
+        "count": len(jobs),
+        "jobs": jobs
+    }
+
+
 def enqueue_data_collection_job(
     target: Callable[..., Any],
     *,

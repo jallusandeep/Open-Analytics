@@ -98,7 +98,11 @@ const emptySummary = {
   active_job_started_at: null,
   active_job_current_records: null,
   active_job_records_at_start: null,
-  active_job_records_added: null
+  active_job_records_added: null,
+  queued_jobs: {
+    count: 0,
+    jobs: []
+  }
 };
 
 const emptyPreviewData = {
@@ -1157,9 +1161,44 @@ function getSyncTypeLabel(value) {
   return labels[value] || value || "--";
 }
 
+function getQueuedDumpJobId(jobName) {
+  const names = {
+    upstox_current_instruments: "current",
+    upstox_expired_instruments: "expired",
+    upstox_ohlcv_daily: "ohlcv",
+    upstox_market_holidays: "market_calendar",
+    upstox_equity_news: "equity_news",
+    upstox_ipo_calendar: "ipo_calendar",
+    ipo_gmp_scraper: "ipo_scraper",
+    upstox_company_fundamentals: "company_fundamentals",
+    sync_upstox_current_instruments_service: "current",
+    sync_upstox_expired_instruments_service: "expired",
+    sync_upstox_ohlcv_daily_service: "ohlcv",
+    sync_upstox_market_holidays_service: "market_calendar",
+    sync_upstox_equity_news_service: "equity_news",
+    sync_upstox_ipo_calendar_service: "ipo_calendar",
+    sync_ipo_gmp_scraper_service: "ipo_scraper",
+    sync_upstox_company_fundamentals_service: "company_fundamentals",
+    "scheduled:current_instruments": "current",
+    "scheduled:expired_instruments": "expired",
+    "scheduled:ohlcv_daily": "ohlcv",
+    "scheduled:market_holidays": "market_calendar",
+    "scheduled:equity_news": "equity_news",
+    "scheduled:ipo_calendar": "ipo_calendar",
+    "scheduled:ipo_scraper": "ipo_scraper",
+    "scheduled:company_fundamentals": "company_fundamentals"
+  };
+
+  return names[jobName] || null;
+}
+
 function getStatusClass(status) {
   if (status === "success" || status === "connected" || status === "active") {
     return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
+  }
+
+  if (status === "queued") {
+    return "border-amber-500/40 bg-amber-950/50 text-amber-200";
   }
 
   if (status === "running" || status === "cancel_requested") {
@@ -1179,6 +1218,7 @@ function getStatusClass(status) {
 
 function getStatusLabel(status) {
   if (status === "success") return "Success";
+  if (status === "queued") return "Queued";
   if (status === "running") return "Running";
   if (status === "cancel_requested") return "Cancelling";
   if (status === "cancelled") return "Cancelled";
@@ -3054,7 +3094,16 @@ function DataCollection() {
     currentUser?.role
   );
 
-  const hasActiveJob = Boolean(runningJob || summary.active_job);
+  const queuedJobIds = useMemo(() => {
+    const jobs = Array.isArray(summary.queued_jobs?.jobs)
+      ? summary.queued_jobs.jobs
+      : [];
+
+    return new Set(jobs.map(getQueuedDumpJobId).filter(Boolean));
+  }, [summary.queued_jobs]);
+
+  const hasQueuedJobs = queuedJobIds.size > 0;
+  const hasActiveJob = Boolean(runningJob || summary.active_job || hasQueuedJobs);
   const isCancelRequested =
     cancelRequested || summary.active_job_status === "cancel_requested";
 
@@ -3072,11 +3121,13 @@ function DataCollection() {
     isCancelRequested &&
     (runningJob === "current" ||
       summary.active_job === "upstox_current_instruments");
+  const isCurrentJobQueued = queuedJobIds.has("current");
 
   const expiredCancelRequested =
     isCancelRequested &&
     (runningJob === "expired" ||
       summary.active_job === "upstox_expired_instruments");
+  const isExpiredJobQueued = queuedJobIds.has("expired");
 
   const isOhlcvJobRunning =
     !isCancelRequested &&
@@ -3085,6 +3136,7 @@ function DataCollection() {
   const ohlcvCancelRequested =
     isCancelRequested &&
     (runningJob === "ohlcv" || summary.active_job === "upstox_ohlcv_daily");
+  const isOhlcvJobQueued = queuedJobIds.has("ohlcv");
 
   const isMarketCalendarJobRunning =
     !isCancelRequested &&
@@ -3095,6 +3147,7 @@ function DataCollection() {
     isCancelRequested &&
     (runningJob === "market_calendar" ||
       summary.active_job === "upstox_market_holidays");
+  const isMarketCalendarJobQueued = queuedJobIds.has("market_calendar");
 
 
   const isEquityNewsJobRunning =
@@ -3104,6 +3157,7 @@ function DataCollection() {
   const equityNewsCancelRequested =
     isCancelRequested &&
     (runningJob === "equity_news" || summary.active_job === "upstox_equity_news");
+  const isEquityNewsJobQueued = queuedJobIds.has("equity_news");
 
   const isIpoCalendarJobRunning =
     !isCancelRequested &&
@@ -3112,6 +3166,7 @@ function DataCollection() {
   const ipoCalendarCancelRequested =
     isCancelRequested &&
     (runningJob === "ipo_calendar" || summary.active_job === "upstox_ipo_calendar");
+  const isIpoCalendarJobQueued = queuedJobIds.has("ipo_calendar");
 
   const isIpoScraperJobRunning =
     !isCancelRequested &&
@@ -3120,6 +3175,7 @@ function DataCollection() {
   const ipoScraperCancelRequested =
     isCancelRequested &&
     (runningJob === "ipo_scraper" || summary.active_job === "ipo_gmp_scraper");
+  const isIpoScraperJobQueued = queuedJobIds.has("ipo_scraper");
 
   const isCompanyFundamentalsJobRunning =
     !isCancelRequested &&
@@ -3130,6 +3186,7 @@ function DataCollection() {
     isCancelRequested &&
     (runningJob === "company_fundamentals" ||
       summary.active_job === "upstox_company_fundamentals");
+  const isCompanyFundamentalsJobQueued = queuedJobIds.has("company_fundamentals");
 
   const shouldShowCancelButton = hasActiveJob && !isCancelRequested;
 
@@ -3290,7 +3347,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isCurrentJobRunning
             ? "running"
-            : currentLastRun?.status,
+            : isCurrentJobQueued
+              ? "queued"
+              : currentLastRun?.status,
         loading: isCurrentJobRunning,
         disabled: hasActiveJob && !isCurrentJobRunning,
         canCancel: isCurrentJobRunning && shouldShowCancelButton,
@@ -3310,7 +3369,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isExpiredJobRunning
             ? "running"
-            : expiredLastRun?.status,
+            : isExpiredJobQueued
+              ? "queued"
+              : expiredLastRun?.status,
         loading: isExpiredJobRunning,
         disabled: hasActiveJob && !isExpiredJobRunning,
         canCancel: isExpiredJobRunning && shouldShowCancelButton,
@@ -3330,7 +3391,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isOhlcvJobRunning
             ? "running"
-            : ohlcvLastRun?.status,
+            : isOhlcvJobQueued
+              ? "queued"
+              : ohlcvLastRun?.status,
         loading: isOhlcvJobRunning,
         disabled: hasActiveJob && !isOhlcvJobRunning,
         canCancel: isOhlcvJobRunning && shouldShowCancelButton,
@@ -3352,7 +3415,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isEquityNewsJobRunning
             ? "running"
-            : equityNewsLastRun?.status,
+            : isEquityNewsJobQueued
+              ? "queued"
+              : equityNewsLastRun?.status,
         loading: isEquityNewsJobRunning,
         disabled: hasActiveJob && !isEquityNewsJobRunning,
         canCancel: isEquityNewsJobRunning && shouldShowCancelButton,
@@ -3372,7 +3437,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isIpoCalendarJobRunning
             ? "running"
-            : ipoCalendarLastRun?.status,
+            : isIpoCalendarJobQueued
+              ? "queued"
+              : ipoCalendarLastRun?.status,
         loading: isIpoCalendarJobRunning,
         disabled: hasActiveJob && !isIpoCalendarJobRunning,
         canCancel: isIpoCalendarJobRunning && shouldShowCancelButton,
@@ -3395,7 +3462,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isIpoScraperJobRunning
             ? "running"
-            : ipoScraperLastRun?.status,
+            : isIpoScraperJobQueued
+              ? "queued"
+              : ipoScraperLastRun?.status,
         loading: isIpoScraperJobRunning,
         disabled: hasActiveJob && !isIpoScraperJobRunning,
         canCancel: isIpoScraperJobRunning && shouldShowCancelButton,
@@ -3415,7 +3484,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isCompanyFundamentalsJobRunning
             ? "running"
-            : companyFundamentalsLastRun?.status,
+            : isCompanyFundamentalsJobQueued
+              ? "queued"
+              : companyFundamentalsLastRun?.status,
         loading: isCompanyFundamentalsJobRunning,
         disabled: hasActiveJob && !isCompanyFundamentalsJobRunning,
         canCancel: isCompanyFundamentalsJobRunning && shouldShowCancelButton,
@@ -3435,7 +3506,9 @@ function DataCollection() {
           ? "cancel_requested"
           : isMarketCalendarJobRunning
             ? "running"
-            : marketCalendarLastRun?.status,
+            : isMarketCalendarJobQueued
+              ? "queued"
+              : marketCalendarLastRun?.status,
         loading: isMarketCalendarJobRunning,
         disabled: hasActiveJob && !isMarketCalendarJobRunning,
         canCancel: isMarketCalendarJobRunning && shouldShowCancelButton,
@@ -3462,6 +3535,14 @@ function DataCollection() {
     ipoCalendarLastRun,
     ipoScraperLastRun,
     companyFundamentalsLastRun,
+    isCurrentJobQueued,
+    isExpiredJobQueued,
+    isOhlcvJobQueued,
+    isMarketCalendarJobQueued,
+    isEquityNewsJobQueued,
+    isIpoCalendarJobQueued,
+    isIpoScraperJobQueued,
+    isCompanyFundamentalsJobQueued,
     ohlcvCancelRequested,
     marketCalendarCancelRequested,
     equityNewsCancelRequested,
@@ -4062,7 +4143,8 @@ function DataCollection() {
         setElapsedSeconds(0);
       }
 
-      if (!nextSummary.active_job) {
+      const activeJobId = getQueuedDumpJobId(nextSummary.active_job);
+      if (!nextSummary.active_job || (runningJob && runningJob !== activeJobId)) {
         setRunningJob(null);
         setCancelRequested(false);
       }
