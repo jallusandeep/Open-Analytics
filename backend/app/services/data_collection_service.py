@@ -191,6 +191,7 @@ OHLCV_DEFAULT_BATCH_SIZE = 25
 OHLCV_DEFAULT_REQUEST_DELAY_MS = 500
 OHLCV_DEFAULT_BATCH_DELAY_SECONDS = 2
 OHLCV_DEFAULT_RETRY_COUNT = 3
+OHLCV_REQUEST_TIMEOUT_SECONDS = 30
 OHLCV_CURRENT_HISTORY_START_DATE = date(2000, 1, 1)
 OHLCV_INTRADAY_HISTORY_START_DATE = date(2022, 1, 1)
 OHLCV_CURRENT_DAILY_MAX_DAYS = 3653
@@ -8433,10 +8434,8 @@ def fetch_ohlcv_instruments(conn, source: str, config: dict) -> List[dict]:
         WHERE instrument_key IS NOT NULL
           AND TRIM(instrument_key) <> ''
           AND source_type = 'bod_complete'
-          AND (
-              UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
-              OR UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
-          )
+          AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
+          AND UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
         """
 
         if config["single_instrument_key"]:
@@ -8597,7 +8596,7 @@ def build_ohlcv_url(source: str, mode: str, instrument_key: str, interval: dict,
     )
 
 
-def upstox_http_get_json(url: str, token: str, timeout: int = REQUEST_TIMEOUT_SECONDS) -> dict:
+def upstox_http_get_json(url: str, token: str, timeout: int = OHLCV_REQUEST_TIMEOUT_SECONDS) -> dict:
     request = urllib.request.Request(
         url,
         headers={
