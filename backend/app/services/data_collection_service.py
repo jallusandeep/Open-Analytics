@@ -376,6 +376,21 @@ def get_rate_limit_retry_sleep_seconds(error: HTTPException, fallback_seconds: f
     return min(fallback_seconds, UPSTOX_RATE_LIMIT_MAX_RETRY_SLEEP_SECONDS)
 
 
+def is_upstox_auth_token_error(error: HTTPException) -> bool:
+    error_text = str(getattr(error, "detail", "") or "").lower()
+
+    return (
+        error.status_code in (401, 403)
+        or "udapi100050" in error_text
+        or "invalid token" in error_text
+        or "token is invalid" in error_text
+        or "token expired" in error_text
+        or "expired token" in error_text
+        or "unauthorized" in error_text
+        or "unauthorised" in error_text
+    )
+
+
 def sleep_with_heartbeat(seconds: float, heartbeat_callback: Optional[Callable[[], None]] = None):
     remaining_seconds = max(0.0, float(seconds or 0))
 
@@ -4359,7 +4374,32 @@ def sync_upstox_company_fundamentals_service(
         normalized_config = normalize_company_fundamentals_config(
             config or get_default_company_fundamentals_options_payload()
         )
-        market_data_token = get_saved_upstox_market_data_token(conn)
+        token_candidates = []
+
+        try:
+            analytical_token = get_saved_upstox_analytical_token(conn)
+        except HTTPException:
+            analytical_token = ""
+
+        try:
+            access_token = get_optional_upstox_access_token(conn)
+        except Exception:
+            access_token = ""
+
+        if analytical_token:
+            token_candidates.append(("analytical token", analytical_token))
+
+        if access_token and access_token != analytical_token:
+            token_candidates.append(("access token", access_token))
+
+        if not token_candidates:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Upstox analytical token or access token is missing. "
+                    "Save token in Connections first."
+                )
+            )
 
         instruments = fetch_company_fundamental_instruments(conn, normalized_config)
 
@@ -4455,14 +4495,35 @@ def sync_upstox_company_fundamentals_service(
                         f"{endpoint} {statement_type or ''} {time_period or ''}"
                     )
 
-                    metrics["api_calls_attempted"] += 1
-                    response = fetch_company_fundamentals_with_retry(
-                        url=url,
-                        token=market_data_token,
-                        retry_count=normalized_config["retry_count"],
-                        rate_limiter=rate_limiter,
-                        heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
-                    )
+                    response = None
+                    last_token_error = None
+
+                    for token_index, (token_label, candidate_token) in enumerate(token_candidates):
+                        try:
+                            metrics["api_calls_attempted"] += 1
+                            response = fetch_company_fundamentals_with_retry(
+                                url=url,
+                                token=candidate_token,
+                                retry_count=normalized_config["retry_count"],
+                                rate_limiter=rate_limiter,
+                                heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
+                            )
+                            break
+                        except HTTPException as token_error:
+                            last_token_error = token_error
+
+                            if is_upstox_auth_token_error(token_error) and token_index + 1 < len(token_candidates):
+                                print(
+                                    "[Company Fundamentals] "
+                                    f"{token_label} failed with {token_error.status_code}; "
+                                    "retrying with fallback token."
+                                )
+                                continue
+
+                            raise
+
+                    if response is None and last_token_error:
+                        raise last_token_error
 
                     record = normalize_company_fundamentals_record(
                         response=response,
@@ -4504,6 +4565,9 @@ def sync_upstox_company_fundamentals_service(
                         conn.rollback()
                     except Exception:
                         pass
+
+                    if is_upstox_auth_token_error(error):
+                        raise
 
                     error_text = str(error.detail)
                     failed_items.append({
@@ -5972,6 +6036,9 @@ def sync_upstox_equity_news_service(
                         conn.rollback()
                     except Exception:
                         pass
+
+                    if is_upstox_auth_token_error(error):
+                        raise
 
                     error_text = str(error.detail)
                     failed_items.append({
