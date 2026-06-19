@@ -5135,14 +5135,25 @@ def upstox_news_ipo_http_get_json(url: str, token: str, purpose: str, timeout: i
             return json.loads(response_text or "{}")
     except urllib.error.HTTPError as error:
         error_text = error.read().decode("utf-8", errors="replace")
-        raise HTTPException(status_code=error.code, detail=error_text or str(error))
+        raise HTTPException(
+            status_code=error.code,
+            detail=error_text or str(error),
+            headers=dict(error.headers or {})
+        )
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Unable to call Upstox {purpose} API: {error}")
 
 
-def fetch_upstox_json_with_retry(url: str, token: str, retry_count: int, rate_limiter: UpstoxRollingRateLimiter, purpose: str) -> dict:
+def fetch_upstox_json_with_retry(
+    url: str,
+    token: str,
+    retry_count: int,
+    rate_limiter: UpstoxRollingRateLimiter,
+    purpose: str,
+    heartbeat_callback: Optional[Callable[[], None]] = None
+) -> dict:
     attempts = max(1, int(retry_count or 1))
     last_error = None
 
@@ -5158,7 +5169,15 @@ def fetch_upstox_json_with_retry(url: str, token: str, retry_count: int, rate_li
             if not should_retry or attempt >= attempts:
                 raise
 
-            time.sleep(min(30, 2 * attempt))
+            sleep_seconds = get_rate_limit_retry_sleep_seconds(
+                error,
+                fallback_seconds=2 * attempt
+            )
+            print(
+                f"Upstox {purpose} retry {attempt}/{attempts} "
+                f"after {sleep_seconds}s: {error.detail}"
+            )
+            sleep_with_heartbeat(sleep_seconds, heartbeat_callback)
 
     if last_error:
         raise last_error
@@ -5316,14 +5335,16 @@ def fetch_equity_news_with_retry(
     url: str,
     token: str,
     retry_count: int,
-    rate_limiter: UpstoxRollingRateLimiter
+    rate_limiter: UpstoxRollingRateLimiter,
+    heartbeat_callback: Optional[Callable[[], None]] = None
 ) -> dict:
     return fetch_upstox_json_with_retry(
         url=url,
         token=token,
         retry_count=retry_count,
         rate_limiter=rate_limiter,
-        purpose="Equity News"
+        purpose="Equity News",
+        heartbeat_callback=heartbeat_callback
     )
 
 
@@ -5790,7 +5811,8 @@ def sync_upstox_equity_news_service(
                         url=url,
                         token=token,
                         retry_count=retry_count,
-                        rate_limiter=rate_limiter
+                        rate_limiter=rate_limiter,
+                        heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
                     )
                     metrics["api_calls_attempted"] += 1
 
