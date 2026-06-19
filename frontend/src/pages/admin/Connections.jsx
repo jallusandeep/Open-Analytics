@@ -106,6 +106,54 @@ const connectionColumns = [
 
 const connectionGridTemplateColumns = "1.4fr 0.9fr 1.1fr 1.1fr 1.1fr 168px";
 
+const connectionStatusConfig = {
+  connected: {
+    label: "Connected",
+    className: "border-emerald-500/40 bg-emerald-950/50 text-emerald-200",
+    toastType: "success"
+  },
+  limited: {
+    label: "Limited",
+    className: "border-amber-500/40 bg-amber-950/40 text-amber-200",
+    toastType: "warning"
+  },
+  failed: {
+    label: "Failed",
+    className: "border-red-500/40 bg-red-950/50 text-red-200",
+    toastType: "error"
+  },
+  invalid: {
+    label: "Failed",
+    className: "border-red-500/40 bg-red-950/50 text-red-200",
+    toastType: "error"
+  },
+  error: {
+    label: "Failed",
+    className: "border-red-500/40 bg-red-950/50 text-red-200",
+    toastType: "error"
+  },
+  saved: {
+    label: "Saved",
+    className: "border-sky-500/40 bg-sky-950/50 text-sky-200",
+    toastType: "success"
+  },
+  success: {
+    label: "Connected",
+    className: "border-emerald-500/40 bg-emerald-950/50 text-emerald-200",
+    toastType: "success"
+  },
+  not_connected: {
+    label: "Not Connected",
+    className: "border-zinc-600 bg-zinc-900 text-zinc-200",
+    toastType: "success"
+  }
+};
+
+function normalizeConnectionStatus(status) {
+  const cleanStatus = String(status || "").trim().toLowerCase();
+  return connectionStatusConfig[cleanStatus] ? cleanStatus : "not_connected";
+}
+
 function normalizeCellValue(value) {
   if (value === null || value === undefined || value === "") {
     return "--";
@@ -143,59 +191,19 @@ function getConnectionStatus(connection) {
     return "not_connected";
   }
 
-  return connection.connection_status || "saved";
+  return normalizeConnectionStatus(connection.connection_status || "saved");
 }
 
 function getStatusLabel(status) {
-  if (status === "connected") {
-    return "Connected";
-  }
-
-  if (status === "limited") {
-    return "Limited";
-  }
-
-  if (status === "failed") {
-    return "Failed";
-  }
-
-  if (status === "saved") {
-    return "Saved";
-  }
-
-  return "Not Connected";
+  return connectionStatusConfig[normalizeConnectionStatus(status)].label;
 }
 
 function getStatusClass(status) {
-  if (status === "connected") {
-    return "border-emerald-500/40 bg-emerald-950/50 text-emerald-200";
-  }
-
-  if (status === "limited") {
-    return "border-amber-500/40 bg-amber-950/40 text-amber-200";
-  }
-
-  if (status === "failed") {
-    return "border-red-500/40 bg-red-950/50 text-red-200";
-  }
-
-  if (status === "saved") {
-    return "border-sky-500/40 bg-sky-950/50 text-sky-200";
-  }
-
-  return "border-zinc-600 bg-zinc-900 text-zinc-200";
+  return connectionStatusConfig[normalizeConnectionStatus(status)].className;
 }
 
 function getResponseToastType(status) {
-  if (status === "limited") {
-    return "warning";
-  }
-
-  if (status === "failed" || status === "invalid" || status === "error") {
-    return "error";
-  }
-
-  return "success";
+  return connectionStatusConfig[normalizeConnectionStatus(status)].toastType;
 }
 
 function formatDateTime(value) {
@@ -993,8 +1001,6 @@ function Connections() {
           analytical_token: analyticalToken || null,
           access_token: accessToken || null
         });
-
-        await loadConnections(false);
 
         try {
           response = await testUpstoxConnection();

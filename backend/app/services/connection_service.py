@@ -260,6 +260,11 @@ def refresh_connection_statuses_for_list(conn):
         current_status = safe_strip(upstox_row[8]) or "saved"
 
         next_status = current_status
+        has_full_oauth_connection = bool(
+            api_key
+            and api_secret
+            and access_token
+        )
         is_access_token_expired = bool(
             access_token
             and access_token_expires_at
@@ -269,6 +274,8 @@ def refresh_connection_statuses_for_list(conn):
         if current_status != "disconnected":
             if is_access_token_expired:
                 next_status = "limited" if analytical_token else "failed"
+            elif current_status == "connected" and has_full_oauth_connection:
+                next_status = "connected"
             else:
                 next_status = get_upstox_save_status(
                     api_key=api_key,
