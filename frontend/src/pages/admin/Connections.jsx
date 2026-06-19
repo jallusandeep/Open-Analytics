@@ -351,7 +351,8 @@ function ConnectionFormModal({
           <IconButton
             icon={X}
             label="Cancel"
-            variant="default"
+            variant="filterCancel"
+            size="filter"
             disabled={saving}
             onClick={onClose}
             tooltipSide="top"
@@ -360,7 +361,8 @@ function ConnectionFormModal({
           <IconButton
             icon={Check}
             label={mode === "edit" ? "Update connection" : "Save connection"}
-            variant="default"
+            variant="filterApply"
+            size="filter"
             disabled={saving || !isAdminControlAllowed || !hasProviderSelected}
             onClick={onSave}
             tooltipSide="top"

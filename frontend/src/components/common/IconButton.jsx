@@ -13,8 +13,12 @@ function IconButton({
   tooltipSide = "top",
   loading = false,
   form,
-  iconSize = 14
+  iconSize = 14,
+  size = "default"
 }) {
+  const selectedBaseClass =
+    size === "filter" ? oaIconButtonStyles.filterBase : oaIconButtonStyles.base;
+
   const selectedButtonClass =
     oaIconButtonStyles.variantButton[variant] ||
     oaIconButtonStyles.variantButton.default;
@@ -45,7 +49,7 @@ function IconButton({
         disabled={disabled || loading}
         form={form}
         aria-label={label}
-        className={`${oaIconButtonStyles.base} ${finalButtonClass}`}
+        className={`${selectedBaseClass} ${finalButtonClass}`}
       >
         {loading ? (
           <Spinner size="xs" color="light" />

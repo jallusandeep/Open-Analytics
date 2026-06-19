@@ -1216,7 +1216,8 @@ function Settings() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={updatingDetails}
               onClick={closeDetailsModal}
@@ -1227,10 +1228,10 @@ function Settings() {
               label="Update details"
               type="submit"
               form="edit-details-form"
-              variant="add"
+              variant="filterApply"
+              size="filter"
               tooltipSide="top"
               loading={updatingDetails}
-              iconSize={15}
             />
           </>
         }
@@ -1277,7 +1278,8 @@ function Settings() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={savingPassword}
               onClick={closePasswordModal}
@@ -1288,10 +1290,10 @@ function Settings() {
               label="Update password"
               type="submit"
               form="change-password-form"
-              variant="add"
+              variant="filterApply"
+              size="filter"
               tooltipSide="top"
               loading={savingPassword}
-              iconSize={15}
             />
           </>
         }

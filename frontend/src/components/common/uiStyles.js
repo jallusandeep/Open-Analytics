@@ -138,6 +138,8 @@ export const oaInputStyles = {
 export const oaIconButtonStyles = {
   base:
     "flex h-8 w-8 shrink-0 items-center justify-center rounded border outline-none transition disabled:cursor-not-allowed disabled:opacity-40",
+  filterBase:
+    "flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border outline-none transition disabled:cursor-not-allowed disabled:opacity-40",
 
   variantIcon: {
     default: "text-oa-muted",
@@ -146,7 +148,9 @@ export const oaIconButtonStyles = {
     refresh: "text-amber-300",
     search: "text-sky-300",
     filter: "text-indigo-300",
-    danger: "text-red-400"
+    danger: "text-red-400",
+    filterCancel: "text-red-400",
+    filterApply: "text-emerald-300"
   },
 
   variantButton: {
@@ -163,7 +167,11 @@ export const oaIconButtonStyles = {
     filter:
       "border-oa-border bg-black hover:border-indigo-500/60 hover:bg-indigo-950/40 focus:border-indigo-500",
     danger:
-      "border-red-500/40 bg-red-950/20 hover:border-red-500/70 hover:bg-red-950/50 focus:border-red-500"
+      "border-red-500/40 bg-red-950/20 hover:border-red-500/70 hover:bg-red-950/50 focus:border-red-500",
+    filterCancel:
+      "border-oa-border bg-black text-red-400 hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-300 focus:border-red-500",
+    filterApply:
+      "border-oa-border bg-black text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
   },
 
   variantActive: {
@@ -173,7 +181,9 @@ export const oaIconButtonStyles = {
     refresh: "border-amber-500 bg-amber-950/40",
     search: "border-sky-500 bg-sky-950/40",
     filter: "border-indigo-500 bg-indigo-950/40",
-    danger: "border-red-500 bg-red-950/50"
+    danger: "border-red-500 bg-red-950/50",
+    filterCancel: "border-red-500 bg-red-950/40",
+    filterApply: "border-emerald-500 bg-emerald-950/40"
   }
 };
 

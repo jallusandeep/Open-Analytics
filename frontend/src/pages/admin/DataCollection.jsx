@@ -1678,7 +1678,8 @@ function ScheduleManagerModal({
           <IconButton
             icon={X}
             label="Close"
-            variant="default"
+            variant="filterCancel"
+            size="filter"
             disabled={saving}
             onClick={onClose}
             tooltipSide="top"
@@ -2186,7 +2187,8 @@ function OhlcvOptionsModal({
           <IconButton
             icon={X}
             label="Close"
-            variant="default"
+            variant="filterCancel"
+            size="filter"
             disabled={saving}
             onClick={onClose}
             tooltipSide="top"
@@ -2195,7 +2197,8 @@ function OhlcvOptionsModal({
           <IconButton
             icon={Check}
             label="Save options"
-            variant="default"
+            variant="filterApply"
+            size="filter"
             disabled={!canSave}
             onClick={onSave}
             tooltipSide="top"

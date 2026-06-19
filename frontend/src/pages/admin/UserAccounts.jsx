@@ -1014,7 +1014,8 @@ function UserAccounts() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={saving}
               onClick={closeCreateModal}
@@ -1025,10 +1026,10 @@ function UserAccounts() {
               label="Save user"
               type="submit"
               form="create-user-form"
-              variant="add"
+              variant="filterApply"
+              size="filter"
               tooltipSide="top"
               loading={saving}
-              iconSize={15}
             />
           </>
         }
@@ -1108,7 +1109,8 @@ function UserAccounts() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={updating}
               onClick={closeEditModal}
@@ -1119,10 +1121,10 @@ function UserAccounts() {
               label="Update user"
               type="submit"
               form="edit-user-form"
-              variant="add"
+              variant="filterApply"
+              size="filter"
               tooltipSide="top"
               loading={updating}
-              iconSize={15}
             />
           </>
         }
@@ -1238,7 +1240,8 @@ function UserAccounts() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={deleting}
               onClick={closeDeleteModal}
@@ -1247,11 +1250,11 @@ function UserAccounts() {
             <IconButton
               icon={Check}
               label="Confirm delete"
-              variant="add"
+              variant="filterApply"
+              size="filter"
               tooltipSide="top"
               loading={deleting}
               onClick={confirmDeleteUser}
-              iconSize={15}
             />
           </>
         }
