@@ -190,14 +190,14 @@ function Login() {
   return (
     <div className="oa-app-font flex min-h-screen items-center justify-center bg-oa-dark px-3 text-oa-text">
       <div className="w-full max-w-sm rounded-xl border border-oa-border bg-oa-card p-5 shadow-2xl">
-        <div className="mb-6 flex items-center justify-center gap-1">
+        <div className="mb-6 flex h-7 items-center justify-center gap-1.5">
           <ChevronRight
-            size={24}
+            size={23}
             strokeWidth={2.6}
-            className="text-oa-text"
+            className="shrink-0 text-oa-text"
           />
 
-          <h1 className="text-xl font-semibold tracking-wide">
+          <h1 className="translate-y-[1px] text-xl font-semibold leading-none tracking-wide">
             Open Analytics
           </h1>
         </div>
