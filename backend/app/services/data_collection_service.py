@@ -3878,7 +3878,8 @@ def fetch_company_fundamentals_with_retry(
     url: str,
     token: str,
     retry_count: int,
-    rate_limiter: UpstoxRollingRateLimiter
+    rate_limiter: UpstoxRollingRateLimiter,
+    heartbeat_callback: Optional[Callable[[], None]] = None
 ) -> dict:
     attempts = max(1, int(retry_count or 1))
     last_error = None
@@ -3899,12 +3900,15 @@ def fetch_company_fundamentals_with_retry(
             if not should_retry or attempt >= attempts:
                 raise
 
-            sleep_seconds = min(30, 2 * attempt)
+            sleep_seconds = get_rate_limit_retry_sleep_seconds(
+                error,
+                fallback_seconds=2 * attempt
+            )
             print(
                 "Upstox Company Fundamentals retry "
                 f"{attempt}/{attempts} after {sleep_seconds}s: {error.detail}"
             )
-            time.sleep(sleep_seconds)
+            sleep_with_heartbeat(sleep_seconds, heartbeat_callback)
 
     if last_error:
         raise last_error
@@ -4400,7 +4404,8 @@ def sync_upstox_company_fundamentals_service(
                         url=url,
                         token=analytical_token,
                         retry_count=normalized_config["retry_count"],
-                        rate_limiter=rate_limiter
+                        rate_limiter=rate_limiter,
+                        heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
                     )
                     metrics["api_calls_attempted"] += 1
 
@@ -4432,7 +4437,10 @@ def sync_upstox_company_fundamentals_service(
                     metrics["records_inserted"] += inserted_count
 
                     if normalized_config["request_delay_ms"]:
-                        time.sleep(normalized_config["request_delay_ms"] / 1000)
+                        sleep_with_heartbeat(
+                            normalized_config["request_delay_ms"] / 1000,
+                            lambda: check_sync_cancelled(conn, sync_id)
+                        )
 
                 except SyncCancelled:
                     raise

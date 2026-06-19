@@ -4658,7 +4658,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "Equity News collection started.",
@@ -4853,7 +4853,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "Company Fundamentals collection started.",
