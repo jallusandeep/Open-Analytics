@@ -4359,7 +4359,7 @@ def sync_upstox_company_fundamentals_service(
         normalized_config = normalize_company_fundamentals_config(
             config or get_default_company_fundamentals_options_payload()
         )
-        analytical_token = get_saved_upstox_analytical_token(conn)
+        market_data_token = get_saved_upstox_market_data_token(conn)
 
         instruments = fetch_company_fundamental_instruments(conn, normalized_config)
 
@@ -4455,14 +4455,14 @@ def sync_upstox_company_fundamentals_service(
                         f"{endpoint} {statement_type or ''} {time_period or ''}"
                     )
 
+                    metrics["api_calls_attempted"] += 1
                     response = fetch_company_fundamentals_with_retry(
                         url=url,
-                        token=analytical_token,
+                        token=market_data_token,
                         retry_count=normalized_config["retry_count"],
                         rate_limiter=rate_limiter,
                         heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
                     )
-                    metrics["api_calls_attempted"] += 1
 
                     record = normalize_company_fundamentals_record(
                         response=response,
@@ -4566,7 +4566,16 @@ def sync_upstox_company_fundamentals_service(
                     )
                     continue
 
-        status_text = "success" if not failed_items else "partial_success"
+        all_api_calls_failed = (
+            bool(failed_items)
+            and metrics["api_calls_attempted"] > 0
+            and metrics["records_inserted"] == 0
+        )
+        status_text = (
+            "failed"
+            if all_api_calls_failed
+            else "success" if not failed_items else "partial_success"
+        )
         message = "Company Fundamentals synced successfully."
 
         if failed_items:
@@ -4575,9 +4584,15 @@ def sync_upstox_company_fundamentals_service(
             with open(failed_file, "w", encoding="utf-8") as output_file:
                 json.dump(failed_items, output_file, ensure_ascii=False, indent=2, default=str)
 
+            first_error = safe_strip(failed_items[0].get("error"))
             message = (
-                "Company Fundamentals synced with some failed items. "
-                f"Failed items saved to {failed_file}."
+                "Company Fundamentals sync failed. "
+                f"First error: {first_error}"
+                if all_api_calls_failed
+                else (
+                    "Company Fundamentals synced with some failed items. "
+                    f"Failed items saved to {failed_file}."
+                )
             )
 
         finish_sync_run(
@@ -5764,9 +5779,15 @@ def sync_upstox_equity_news_service(
         except Exception:
             access_token = ""
 
-        token = analytical_token or access_token
+        token_candidates = []
 
-        if not token:
+        if analytical_token:
+            token_candidates.append(("analytical token", analytical_token))
+
+        if access_token and access_token != analytical_token:
+            token_candidates.append(("access token", access_token))
+
+        if not token_candidates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
@@ -5870,14 +5891,35 @@ def sync_upstox_equity_news_service(
                         f"of {len(instruments)}, page={page_number}"
                     )
 
-                    response = fetch_equity_news_with_retry(
-                        url=url,
-                        token=token,
-                        retry_count=retry_count,
-                        rate_limiter=rate_limiter,
-                        heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
-                    )
-                    metrics["api_calls_attempted"] += 1
+                    response = None
+                    last_token_error = None
+
+                    for token_index, (token_label, candidate_token) in enumerate(token_candidates):
+                        try:
+                            metrics["api_calls_attempted"] += 1
+                            response = fetch_equity_news_with_retry(
+                                url=url,
+                                token=candidate_token,
+                                retry_count=retry_count,
+                                rate_limiter=rate_limiter,
+                                heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
+                            )
+                            break
+                        except HTTPException as token_error:
+                            last_token_error = token_error
+
+                            if token_error.status_code in (401, 403) and token_index + 1 < len(token_candidates):
+                                print(
+                                    "[Equity News] "
+                                    f"{token_label} failed with {token_error.status_code}; "
+                                    "retrying with fallback token."
+                                )
+                                continue
+
+                            raise
+
+                    if response is None and last_token_error:
+                        raise last_token_error
 
                     records = normalize_equity_news_records(
                         response=response,
@@ -5983,7 +6025,16 @@ def sync_upstox_equity_news_service(
                     )
                     break
 
-        status_text = "success" if not failed_items else "partial_success"
+        all_api_calls_failed = (
+            bool(failed_items)
+            and metrics["api_calls_attempted"] > 0
+            and metrics["records_inserted"] == 0
+        )
+        status_text = (
+            "failed"
+            if all_api_calls_failed
+            else "success" if not failed_items else "partial_success"
+        )
         message = "Equity News synced successfully."
 
         if failed_items:
@@ -5998,9 +6049,15 @@ def sync_upstox_equity_news_service(
                     default=str
                 )
 
+            first_error = safe_strip(failed_items[0].get("error"))
             message = (
-                "Equity News synced with some failed batches. "
-                f"Failed items saved to {failed_file}."
+                "Equity News sync failed. "
+                f"First error: {first_error}"
+                if all_api_calls_failed
+                else (
+                    "Equity News synced with some failed batches. "
+                    f"Failed items saved to {failed_file}."
+                )
             )
 
         finish_sync_run(
