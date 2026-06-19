@@ -979,14 +979,27 @@ function Connections() {
 
       if (formBroker.id === "upstox") {
         response = await saveUpstoxConnection({
-        api_key: apiKey || null,
-        api_secret: apiSecret || null,
-        redirect_url: redirectUrl || null,
-        analytical_token: analyticalToken || null,
-        access_token: accessToken || null
-      });
+          api_key: apiKey || null,
+          api_secret: apiSecret || null,
+          redirect_url: redirectUrl || null,
+          analytical_token: analyticalToken || null,
+          access_token: accessToken || null
+        });
 
-        response = await testUpstoxConnection();
+        await loadConnections(false);
+
+        try {
+          response = await testUpstoxConnection();
+        } catch (testError) {
+          showToast(
+            getErrorMessage(testError, "Upstox token saved, but verification failed."),
+            "error"
+          );
+          await loadConnections(false);
+          setFormMode("closed");
+          setFormData(emptyFormData);
+          return;
+        }
       }
 
       if (formBroker.id === "telegram") {

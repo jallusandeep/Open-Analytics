@@ -35,6 +35,7 @@ UPSTOX_TOKEN_URL = f"{UPSTOX_BASE_URL}/login/authorization/token"
 UPSTOX_ACCESS_TOKEN_REQUEST_BASE_URL = (
     "https://api.upstox.com/v3/login/auth/token/request"
 )
+UPSTOX_MARKET_HOLIDAYS_PATH = "/market/holidays"
 
 UPSTOX_EXPIRED_PERMISSION_TEST_PATH = "/expired-instruments/expiries"
 UPSTOX_EXPIRED_PERMISSION_TEST_KEY = "NSE_INDEX|Nifty 50"
@@ -106,12 +107,8 @@ def get_upstox_save_status(
     analytical_token: str,
     access_token: str
 ):
-    has_api_credentials = bool(api_key and api_secret)
     has_analytical_token = bool(analytical_token)
     has_access_token = bool(access_token)
-
-    if has_api_credentials and has_access_token:
-        return "connected"
 
     if has_analytical_token or has_access_token:
         return "limited"
@@ -1617,10 +1614,24 @@ def get_upstox_analytical_token_test_result(token: str):
             "message": "not saved"
         }
 
-    return {
-        "state": "connected",
-        "message": "connected"
-    }
+    try:
+        upstox_api_get(token, UPSTOX_MARKET_HOLIDAYS_PATH)
+
+        return {
+            "state": "limited",
+            "message": "verified for read-only market data"
+        }
+    except HTTPException as error:
+        detail = error.detail
+        message = detail
+
+        if isinstance(detail, dict):
+            message = detail.get("message") or detail.get("raw") or str(detail)
+
+        return {
+            "state": "failed",
+            "message": safe_strip(str(message)) or "verification failed"
+        }
 
 
 def is_upstox_token_usable(test_result: dict) -> bool:
