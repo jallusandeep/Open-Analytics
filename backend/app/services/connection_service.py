@@ -1386,13 +1386,7 @@ def exchange_upstox_auth_code_service(request, current_user):
             saved_at
         ).strftime("%Y-%m-%d %H:%M:%S")
 
-        next_status = get_upstox_save_status(
-            api_key=api_key,
-            api_secret=api_secret,
-            redirect_url=redirect_url,
-            analytical_token=analytical_token,
-            access_token=access_token
-        )
+        next_status = "connected"
 
         conn.execute("""
             UPDATE external_connections
@@ -1420,7 +1414,7 @@ def exchange_upstox_auth_code_service(request, current_user):
         conn.commit()
 
         return {
-            "status": "success",
+            "status": "connected",
             "message": "Upstox access token generated and saved successfully."
         }
 
