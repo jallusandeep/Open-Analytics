@@ -1,4 +1,3 @@
-import queue
 import threading
 import time
 import traceback
@@ -9,8 +8,12 @@ from app.services.data_collection_service import mark_stale_sync_runs
 
 
 DATA_COLLECTION_JOB_QUEUE_WAIT_SECONDS = 5
+DATA_COLLECTION_MANUAL_PRIORITY = 0
+DATA_COLLECTION_SCHEDULED_PRIORITY = 10
 
-_job_queue = queue.Queue()
+_job_queue = []
+_job_sequence = 0
+_queue_condition = threading.Condition()
 _worker_lock = threading.Lock()
 _worker_thread: Optional[threading.Thread] = None
 
@@ -40,10 +43,9 @@ def wait_for_data_collection_slot():
 
 def data_collection_queue_worker():
     while True:
-        item = _job_queue.get()
+        item = get_next_data_collection_job()
 
         try:
-            wait_for_data_collection_slot()
             item["target"](**item["kwargs"])
         except Exception as error:
             print(
@@ -51,8 +53,28 @@ def data_collection_queue_worker():
                 f"{item.get('job_name') or item['target'].__name__} - {error}"
             )
             traceback.print_exc()
-        finally:
-            _job_queue.task_done()
+
+
+def get_next_data_collection_job() -> Dict[str, Any]:
+    while True:
+        with _queue_condition:
+            while not _job_queue:
+                _queue_condition.wait(timeout=DATA_COLLECTION_JOB_QUEUE_WAIT_SECONDS)
+
+        wait_for_data_collection_slot()
+
+        with _queue_condition:
+            if not _job_queue:
+                continue
+
+            next_index = min(
+                range(len(_job_queue)),
+                key=lambda index: (
+                    _job_queue[index]["priority"],
+                    _job_queue[index]["sequence"]
+                )
+            )
+            return _job_queue.pop(next_index)
 
 
 def ensure_data_collection_queue_worker_started():
@@ -70,10 +92,13 @@ def ensure_data_collection_queue_worker_started():
 
 
 def get_data_collection_queue_summary() -> Dict[str, Any]:
-    with _job_queue.mutex:
+    with _queue_condition:
         jobs = [
             item.get("job_name") or item["target"].__name__
-            for item in list(_job_queue.queue)
+            for item in sorted(
+                _job_queue,
+                key=lambda item: (item["priority"], item["sequence"])
+            )
         ]
 
     return {
@@ -86,17 +111,31 @@ def enqueue_data_collection_job(
     target: Callable[..., Any],
     *,
     job_name: Optional[str] = None,
-    kwargs: Optional[Dict[str, Any]] = None
+    kwargs: Optional[Dict[str, Any]] = None,
+    priority: int = DATA_COLLECTION_MANUAL_PRIORITY
 ) -> int:
+    global _job_sequence
+
     ensure_data_collection_queue_worker_started()
 
     active_job_offset = 1 if has_active_data_collection_job() else 0
-    queue_size_before = _job_queue.qsize()
+    normalized_priority = int(priority)
 
-    _job_queue.put({
-        "target": target,
-        "job_name": job_name or target.__name__,
-        "kwargs": kwargs or {}
-    })
+    with _queue_condition:
+        queue_position = (
+            active_job_offset
+            + sum(1 for item in _job_queue if item["priority"] <= normalized_priority)
+            + 1
+        )
 
-    return active_job_offset + queue_size_before + 1
+        _job_queue.append({
+            "target": target,
+            "job_name": job_name or target.__name__,
+            "kwargs": kwargs or {},
+            "priority": normalized_priority,
+            "sequence": _job_sequence
+        })
+        _job_sequence += 1
+        _queue_condition.notify()
+
+    return queue_position

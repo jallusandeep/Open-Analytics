@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import time
+import email.utils
 from collections import deque
 from io import StringIO
 import uuid
@@ -13,7 +14,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import HTTPException, status
 
@@ -154,10 +155,12 @@ UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY = False
 
 
 REQUEST_TIMEOUT_SECONDS = 180
-UPSTOX_STANDARD_MAX_REQUESTS_PER_SECOND = 45
-UPSTOX_STANDARD_MAX_REQUESTS_PER_MINUTE = 450
-UPSTOX_STANDARD_MAX_REQUESTS_PER_30_MINUTES = 1800
+UPSTOX_STANDARD_MAX_REQUESTS_PER_SECOND = 50
+UPSTOX_STANDARD_MAX_REQUESTS_PER_MINUTE = 500
+UPSTOX_STANDARD_MAX_REQUESTS_PER_30_MINUTES = 2000
 UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS = 0.05
+UPSTOX_RATE_LIMIT_DEFAULT_429_SLEEP_SECONDS = 1800
+UPSTOX_RATE_LIMIT_MAX_RETRY_SLEEP_SECONDS = 1800
 STALE_RUNNING_RUN_HOURS = 2
 STALE_RUNNING_HEARTBEAT_MINUTES = 15
 SYNC_RUN_HEARTBEAT_SECONDS = 30
@@ -294,6 +297,98 @@ class UpstoxRollingRateLimiter:
 
             print(f"Upstox API rate limit guard sleeping {round(sleep_seconds, 2)} seconds.")
             time.sleep(sleep_seconds)
+
+
+def get_http_exception_header(error: HTTPException, header_name: str) -> Optional[str]:
+    headers = getattr(error, "headers", None) or {}
+    clean_header_name = header_name.lower()
+
+    for key, value in headers.items():
+        if str(key).lower() == clean_header_name:
+            return str(value)
+
+    return None
+
+
+def parse_retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+
+    clean_value = str(value).strip()
+
+    try:
+        return max(0.0, float(clean_value))
+    except ValueError:
+        pass
+
+    try:
+        retry_at = email.utils.parsedate_to_datetime(clean_value)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
+        return max(0.0, (retry_at - datetime.now(retry_at.tzinfo)).total_seconds())
+    except Exception:
+        return None
+
+
+def parse_rate_limit_reset_seconds(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+
+    clean_value = str(value).strip()
+
+    try:
+        numeric_value = float(clean_value)
+    except ValueError:
+        return parse_retry_after_seconds(clean_value)
+
+    now_epoch = time.time()
+
+    if numeric_value > 10_000_000_000:
+        numeric_value = numeric_value / 1000
+
+    if numeric_value > now_epoch:
+        return max(0.0, numeric_value - now_epoch)
+
+    return max(0.0, numeric_value)
+
+
+def get_rate_limit_retry_sleep_seconds(error: HTTPException, fallback_seconds: float) -> float:
+    header_values = [
+        parse_retry_after_seconds(get_http_exception_header(error, "Retry-After")),
+        parse_rate_limit_reset_seconds(get_http_exception_header(error, "X-RateLimit-Reset")),
+        parse_rate_limit_reset_seconds(get_http_exception_header(error, "RateLimit-Reset"))
+    ]
+    valid_values = [value for value in header_values if value is not None]
+
+    if valid_values:
+        return min(
+            max(valid_values) + UPSTOX_RATE_LIMIT_SAFETY_SLEEP_SECONDS,
+            UPSTOX_RATE_LIMIT_MAX_RETRY_SLEEP_SECONDS
+        )
+
+    if error.status_code == 429:
+        return min(
+            UPSTOX_RATE_LIMIT_DEFAULT_429_SLEEP_SECONDS,
+            UPSTOX_RATE_LIMIT_MAX_RETRY_SLEEP_SECONDS
+        )
+
+    return min(fallback_seconds, UPSTOX_RATE_LIMIT_MAX_RETRY_SLEEP_SECONDS)
+
+
+def sleep_with_heartbeat(seconds: float, heartbeat_callback: Optional[Callable[[], None]] = None):
+    remaining_seconds = max(0.0, float(seconds or 0))
+
+    while remaining_seconds > 0:
+        if heartbeat_callback:
+            heartbeat_callback()
+
+        sleep_seconds = min(30, remaining_seconds)
+        time.sleep(sleep_seconds)
+        remaining_seconds -= sleep_seconds
+
+    if heartbeat_callback:
+        heartbeat_callback()
 
 
 class SyncCancelled(Exception):
@@ -2564,7 +2659,8 @@ def upstox_market_holidays_http_get_json(
         error_text = error.read().decode("utf-8", errors="replace")
         raise HTTPException(
             status_code=error.code,
-            detail=error_text or str(error)
+            detail=error_text or str(error),
+            headers=dict(error.headers or {})
         )
     except HTTPException:
         raise
@@ -3766,7 +3862,8 @@ def upstox_company_fundamentals_http_get_json(
         error_text = error.read().decode("utf-8", errors="replace")
         raise HTTPException(
             status_code=error.code,
-            detail=error_text or str(error)
+            detail=error_text or str(error),
+            headers=dict(error.headers or {})
         )
     except HTTPException:
         raise
@@ -8676,7 +8773,8 @@ def upstox_http_get_json(url: str, token: str, timeout: int = OHLCV_REQUEST_TIME
         error_text = error.read().decode("utf-8", errors="replace")
         raise HTTPException(
             status_code=error.code,
-            detail=error_text or str(error)
+            detail=error_text or str(error),
+            headers=dict(error.headers or {})
         )
     except HTTPException:
         raise
@@ -8692,7 +8790,8 @@ def fetch_ohlcv_candles_with_retry(
     token: str,
     retry_count: int,
     retry_failed: bool,
-    rate_limiter: UpstoxRollingRateLimiter
+    rate_limiter: UpstoxRollingRateLimiter,
+    heartbeat_callback: Optional[Callable[[], None]] = None
 ) -> dict:
     attempts = retry_count if retry_failed else 1
     last_error = None
@@ -8713,9 +8812,12 @@ def fetch_ohlcv_candles_with_retry(
             if not retry_failed or not should_retry or attempt >= attempts:
                 raise
 
-            sleep_seconds = min(30, 2 * attempt)
+            sleep_seconds = get_rate_limit_retry_sleep_seconds(
+                error,
+                fallback_seconds=2 * attempt
+            )
             print(f"Upstox OHLCV retry {attempt}/{attempts} after {sleep_seconds}s: {error.detail}")
-            time.sleep(sleep_seconds)
+            sleep_with_heartbeat(sleep_seconds, heartbeat_callback)
 
     if last_error:
         raise last_error
@@ -9385,7 +9487,8 @@ def sync_upstox_ohlcv_daily_service(
                                     token=token,
                                     retry_count=normalized_config["retry_count"],
                                     retry_failed=normalized_config["retry_failed"],
-                                    rate_limiter=rate_limiter
+                                    rate_limiter=rate_limiter,
+                                    heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
                                 )
                                 metrics["api_calls_attempted"] += 1
 
