@@ -231,7 +231,7 @@ class UpstoxRollingRateLimiter:
         self.max_per_30_minutes = max(1, int(max_per_30_minutes))
         self.request_times = deque()
 
-    def wait_for_slot(self):
+    def wait_for_slot(self, heartbeat_callback: Optional[Callable[[], None]] = None):
         while True:
             now = time.monotonic()
 
@@ -296,7 +296,7 @@ class UpstoxRollingRateLimiter:
                     )
 
             print(f"Upstox API rate limit guard sleeping {round(sleep_seconds, 2)} seconds.")
-            time.sleep(sleep_seconds)
+            sleep_with_heartbeat(sleep_seconds, heartbeat_callback)
 
 
 def get_http_exception_header(error: HTTPException, header_name: str) -> Optional[str]:
@@ -1619,7 +1619,8 @@ def download_expired_instruments_with_sdk(
     conn,
     sync_id: str,
     access_token: str,
-    config: Optional[dict] = None
+    config: Optional[dict] = None,
+    heartbeat_callback: Optional[Callable[[], None]] = None
 ) -> dict:
     config = normalize_sync_expired_config(config)
 
@@ -1715,7 +1716,7 @@ def download_expired_instruments_with_sdk(
             )
 
             try:
-                rate_limiter.wait_for_slot()
+                rate_limiter.wait_for_slot(heartbeat_callback)
                 expiries_response = expired_api.get_expiries(underlying_key)
                 expiries = normalize_expiry_list(expiries_response)
             except Exception as error:
@@ -1781,7 +1782,7 @@ def download_expired_instruments_with_sdk(
                         )
                     else:
                         try:
-                            rate_limiter.wait_for_slot()
+                            rate_limiter.wait_for_slot(heartbeat_callback)
                             options_response = expired_api.get_expired_option_contracts(
                                 underlying_key,
                                 expiry_date
@@ -1833,7 +1834,7 @@ def download_expired_instruments_with_sdk(
                             )
 
                     if request_pause_seconds:
-                        time.sleep(request_pause_seconds)
+                        sleep_with_heartbeat(request_pause_seconds, heartbeat_callback)
 
                 check_sync_cancelled(conn, sync_id)
 
@@ -1852,7 +1853,7 @@ def download_expired_instruments_with_sdk(
                         )
                     else:
                         try:
-                            rate_limiter.wait_for_slot()
+                            rate_limiter.wait_for_slot(heartbeat_callback)
                             futures_response = expired_api.get_expired_future_contracts(
                                 underlying_key,
                                 expiry_date
@@ -1904,7 +1905,7 @@ def download_expired_instruments_with_sdk(
                             )
 
                     if request_pause_seconds:
-                        time.sleep(request_pause_seconds)
+                        sleep_with_heartbeat(request_pause_seconds, heartbeat_callback)
 
             if not max_expiries:
                 underlying_statuses.append({
@@ -2671,6 +2672,51 @@ def upstox_market_holidays_http_get_json(
         )
 
 
+def fetch_market_holidays_with_retry(
+    url: str,
+    token: str,
+    retry_count: int,
+    rate_limiter: UpstoxRollingRateLimiter,
+    heartbeat_callback: Optional[Callable[[], None]] = None
+) -> dict:
+    attempts = max(1, int(retry_count or 1))
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            rate_limiter.wait_for_slot(heartbeat_callback)
+            return upstox_market_holidays_http_get_json(url=url, token=token)
+        except HTTPException as error:
+            last_error = error
+            error_text = str(error.detail).lower()
+            should_retry = (
+                error.status_code in (408, 429, 500, 502, 503, 504)
+                or "timeout" in error_text
+                or "rate" in error_text
+            )
+
+            if not should_retry or attempt >= attempts:
+                raise
+
+            sleep_seconds = get_rate_limit_retry_sleep_seconds(
+                error,
+                fallback_seconds=2 * attempt
+            )
+            print(
+                "Upstox Market Holidays retry "
+                f"{attempt}/{attempts} after {sleep_seconds}s: {error.detail}"
+            )
+            sleep_with_heartbeat(sleep_seconds, heartbeat_callback)
+
+    if last_error:
+        raise last_error
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Unable to call Upstox Market Holidays API."
+    )
+
+
 def extract_market_holiday_rows(response: dict) -> List[dict]:
     if not isinstance(response, dict):
         return []
@@ -2801,16 +2847,25 @@ def sync_upstox_market_holidays_service(
 
         check_sync_cancelled(conn, sync_id)
 
+        rate_limiter = UpstoxRollingRateLimiter()
+        heartbeat_callback = lambda: check_sync_cancelled(conn, sync_id)
+
         try:
-            response = upstox_market_holidays_http_get_json(
+            response = fetch_market_holidays_with_retry(
                 url=UPSTOX_MARKET_HOLIDAYS_URL,
-                token=access_token
+                token=access_token,
+                retry_count=UPSTOX_NEWS_DEFAULT_RETRY_COUNT,
+                rate_limiter=rate_limiter,
+                heartbeat_callback=heartbeat_callback
             )
         except HTTPException as error:
             if access_token and error.status_code in (400, 401, 403):
-                response = upstox_market_holidays_http_get_json(
+                response = fetch_market_holidays_with_retry(
                     url=UPSTOX_MARKET_HOLIDAYS_URL,
-                    token=""
+                    token="",
+                    retry_count=UPSTOX_NEWS_DEFAULT_RETRY_COUNT,
+                    rate_limiter=rate_limiter,
+                    heartbeat_callback=heartbeat_callback
                 )
             else:
                 raise
@@ -3886,7 +3941,7 @@ def fetch_company_fundamentals_with_retry(
 
     for attempt in range(1, attempts + 1):
         try:
-            rate_limiter.wait_for_slot()
+            rate_limiter.wait_for_slot(heartbeat_callback)
             return upstox_company_fundamentals_http_get_json(url=url, token=token)
         except HTTPException as error:
             last_error = error
@@ -5167,7 +5222,7 @@ def fetch_upstox_json_with_retry(
 
     for attempt in range(1, attempts + 1):
         try:
-            rate_limiter.wait_for_slot()
+            rate_limiter.wait_for_slot(heartbeat_callback)
             return upstox_news_ipo_http_get_json(url=url, token=token, purpose=purpose)
         except HTTPException as error:
             last_error = error
@@ -6375,7 +6430,8 @@ def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] 
                             token=token,
                             retry_count=normalized_config["retry_count"],
                             rate_limiter=rate_limiter,
-                            purpose="IPO"
+                            purpose="IPO",
+                            heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
                         )
                         metrics["api_calls_attempted"] += 1
                         page_count += 1
@@ -6405,7 +6461,8 @@ def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] 
                                     token=token,
                                     retry_count=normalized_config["retry_count"],
                                     rate_limiter=rate_limiter,
-                                    purpose="IPO Detail"
+                                    purpose="IPO Detail",
+                                    heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
                                 )
                                 metrics["api_calls_attempted"] += 1
 
@@ -7628,7 +7685,8 @@ def sync_upstox_expired_instruments_service(
             conn=conn,
             sync_id=sync_id,
             access_token=access_token,
-            config=config
+            config=config,
+            heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
         )
 
         was_cancelled = bool(expired_download.get("cancelled"))
@@ -8828,7 +8886,7 @@ def fetch_ohlcv_candles_with_retry(
 
     for attempt in range(1, attempts + 1):
         try:
-            rate_limiter.wait_for_slot()
+            rate_limiter.wait_for_slot(heartbeat_callback)
             return upstox_http_get_json(url=url, token=token)
         except HTTPException as error:
             last_error = error
@@ -9387,7 +9445,10 @@ def sync_upstox_ohlcv_daily_service(
                             f"after {instrument_index - 1} instruments "
                             f"for {normalized_config['batch_delay_seconds']}s."
                         )
-                        time.sleep(normalized_config["batch_delay_seconds"])
+                        sleep_with_heartbeat(
+                            normalized_config["batch_delay_seconds"],
+                            lambda: check_sync_cancelled(conn, sync_id)
+                        )
                         check_sync_cancelled(conn, sync_id)
 
                 instrument_key = safe_strip(instrument.get("instrument_key"))
@@ -9554,7 +9615,10 @@ def sync_upstox_ohlcv_daily_service(
                                 update_ohlcv_metrics_progress(conn, sync_id, metrics)
 
                                 if normalized_config["request_delay_ms"]:
-                                    time.sleep(normalized_config["request_delay_ms"] / 1000)
+                                    sleep_with_heartbeat(
+                                        normalized_config["request_delay_ms"] / 1000,
+                                        lambda: check_sync_cancelled(conn, sync_id)
+                                    )
                                     check_sync_cancelled(conn, sync_id)
 
                             except SyncCancelled:

@@ -4287,7 +4287,7 @@ function DataCollection() {
         signal: activeSyncControllerRef.current.signal
       });
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "Current Instruments collection started.",
@@ -4346,7 +4346,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "Expired Instruments collection started.",
@@ -4601,7 +4601,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "OHLCV collection started.",
@@ -4723,7 +4723,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "IPO Calendar collection started.",
@@ -4788,7 +4788,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "IPO Scrapper collection started.",
@@ -4921,7 +4921,7 @@ function DataCollection() {
         }
       );
 
-      if (response.data?.status === "started") {
+      if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
         showToast(
           response.data.message || "Market Calendar collection started.",
