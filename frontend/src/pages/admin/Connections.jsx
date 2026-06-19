@@ -186,6 +186,18 @@ function getStatusClass(status) {
   return "border-zinc-600 bg-zinc-900 text-zinc-200";
 }
 
+function getResponseToastType(status) {
+  if (status === "limited") {
+    return "warning";
+  }
+
+  if (status === "failed" || status === "invalid" || status === "error") {
+    return "error";
+  }
+
+  return "success";
+}
+
 function formatDateTime(value) {
   if (!value) {
     return "--";
@@ -614,16 +626,12 @@ function Connections() {
   }, [connections]);
 
   const rows = useMemo(() => {
-    return connections
-      .map((connection) => {
-        const broker = brokers.find((item) => item.id === connection.provider);
-
-        if (!broker) {
-          return null;
-        }
+    return brokers
+      .map((broker) => {
+        const connection = connectionsByProvider[broker.id] || null;
 
         return {
-          id: connection.provider,
+          id: broker.id,
           broker,
           connection,
           provider: broker.name,
@@ -636,7 +644,7 @@ function Connections() {
         };
       })
       .filter(Boolean);
-  }, [connections, currentUser]);
+  }, [connectionsByProvider, currentUser]);
 
   const headerValues = useMemo(() => {
     return connectionColumns.reduce((result, column) => {
@@ -1013,7 +1021,7 @@ function Connections() {
       showToast(
         response?.data?.message ||
           `${formBroker.name} connection saved successfully.`,
-        response?.data?.status === "limited" ? "warning" : "success"
+        getResponseToastType(response?.data?.status)
       );
 
       setFormMode("closed");
@@ -1093,7 +1101,7 @@ function Connections() {
       showToast(
         response?.data?.message ||
           `${broker.name} connection tested successfully.`,
-        response?.data?.status === "limited" ? "warning" : "success"
+        getResponseToastType(response?.data?.status)
       );
       await loadConnections(false);
     } catch (error) {

@@ -103,14 +103,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DOCKER_API_VERSION=1.44
-      # Enable Slack notifications
-      - WATCHTOWER_NOTIFICATIONS=slack
-      # Paste your Slack webhook URL here
-      - WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL=${SLACK_WEBHOOK_URL}
-      # Optional: Set the notification level (info, verbose, debug)
-      - WATCHTOWER_NOTIFICATIONS_LEVEL=info
-      # Optional: Add an identifier to your notifications (e.g., the server name)
-      - WATCHTOWER_NOTIFICATION_SLACK_IDENTIFIER=Rubik
       # Optional: Poll for updates every 30 minutes (1800 seconds)
       - WATCHTOWER_POLL_INTERVAL=600
       # Optional: Remove old images after updating

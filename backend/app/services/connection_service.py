@@ -22,6 +22,7 @@ from app.telegram_alerts_msg.telegram_sender import (
     get_telegram_updates,
     get_user_telegram_connection_raw,
     send_telegram_message,
+    clear_telegram_webhook,
     validate_telegram_bot_token
 )
 
@@ -1718,7 +1719,7 @@ def test_upstox_connection_service(current_user):
 
         if test_status == "connected":
             return {
-                "status": "success",
+                "status": "connected",
                 "message": f"{message}. Upstox connection verified successfully."
             }
 
@@ -2042,6 +2043,7 @@ def save_telegram_connection_service(request, current_user):
         )
 
     bot_data = validate_telegram_bot_token(bot_token)
+    clear_telegram_webhook(bot_token)
     bot_username = safe_strip(bot_data.get("username"))
     bot_label = bot_username or bot_data.get("first_name") or "Telegram bot"
 
@@ -2114,7 +2116,10 @@ def save_telegram_connection_service(request, current_user):
 
         return {
             "status": "success",
-            "message": f"Telegram bot verified and saved successfully for {bot_label}."
+            "message": (
+                f"Telegram bot verified and saved successfully for {bot_label}. "
+                "Users must link Telegram in their profile before notifications can be delivered."
+            )
         }
 
     except HTTPException:
@@ -2144,10 +2149,14 @@ def test_telegram_connection_service(current_user):
 
     try:
         bot_info = get_telegram_bot_info(conn)
+        clear_telegram_webhook(bot_info["bot_token"])
 
         return {
-            "status": "success",
-            "message": f"Telegram bot token verified successfully for @{bot_info['bot_username']}."
+            "status": "connected",
+            "message": (
+                f"Telegram bot token verified successfully for @{bot_info['bot_username']}. "
+                "This verifies the global bot only; each user must link Telegram to receive notifications."
+            )
         }
 
     finally:
