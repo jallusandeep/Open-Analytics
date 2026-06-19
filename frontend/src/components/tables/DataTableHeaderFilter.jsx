@@ -5,9 +5,10 @@ import { Filter } from "lucide-react";
 import { oaHeaderFilterStyles } from "../common/uiStyles";
 import TableFilterDropdown from "./TableFilterDropdown";
 
-const FILTER_DROPDOWN_WIDTH = 270;
+const FILTER_DROPDOWN_WIDTH = 310;
 const FILTER_DROPDOWN_GAP = 6;
 const FILTER_DROPDOWN_SCREEN_GAP = 12;
+const FILTER_DROPDOWN_FLYOUT_WIDTH = 200;
 
 function DataTableHeaderFilter({
   column,
@@ -31,7 +32,8 @@ function DataTableHeaderFilter({
 
   const [position, setPosition] = useState({
     top: 0,
-    left: 0
+    left: 0,
+    flyoutAlign: align
   });
 
   function calculatePosition() {
@@ -56,9 +58,14 @@ function DataTableHeaderFilter({
       left = Math.max(minLeft, maxLeft);
     }
 
+    const shouldOpenFlyoutsLeft =
+      left + FILTER_DROPDOWN_WIDTH + FILTER_DROPDOWN_FLYOUT_WIDTH >
+      window.innerWidth - FILTER_DROPDOWN_SCREEN_GAP;
+
     setPosition({
       top: rect.bottom + FILTER_DROPDOWN_GAP,
-      left
+      left,
+      flyoutAlign: shouldOpenFlyoutsLeft ? "right" : "left"
     });
   }
 
@@ -122,7 +129,8 @@ function DataTableHeaderFilter({
             style={{
               top: `${position.top}px`,
               left: `${position.left}px`,
-              width: `${FILTER_DROPDOWN_WIDTH}px`
+              width: `${FILTER_DROPDOWN_WIDTH}px`,
+              maxWidth: `calc(100vw - ${FILTER_DROPDOWN_SCREEN_GAP * 2}px)`
             }}
           >
             <TableFilterDropdown
@@ -130,7 +138,7 @@ function DataTableHeaderFilter({
               values={values}
               selectedValues={selectedValues}
               pendingValues={pendingValues}
-              align={align}
+              align={position.flyoutAlign}
               onChange={onChange}
               onApply={onApply}
               onCancel={onCancel}
