@@ -187,7 +187,7 @@ OHLCV_CURRENT_SOURCE = "current"
 OHLCV_EXPIRED_SOURCE = "expired"
 OHLCV_HISTORICAL_MODE = "historical"
 OHLCV_INTRADAY_MODE = "intraday"
-OHLCV_SAVED_BOUNDS_INSTRUMENT_FILTER_LIMIT = 1000
+OHLCV_SAVED_BOUNDS_INSTRUMENT_FILTER_LIMIT = 1000000
 
 OHLCV_ALLOWED_SOURCES = {OHLCV_CURRENT_SOURCE, OHLCV_EXPIRED_SOURCE}
 OHLCV_ALLOWED_MODES = {OHLCV_HISTORICAL_MODE, OHLCV_INTRADAY_MODE}
@@ -3549,6 +3549,9 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
     where_sql = """
     WHERE isin IS NOT NULL
       AND TRIM(isin) <> ''
+      AND instrument_key IS NOT NULL
+      AND TRIM(instrument_key) <> ''
+      AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
     """
 
     if config.get("single_isin"):
@@ -3593,7 +3596,6 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
             FROM upstox_instruments
             {where_sql}
               AND source_type = 'bod_complete'
-              AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
               AND UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
         )
         QUALIFY ROW_NUMBER() OVER (
@@ -3604,7 +3606,7 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
         {limit_sql};
     """, query_params).fetchall()
 
-    return [
+    instruments = [
         {
             "instrument_key": row[0],
             "trading_symbol": row[1],
@@ -3616,6 +3618,13 @@ def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
         for row in rows
         if row and safe_strip(row[3])
     ]
+
+    print(
+        "[Company Fundamentals] Equity instruments selected "
+        f"for fundamentals: {len(instruments)}"
+    )
+
+    return instruments
 
 
 def company_fundamentals_status_exists(
@@ -3793,6 +3802,51 @@ def build_company_fundamentals_existing_status_cache(
     )
 
     return existing_keys
+
+
+def build_company_fundamentals_pending_jobs(
+    instruments: List[dict],
+    tasks: List[dict],
+    existing_status_cache: set,
+    skip_existing: bool,
+    force_refresh: bool
+) -> tuple:
+    pending_jobs = []
+    skipped_existing = 0
+    total_jobs = 0
+
+    for instrument_index, instrument in enumerate(instruments, start=1):
+        isin = safe_strip(instrument.get("isin")).upper()
+
+        if not isin:
+            continue
+
+        for task in tasks:
+            endpoint = task["endpoint"]
+            statement_type = task.get("statement_type")
+            time_period = task.get("time_period")
+            include_full_statement = bool(task.get("include_full_statement"))
+            total_jobs += 1
+
+            task_key = get_company_fundamentals_task_key(
+                isin=isin,
+                endpoint=endpoint,
+                statement_type=statement_type,
+                time_period=time_period,
+                include_full_statement=include_full_statement
+            )
+
+            if skip_existing and not force_refresh and task_key in existing_status_cache:
+                skipped_existing += 1
+                continue
+
+            pending_jobs.append({
+                "instrument_index": instrument_index,
+                "instrument": instrument,
+                "task": task
+            })
+
+    return pending_jobs, skipped_existing, total_jobs
 
 
 def record_company_fundamentals_status(
@@ -4429,23 +4483,36 @@ def sync_upstox_company_fundamentals_service(
             and not normalized_config["force_refresh"]
             else set()
         )
+        pending_jobs, skipped_existing_jobs, total_jobs = build_company_fundamentals_pending_jobs(
+            instruments=instruments,
+            tasks=tasks,
+            existing_status_cache=existing_status_cache,
+            skip_existing=normalized_config["skip_existing"],
+            force_refresh=normalized_config["force_refresh"]
+        )
+        metrics["api_calls_skipped"] += skipped_existing_jobs
 
         print(
             "[Company Fundamentals] Starting sync "
             f"instruments={len(instruments)} tasks_per_instrument={len(tasks)} "
-            f"endpoints={normalized_config['endpoints']}"
+            f"total_jobs={total_jobs} skipped_existing={skipped_existing_jobs} "
+            f"pending_api_jobs={len(pending_jobs)} endpoints={normalized_config['endpoints']}"
         )
 
-        for instrument_index, instrument in enumerate(instruments, start=1):
+        for pending_index, pending_job in enumerate(pending_jobs, start=1):
             check_sync_cancelled(conn, sync_id)
 
-            if instrument_index > 1 and normalized_config["batch_size"]:
-                if (instrument_index - 1) % normalized_config["batch_size"] == 0:
+            if pending_index > 1 and normalized_config["batch_size"]:
+                if (pending_index - 1) % normalized_config["batch_size"] == 0:
                     print(
                         "[Company Fundamentals] Batch checkpoint "
-                        f"after {instrument_index - 1} instruments."
+                        f"after {pending_index - 1} pending API jobs."
                     )
                     check_sync_cancelled(conn, sync_id)
+
+            instrument_index = int(pending_job.get("instrument_index") or 0)
+            instrument = pending_job["instrument"]
+            task = pending_job["task"]
 
             isin = safe_strip(instrument.get("isin")).upper()
             trading_symbol = safe_strip(instrument.get("trading_symbol")) or "--"
@@ -4453,182 +4520,162 @@ def sync_upstox_company_fundamentals_service(
             if not isin:
                 continue
 
-            for task in tasks:
-                check_sync_cancelled(conn, sync_id)
+            endpoint = task["endpoint"]
+            statement_type = task.get("statement_type")
+            time_period = task.get("time_period")
+            include_full_statement = bool(task.get("include_full_statement"))
 
-                endpoint = task["endpoint"]
-                statement_type = task.get("statement_type")
-                time_period = task.get("time_period")
-                include_full_statement = bool(task.get("include_full_statement"))
+            url = build_company_fundamentals_url(
+                isin=isin,
+                endpoint=endpoint,
+                statement_type=statement_type,
+                time_period=time_period,
+                include_full_statement=include_full_statement
+            )
 
-                if (
-                    normalized_config["skip_existing"]
-                    and not normalized_config["force_refresh"]
-                    and get_company_fundamentals_task_key(
-                        isin=isin,
-                        endpoint=endpoint,
-                        statement_type=statement_type,
-                        time_period=time_period,
-                        include_full_statement=include_full_statement
-                    ) in existing_status_cache
-                ):
-                    metrics["api_calls_skipped"] += 1
-                    print(
-                        "[Company Fundamentals] Skipped existing "
-                        f"{trading_symbol} {isin} {endpoint} "
-                        f"{statement_type or ''} {time_period or ''}."
-                    )
-                    continue
-
-                url = build_company_fundamentals_url(
-                    isin=isin,
-                    endpoint=endpoint,
-                    statement_type=statement_type,
-                    time_period=time_period,
-                    include_full_statement=include_full_statement
+            try:
+                print(
+                    "[Company Fundamentals] API pending "
+                    f"{pending_index}/{len(pending_jobs)} "
+                    f"source_instrument={instrument_index}/{len(instruments)} "
+                    f"{trading_symbol} {isin} {endpoint} "
+                    f"{statement_type or ''} {time_period or ''}"
                 )
 
-                try:
-                    print(
-                        "[Company Fundamentals] API "
-                        f"{instrument_index}/{len(instruments)} {trading_symbol} {isin} "
-                        f"{endpoint} {statement_type or ''} {time_period or ''}"
-                    )
+                response = None
+                last_token_error = None
 
-                    response = None
-                    last_token_error = None
+                for token_index, (token_label, candidate_token) in enumerate(token_candidates):
+                    try:
+                        metrics["api_calls_attempted"] += 1
+                        response = fetch_company_fundamentals_with_retry(
+                            url=url,
+                            token=candidate_token,
+                            retry_count=normalized_config["retry_count"],
+                            rate_limiter=rate_limiter,
+                            heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
+                        )
+                        break
+                    except HTTPException as token_error:
+                        last_token_error = token_error
 
-                    for token_index, (token_label, candidate_token) in enumerate(token_candidates):
-                        try:
-                            metrics["api_calls_attempted"] += 1
-                            response = fetch_company_fundamentals_with_retry(
-                                url=url,
-                                token=candidate_token,
-                                retry_count=normalized_config["retry_count"],
-                                rate_limiter=rate_limiter,
-                                heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
+                        if is_upstox_auth_token_error(token_error) and token_index + 1 < len(token_candidates):
+                            print(
+                                "[Company Fundamentals] "
+                                f"{token_label} failed with {token_error.status_code}; "
+                                "retrying with fallback token."
                             )
-                            break
-                        except HTTPException as token_error:
-                            last_token_error = token_error
+                            continue
 
-                            if is_upstox_auth_token_error(token_error) and token_index + 1 < len(token_candidates):
-                                print(
-                                    "[Company Fundamentals] "
-                                    f"{token_label} failed with {token_error.status_code}; "
-                                    "retrying with fallback token."
-                                )
-                                continue
+                        raise
 
-                            raise
+                if response is None and last_token_error:
+                    raise last_token_error
 
-                    if response is None and last_token_error:
-                        raise last_token_error
+                record = normalize_company_fundamentals_record(
+                    response=response,
+                    instrument=instrument,
+                    task=task,
+                    sync_id=sync_id
+                )
 
-                    record = normalize_company_fundamentals_record(
-                        response=response,
-                        instrument=instrument,
-                        task=task,
-                        sync_id=sync_id
+                conn.execute("BEGIN TRANSACTION")
+                delete_existing_company_fundamentals_record(conn, record)
+                inserted_count = insert_company_fundamentals_records(conn, [record])
+                record_company_fundamentals_status(
+                    conn=conn,
+                    isin=isin,
+                    endpoint=endpoint,
+                    statement_type=record.get("statement_type") or statement_type,
+                    time_period=record.get("time_period") or time_period,
+                    include_full_statement=include_full_statement,
+                    status_value="success",
+                    record_count=inserted_count,
+                    sync_id=sync_id,
+                    error_message=None
+                )
+                conn.execute("COMMIT")
+
+                total_records += inserted_count
+                metrics["records_inserted"] += inserted_count
+
+                if normalized_config["request_delay_ms"]:
+                    sleep_with_heartbeat(
+                        normalized_config["request_delay_ms"] / 1000,
+                        lambda: check_sync_cancelled(conn, sync_id)
                     )
 
-                    conn.execute("BEGIN TRANSACTION")
-                    delete_existing_company_fundamentals_record(conn, record)
-                    inserted_count = insert_company_fundamentals_records(conn, [record])
+            except SyncCancelled:
+                raise
+            except HTTPException as error:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+                if is_upstox_auth_token_error(error):
+                    raise
+
+                error_text = str(error.detail)
+                failed_items.append({
+                    "isin": isin,
+                    "trading_symbol": trading_symbol,
+                    "endpoint": endpoint,
+                    "statement_type": statement_type,
+                    "time_period": time_period,
+                    "include_full_statement": include_full_statement,
+                    "error": error_text
+                })
+                metrics["failed_items"] += 1
+
+                try:
                     record_company_fundamentals_status(
                         conn=conn,
                         isin=isin,
                         endpoint=endpoint,
-                        statement_type=record.get("statement_type") or statement_type,
-                        time_period=record.get("time_period") or time_period,
+                        statement_type=statement_type,
+                        time_period=time_period,
                         include_full_statement=include_full_statement,
-                        status_value="success",
-                        record_count=inserted_count,
+                        status_value="failed",
+                        record_count=0,
                         sync_id=sync_id,
-                        error_message=None
+                        error_message=error_text
                     )
-                    conn.execute("COMMIT")
-
-                    total_records += inserted_count
-                    metrics["records_inserted"] += inserted_count
-
-                    if normalized_config["request_delay_ms"]:
-                        sleep_with_heartbeat(
-                            normalized_config["request_delay_ms"] / 1000,
-                            lambda: check_sync_cancelled(conn, sync_id)
-                        )
-
-                except SyncCancelled:
-                    raise
-                except HTTPException as error:
+                    conn.commit()
+                except Exception:
                     try:
                         conn.rollback()
                     except Exception:
                         pass
 
-                    if is_upstox_auth_token_error(error):
-                        raise
+                print(
+                    "[Company Fundamentals] API failed "
+                    f"{trading_symbol} {isin} {endpoint}: {error_text}"
+                )
+                continue
+            except Exception as error:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
-                    error_text = str(error.detail)
-                    failed_items.append({
-                        "isin": isin,
-                        "trading_symbol": trading_symbol,
-                        "endpoint": endpoint,
-                        "statement_type": statement_type,
-                        "time_period": time_period,
-                        "include_full_statement": include_full_statement,
-                        "error": error_text
-                    })
-                    metrics["failed_items"] += 1
+                error_text = str(error)
+                failed_items.append({
+                    "isin": isin,
+                    "trading_symbol": trading_symbol,
+                    "endpoint": endpoint,
+                    "statement_type": statement_type,
+                    "time_period": time_period,
+                    "include_full_statement": include_full_statement,
+                    "error": error_text
+                })
+                metrics["failed_items"] += 1
 
-                    try:
-                        record_company_fundamentals_status(
-                            conn=conn,
-                            isin=isin,
-                            endpoint=endpoint,
-                            statement_type=statement_type,
-                            time_period=time_period,
-                            include_full_statement=include_full_statement,
-                            status_value="failed",
-                            record_count=0,
-                            sync_id=sync_id,
-                            error_message=error_text
-                        )
-                        conn.commit()
-                    except Exception:
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass
-
-                    print(
-                        "[Company Fundamentals] API failed "
-                        f"{trading_symbol} {isin} {endpoint}: {error_text}"
-                    )
-                    continue
-                except Exception as error:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-
-                    error_text = str(error)
-                    failed_items.append({
-                        "isin": isin,
-                        "trading_symbol": trading_symbol,
-                        "endpoint": endpoint,
-                        "statement_type": statement_type,
-                        "time_period": time_period,
-                        "include_full_statement": include_full_statement,
-                        "error": error_text
-                    })
-                    metrics["failed_items"] += 1
-
-                    print(
-                        "[Company Fundamentals] Save/API failed "
-                        f"{trading_symbol} {isin} {endpoint}: {error_text}"
-                    )
-                    continue
+                print(
+                    "[Company Fundamentals] Save/API failed "
+                    f"{trading_symbol} {isin} {endpoint}: {error_text}"
+                )
+                continue
 
         all_api_calls_failed = (
             bool(failed_items)
@@ -8555,6 +8602,172 @@ def get_ohlcv_available_start_date(source: str, mode: str, unit: str) -> date:
 
 
 
+
+# --- Open Analytics OHLCV chunk history helpers ---
+def ensure_ohlcv_chunk_sync_status_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS upstox_ohlcv_chunk_sync_status (
+            provider VARCHAR DEFAULT 'upstox',
+            instrument_key VARCHAR NOT NULL,
+            instrument_source VARCHAR NOT NULL,
+            candle_mode VARCHAR NOT NULL,
+            unit VARCHAR NOT NULL,
+            interval_value BIGINT NOT NULL,
+            from_date DATE NOT NULL,
+            to_date DATE NOT NULL,
+            status VARCHAR DEFAULT 'success',
+            record_count BIGINT DEFAULT 0,
+            last_error VARCHAR,
+            source_sync_id VARCHAR,
+            checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    for index_sql in [
+        """
+        CREATE INDEX IF NOT EXISTS idx_upstox_ohlcv_chunk_status_lookup
+        ON upstox_ohlcv_chunk_sync_status (
+            provider,
+            instrument_key,
+            instrument_source,
+            candle_mode,
+            unit,
+            interval_value,
+            from_date,
+            to_date,
+            status
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_upstox_ohlcv_chunk_status_sync
+        ON upstox_ohlcv_chunk_sync_status (source_sync_id);
+        """
+    ]:
+        try:
+            conn.execute(index_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+
+def ohlcv_chunk_status_exists(
+    conn,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    from_date,
+    to_date,
+    force_refresh: bool = False
+) -> bool:
+    if force_refresh:
+        return False
+
+    ensure_ohlcv_chunk_sync_status_table(conn)
+
+    row = conn.execute("""
+        SELECT 1
+        FROM upstox_ohlcv_chunk_sync_status
+        WHERE provider = ?
+          AND instrument_key = ?
+          AND instrument_source = ?
+          AND candle_mode = ?
+          AND unit = ?
+          AND interval_value = ?
+          AND from_date = TRY_CAST(? AS DATE)
+          AND to_date = TRY_CAST(? AS DATE)
+          AND status = 'success'
+        LIMIT 1;
+    """, [
+        UPSTOX_PROVIDER,
+        instrument_key,
+        source,
+        mode,
+        unit,
+        int(interval_value or 1),
+        from_date,
+        to_date
+    ]).fetchone()
+
+    return bool(row)
+
+
+def record_ohlcv_chunk_status(
+    conn,
+    source: str,
+    mode: str,
+    instrument_key: str,
+    unit: str,
+    interval_value: int,
+    from_date,
+    to_date,
+    status_value: str,
+    record_count: int,
+    sync_id: str,
+    error_message: str = None
+):
+    ensure_ohlcv_chunk_sync_status_table(conn)
+
+    conn.execute("""
+        DELETE FROM upstox_ohlcv_chunk_sync_status
+        WHERE provider = ?
+          AND instrument_key = ?
+          AND instrument_source = ?
+          AND candle_mode = ?
+          AND unit = ?
+          AND interval_value = ?
+          AND from_date = TRY_CAST(? AS DATE)
+          AND to_date = TRY_CAST(? AS DATE);
+    """, [
+        UPSTOX_PROVIDER,
+        instrument_key,
+        source,
+        mode,
+        unit,
+        int(interval_value or 1),
+        from_date,
+        to_date
+    ])
+
+    conn.execute("""
+        INSERT INTO upstox_ohlcv_chunk_sync_status (
+            provider,
+            instrument_key,
+            instrument_source,
+            candle_mode,
+            unit,
+            interval_value,
+            from_date,
+            to_date,
+            status,
+            record_count,
+            last_error,
+            source_sync_id,
+            checked_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, TRY_CAST(? AS DATE), TRY_CAST(? AS DATE), ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+    """, [
+        UPSTOX_PROVIDER,
+        instrument_key,
+        source,
+        mode,
+        unit,
+        int(interval_value or 1),
+        from_date,
+        to_date,
+        status_value,
+        int(record_count or 0),
+        error_message,
+        sync_id
+    ])
+# --- End Open Analytics OHLCV chunk history helpers ---
+
+
 def build_ohlcv_saved_bounds_cache(
     conn,
     source: str,
@@ -9535,6 +9748,8 @@ def sync_upstox_ohlcv_daily_service(
 
         log_ohlcv_message(f"Sync run created: {sync_id}")
 
+        ensure_ohlcv_chunk_sync_status_table(conn)
+
         rate_limiter = UpstoxRollingRateLimiter()
 
         for source in normalized_config["sources"]:
@@ -9660,6 +9875,27 @@ def sync_upstox_ohlcv_daily_service(
                             chunk_from = chunk["from_date"]
                             chunk_to = chunk["to_date"]
 
+                            if normalized_config["skip_existing"] and ohlcv_chunk_status_exists(
+                                conn=conn,
+                                source=source,
+                                mode=mode,
+                                instrument_key=instrument_key,
+                                unit=interval["unit"],
+                                interval_value=interval["interval_value"],
+                                from_date=chunk_from,
+                                to_date=chunk_to,
+                                force_refresh=bool(normalized_config.get("force_refresh", False))
+                            ):
+                                skipped_days = (chunk_to - chunk_from).days + 1
+                                metrics["api_calls_skipped"] += 1
+                                metrics["candles_skipped"] += skipped_days
+                                log_ohlcv_message(
+                                    f"Skipped API call {instrument_key} {source} {mode} "
+                                    f"{interval_key} {chunk_from} to {chunk_to}: chunk history already checked."
+                                )
+                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                                continue
+
                             if normalized_config["skip_existing"] and should_skip_ohlcv_chunk_by_saved_bounds(
                                 conn=conn,
                                 source=source,
@@ -9725,6 +9961,21 @@ def sync_upstox_ohlcv_daily_service(
 
                                 inserted_records = persist_ohlcv_records(conn, records)
 
+                                record_ohlcv_chunk_status(
+                                    conn=conn,
+                                    source=source,
+                                    mode=mode,
+                                    instrument_key=instrument_key,
+                                    unit=interval["unit"],
+                                    interval_value=interval["interval_value"],
+                                    from_date=chunk_from,
+                                    to_date=chunk_to,
+                                    status_value="success",
+                                    record_count=inserted_records,
+                                    sync_id=sync_id,
+                                    error_message=None
+                                )
+
                                 if inserted_records:
                                     total_records += inserted_records
                                     metrics["candles_inserted"] += inserted_records
@@ -9763,6 +10014,27 @@ def sync_upstox_ohlcv_daily_service(
                                     "to_date": chunk_to.isoformat(),
                                     "error": error.detail
                                 })
+                                try:
+                                    record_ohlcv_chunk_status(
+                                        conn=conn,
+                                        source=source,
+                                        mode=mode,
+                                        instrument_key=instrument_key,
+                                        unit=interval["unit"],
+                                        interval_value=interval["interval_value"],
+                                        from_date=chunk_from,
+                                        to_date=chunk_to,
+                                        status_value="failed",
+                                        record_count=0,
+                                        sync_id=sync_id,
+                                        error_message=str(error.detail)
+                                    )
+                                    conn.commit()
+                                except Exception:
+                                    try:
+                                        conn.rollback()
+                                    except Exception:
+                                        pass
                                 log_ohlcv_message(
                                     "API failed "
                                     f"{instrument_key} {source} {mode} {interval_key} "
