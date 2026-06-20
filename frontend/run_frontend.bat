@@ -12,6 +12,9 @@ if not exist node_modules (
 )
 
 :restart_frontend
+echo Stopping any existing frontend server on port 5173...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | Where-Object { $_ -and $_ -ne $PID } | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
+
 echo Starting React Vite frontend...
 npm run dev
 

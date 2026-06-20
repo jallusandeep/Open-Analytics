@@ -3,7 +3,11 @@ import { AlertTriangle, Clock3, Edit3, Play, RefreshCcw } from "lucide-react";
 
 import MainLayout from "../../../components/layout/MainLayout";
 import { useToast } from "../../../components/common/ToastProvider";
-import { oaCardStyles, oaFormTextStyles } from "../../../components/common/uiStyles";
+import {
+  oaCardStyles,
+  oaFormTextStyles,
+  oaPillStyles
+} from "../../../components/common/uiStyles";
 import {
   cancelUpstoxDataCollection,
   createUpstoxDataCollectionSchedule,

@@ -3,6 +3,8 @@
 # Keep this module imported through app.services.data_collection or the compatibility wrapper.
 
 from .common import *
+import logging
+import socket
 
 def parse_iso_date(value: Any, field_name: str, default_value: Optional[date] = None) -> date:
     if value in (None, ""):
@@ -1174,51 +1176,6 @@ def fetch_ohlcv_instruments(conn, source: str, config: dict) -> List[dict]:
 
     return []
 
-    if source == OHLCV_EXPIRED_SOURCE:
-        where_sql = "WHERE instrument_key IS NOT NULL AND TRIM(instrument_key) <> ''"
-
-        if config["single_instrument_key"]:
-            where_sql += " AND instrument_key = ?"
-            params.append(config["single_instrument_key"])
-
-        limit_sql = ""
-
-        if config["instrument_limit"]:
-            limit_sql = "LIMIT ?"
-            params.append(config["instrument_limit"])
-
-        rows = conn.execute(f"""
-            SELECT
-                instrument_key,
-                trading_symbol,
-                name,
-                exchange,
-                segment,
-                NULL AS isin,
-                expiry,
-                instrument_type
-            FROM upstox_expired_instruments
-            {where_sql}
-            ORDER BY expiry DESC, trading_symbol, instrument_key
-            {limit_sql};
-        """, params).fetchall()
-
-        return [
-            {
-                "instrument_key": row[0],
-                "trading_symbol": row[1],
-                "name": row[2],
-                "exchange": row[3],
-                "segment": row[4],
-                "isin": row[5],
-                "expiry": row[6],
-                "instrument_type": row[7]
-            }
-            for row in rows
-        ]
-
-    return []
-
 
 def build_ohlcv_url(source: str, mode: str, instrument_key: str, interval: dict, from_date: date, to_date: date) -> str:
     encoded_instrument_key = urllib.parse.quote(instrument_key, safe="")
@@ -1248,6 +1205,11 @@ def build_ohlcv_url(source: str, mode: str, instrument_key: str, interval: dict,
 
 
 def upstox_http_get_json(url: str, token: str, timeout: int = OHLCV_REQUEST_TIMEOUT_SECONDS) -> dict:
+    request_started_at = time.perf_counter()
+    safe_timeout = min(int(timeout or 15), 15)
+
+    log_ohlcv_message(f"Calling Upstox OHLCV API timeout={safe_timeout}s url={url}")
+
     request = urllib.request.Request(
         url,
         headers={
@@ -1259,19 +1221,54 @@ def upstox_http_get_json(url: str, token: str, timeout: int = OHLCV_REQUEST_TIME
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=safe_timeout) as response:
             response_text = response.read().decode("utf-8")
+            elapsed = time.perf_counter() - request_started_at
+
+            log_ohlcv_message(
+                f"Upstox OHLCV API response status={getattr(response, 'status', '--')} "
+                f"bytes={len(response_text or '')} elapsed={elapsed:.3f}s"
+            )
+
             return json.loads(response_text or "{}")
+
     except urllib.error.HTTPError as error:
         error_text = error.read().decode("utf-8", errors="replace")
+        elapsed = time.perf_counter() - request_started_at
+
+        log_ohlcv_message(
+            f"Upstox OHLCV API HTTP error status={error.code} "
+            f"elapsed={elapsed:.3f}s detail={(error_text or str(error))[:500]}"
+        )
+
         raise HTTPException(
             status_code=error.code,
             detail=error_text or str(error),
             headers=dict(error.headers or {})
         )
+
+    except (TimeoutError, socket.timeout) as error:
+        elapsed = time.perf_counter() - request_started_at
+
+        log_ohlcv_message(
+            f"Upstox OHLCV API timeout after {elapsed:.3f}s url={url}"
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Upstox OHLCV API timeout after {safe_timeout}s: {error}"
+        )
+
     except HTTPException:
         raise
+
     except Exception as error:
+        elapsed = time.perf_counter() - request_started_at
+
+        log_ohlcv_message(
+            f"Upstox OHLCV API call failed after {elapsed:.3f}s: {error}"
+        )
+
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to call Upstox OHLCV API: {error}"
@@ -1402,8 +1399,13 @@ def insert_ohlcv_candles(conn, records: List[dict]) -> int:
     if not records:
         return 0
 
+    insert_started_at = time.perf_counter()
+    log_ohlcv_message(
+        f"Inserting OHLCV candles rows={len(records)} into upstox_ohlcv_candles."
+    )
+
     conn.executemany("""
-        INSERT OR REPLACE INTO upstox_ohlcv_candles (
+        INSERT INTO upstox_ohlcv_candles (
             provider,
             instrument_source,
             candle_mode,
@@ -1464,10 +1466,17 @@ def insert_ohlcv_candles(conn, records: List[dict]) -> int:
         for record in records
     ])
 
+    log_ohlcv_message(
+        f"Inserted OHLCV candles rows={len(records)} "
+        f"elapsed={time.perf_counter() - insert_started_at:.3f}s."
+    )
+
     return len(records)
 
 
 def insert_ohlcv_daily_compatibility_rows(conn, records: List[dict]) -> int:
+    compatibility_started_at = time.perf_counter()
+
     daily_records = [
         record
         for record in records
@@ -1478,7 +1487,12 @@ def insert_ohlcv_daily_compatibility_rows(conn, records: List[dict]) -> int:
     ]
 
     if not daily_records:
+        log_ohlcv_message("No OHLCV daily compatibility rows needed.")
         return 0
+
+    log_ohlcv_message(
+        f"Inserting OHLCV daily compatibility rows={len(daily_records)} into ohlcv_daily."
+    )
 
     conn.executemany("""
         INSERT OR REPLACE INTO ohlcv_daily (
@@ -1509,12 +1523,27 @@ def insert_ohlcv_daily_compatibility_rows(conn, records: List[dict]) -> int:
         for record in daily_records
     ])
 
+    log_ohlcv_message(
+        f"Inserted OHLCV daily compatibility rows={len(daily_records)} "
+        f"elapsed={time.perf_counter() - compatibility_started_at:.3f}s."
+    )
+
     return len(daily_records)
 
 
 
 def log_ohlcv_message(message: str):
-    print(f"[OHLCV] {message}", flush=True)
+    log_line = f"[OHLCV] {message}"
+    print(log_line, flush=True)
+    logging.getLogger("uvicorn.error").info(log_line)
+
+    try:
+        log_dir = Path(__file__).resolve().parents[2] / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_dir / "ohlcv.log", "a", encoding="utf-8") as log_file:
+            log_file.write(f"{datetime.now().isoformat(timespec='seconds')} {log_line}\n")
+    except Exception:
+        pass
 
 
 def count_ohlcv_records_for_sync(
@@ -1726,7 +1755,16 @@ def persist_ohlcv_records(conn, records: List[dict]) -> int:
     if not records:
         return 0
 
+    filter_started_at = time.perf_counter()
+    log_ohlcv_message(f"Filtering OHLCV duplicates for returned={len(records)} candles.")
+
     new_records = filter_new_ohlcv_records(conn, records)
+
+    filter_elapsed = time.perf_counter() - filter_started_at
+    log_ohlcv_message(
+        f"Duplicate filter completed returned={len(records)} "
+        f"new={len(new_records)} elapsed={filter_elapsed:.3f}s."
+    )
 
     if not new_records:
         log_ohlcv_message(
@@ -1735,10 +1773,17 @@ def persist_ohlcv_records(conn, records: List[dict]) -> int:
         return 0
 
     try:
+        save_started_at = time.perf_counter()
         conn.execute("BEGIN TRANSACTION")
         insert_ohlcv_candles(conn, new_records)
         insert_ohlcv_daily_compatibility_rows(conn, new_records)
         conn.execute("COMMIT")
+
+        log_ohlcv_message(
+            f"OHLCV DB insert committed rows={len(new_records)} "
+            f"elapsed={time.perf_counter() - save_started_at:.3f}s."
+        )
+
         return len(new_records)
     except Exception:
         try:
@@ -1753,6 +1798,192 @@ def update_ohlcv_metrics_progress(conn, sync_id: str, metrics: dict):
         finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
     except Exception as error:
         print(f"Unable to update OHLCV progress metrics: {error}")
+
+
+def maybe_update_ohlcv_metrics_progress(
+    conn,
+    sync_id: str,
+    metrics: dict,
+    force: bool = False,
+    min_seconds: float = 5.0
+):
+    if not sync_id:
+        return
+
+    now = time.monotonic()
+    last_updates = getattr(maybe_update_ohlcv_metrics_progress, "_last_updates", {})
+    last_update = last_updates.get(sync_id, 0)
+
+    if force or now - last_update >= min_seconds:
+        update_ohlcv_metrics_progress(conn, sync_id, metrics)
+        last_updates[sync_id] = now
+        setattr(maybe_update_ohlcv_metrics_progress, "_last_updates", last_updates)
+
+
+def is_ohlcv_interval_supported_for_source_mode(source: str, mode: str, interval_key: str, interval: dict) -> tuple:
+    if source == OHLCV_EXPIRED_SOURCE and mode == OHLCV_INTRADAY_MODE:
+        return False, "expired intraday is not supported"
+
+    if source == OHLCV_EXPIRED_SOURCE and not interval.get("expired_interval"):
+        return False, f"expired interval {interval_key} is not supported"
+
+    if mode == OHLCV_INTRADAY_MODE and interval["unit"] in ("weeks", "months"):
+        return False, f"intraday interval {interval_key} is not supported"
+
+    return True, ""
+
+
+def build_ohlcv_pending_api_chunks_for_source(
+    conn,
+    source: str,
+    instruments: List[dict],
+    normalized_config: dict,
+    saved_bounds_cache: dict,
+    chunk_history_index: set,
+    metrics: dict,
+    sync_id: Optional[str] = None
+) -> List[dict]:
+    pending_chunks = []
+    planned_chunks = 0
+    skipped_by_saved_bounds = 0
+    skipped_by_chunk_history = 0
+    skipped_by_unsupported = 0
+    skipped_by_complete_range = 0
+    planning_started_at = time.perf_counter()
+    skip_existing = bool(normalized_config.get("skip_existing"))
+
+    for instrument_index, instrument in enumerate(instruments, start=1):
+        if sync_id and (
+            instrument_index == 1
+            or instrument_index % 100 == 0
+            or instrument_index == len(instruments)
+        ):
+            heartbeat_sync_run(conn, sync_id)
+            maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics)
+
+        instrument_key = safe_strip(instrument.get("instrument_key"))
+
+        if not instrument_key:
+            continue
+
+        for mode in normalized_config["candle_modes"]:
+            for interval_key in normalized_config["intervals"]:
+                interval = get_ohlcv_interval_definition(interval_key)
+                is_supported, unsupported_reason = is_ohlcv_interval_supported_for_source_mode(
+                    source=source,
+                    mode=mode,
+                    interval_key=interval_key,
+                    interval=interval
+                )
+
+                if not is_supported:
+                    metrics["api_calls_skipped"] += 1
+                    skipped_by_unsupported += 1
+                    if skipped_by_unsupported <= 3:
+                        log_ohlcv_message(f"Skipped {instrument_key}: {unsupported_reason}.")
+                    continue
+
+                effective_range = get_effective_ohlcv_date_range_for_instrument(
+                    conn=conn,
+                    config=normalized_config,
+                    source=source,
+                    mode=mode,
+                    instrument_key=instrument_key,
+                    unit=interval["unit"],
+                    interval_value=interval["interval_value"],
+                    saved_bounds_cache=saved_bounds_cache
+                )
+
+                if not effective_range:
+                    metrics["api_calls_skipped"] += 1
+                    skipped_by_complete_range += 1
+                    continue
+
+                if mode == OHLCV_INTRADAY_MODE:
+                    chunks = [{
+                        "from_date": effective_range["to_date"],
+                        "to_date": effective_range["to_date"]
+                    }]
+                else:
+                    chunks = split_ohlcv_date_range(
+                        from_date=effective_range["from_date"],
+                        to_date=effective_range["to_date"],
+                        unit=interval["unit"],
+                        interval_value=interval["interval_value"],
+                        source=source
+                    )
+
+                chunk_count = len(chunks)
+
+                for chunk_index, chunk in enumerate(chunks, start=1):
+                    chunk_from = chunk["from_date"]
+                    chunk_to = chunk["to_date"]
+                    planned_chunks += 1
+
+                    if skip_existing:
+                        chunk_status_key = get_ohlcv_chunk_status_key(
+                            source=source,
+                            mode=mode,
+                            instrument_key=instrument_key,
+                            unit=interval["unit"],
+                            interval_value=interval["interval_value"],
+                            from_date=chunk_from,
+                            to_date=chunk_to
+                        )
+
+                        if chunk_status_key in chunk_history_index:
+                            skipped_days = (chunk_to - chunk_from).days + 1
+                            metrics["api_calls_skipped"] += 1
+                            metrics["candles_skipped"] += skipped_days
+                            skipped_by_chunk_history += 1
+                            continue
+
+                        if should_skip_ohlcv_chunk_by_saved_bounds(
+                            conn=conn,
+                            source=source,
+                            mode=mode,
+                            instrument_key=instrument_key,
+                            unit=interval["unit"],
+                            interval_value=interval["interval_value"],
+                            from_date=chunk_from,
+                            to_date=chunk_to,
+                            saved_bounds_cache=saved_bounds_cache
+                        ):
+                            skipped_days = (chunk_to - chunk_from).days + 1
+                            metrics["api_calls_skipped"] += 1
+                            metrics["candles_skipped"] += skipped_days
+                            skipped_by_saved_bounds += 1
+                            continue
+
+                    pending_chunks.append({
+                        "source": source,
+                        "instrument_index": instrument_index,
+                        "instrument_count": len(instruments),
+                        "instrument": instrument,
+                        "instrument_key": instrument_key,
+                        "mode": mode,
+                        "interval_key": interval_key,
+                        "interval": interval,
+                        "chunk_index": chunk_index,
+                        "chunk_count": chunk_count,
+                        "from_date": chunk_from,
+                        "to_date": chunk_to
+                    })
+
+    log_ohlcv_message(
+        "Indexed pending chunk planning completed "
+        f"for source={source} in {time.perf_counter() - planning_started_at:.3f}s. "
+        f"planned={planned_chunks}, pending_api={len(pending_chunks)}, "
+        f"skipped_complete_range={skipped_by_complete_range}, "
+        f"skipped_chunk_history={skipped_by_chunk_history}, "
+        f"skipped_saved_bounds={skipped_by_saved_bounds}, "
+        f"skipped_unsupported={skipped_by_unsupported}."
+    )
+
+    if sync_id:
+        maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics, force=True)
+
+    return pending_chunks
 
 
 def sync_upstox_ohlcv_daily_service(
@@ -1846,9 +2077,6 @@ def sync_upstox_ohlcv_daily_service(
                 f"in {time.perf_counter() - source_start_perf:.3f}s."
             )
 
-            source_api_calls_before = int(metrics.get("api_calls_attempted") or 0)
-            source_skips_before = int(metrics.get("api_calls_skipped") or 0)
-
             bounds_start_perf = time.perf_counter()
             saved_bounds_cache = build_ohlcv_saved_bounds_cache(
                 conn=conn,
@@ -1873,319 +2101,239 @@ def sync_upstox_ohlcv_daily_service(
                 f"{time.perf_counter() - history_start_perf:.3f}s."
             )
 
-            for instrument_index, instrument in enumerate(instruments, start=1):
+            planning_start_perf = time.perf_counter()
+            pending_chunks = build_ohlcv_pending_api_chunks_for_source(
+                conn=conn,
+                source=source,
+                instruments=instruments,
+                normalized_config=normalized_config,
+                saved_bounds_cache=saved_bounds_cache,
+                chunk_history_index=chunk_history_index,
+                metrics=metrics,
+                sync_id=sync_id
+            )
+            maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics, force=True)
+
+            if not pending_chunks:
+                log_ohlcv_message(
+                    f"Source {source}: no pending API chunks after indexed lookup. "
+                    "Already saved/checked data was skipped without per-chunk API loop."
+                )
+                continue
+
+            log_ohlcv_message(
+                f"Source {source}: {len(pending_chunks)} pending API chunks ready "
+                f"after {time.perf_counter() - planning_start_perf:.3f}s indexed planning."
+            )
+
+            for pending_index, pending in enumerate(pending_chunks, start=1):
                 check_sync_cancelled(conn, sync_id)
 
-                if instrument_index > 1 and normalized_config["batch_size"]:
-                    if (instrument_index - 1) % normalized_config["batch_size"] == 0:
+                source = pending["source"]
+                instrument = pending["instrument"]
+                instrument_key = pending["instrument_key"]
+                mode = pending["mode"]
+                interval_key = pending["interval_key"]
+                interval = pending["interval"]
+                chunk_from = pending["from_date"]
+                chunk_to = pending["to_date"]
+
+                chunk_status_key = get_ohlcv_chunk_status_key(
+                    source=source,
+                    mode=mode,
+                    instrument_key=instrument_key,
+                    unit=interval["unit"],
+                    interval_value=interval["interval_value"],
+                    from_date=chunk_from,
+                    to_date=chunk_to
+                )
+
+                if normalized_config["skip_existing"] and chunk_status_key in chunk_history_index:
+                    metrics["api_calls_skipped"] += 1
+                    maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                    continue
+
+                url = build_ohlcv_url(
+                    source=source,
+                    mode=mode,
+                    instrument_key=instrument_key,
+                    interval=interval,
+                    from_date=chunk_from,
+                    to_date=chunk_to
+                )
+
+                try:
+                    chunk_started_perf = time.perf_counter()
+
+                    if not first_api_call_logged:
+                        first_api_call_logged = True
                         log_ohlcv_message(
-                            "Batch pause "
-                            f"after {instrument_index - 1} instruments "
-                            f"for {normalized_config['batch_delay_seconds']}s."
+                            "First OHLCV API call reached after "
+                            f"{time.perf_counter() - service_start_perf:.3f}s."
                         )
+
+                    log_ohlcv_message(
+                        f"API {pending_index}/{len(pending_chunks)} "
+                        f"{source} {mode} {interval_key} "
+                        f"instrument={pending['instrument_index']}/{pending['instrument_count']} "
+                        f"chunk={pending['chunk_index']}/{pending['chunk_count']} "
+                        f"{instrument_key} {chunk_from} to {chunk_to}"
+                    )
+
+                    api_started_perf = time.perf_counter()
+                    metrics["api_calls_attempted"] += 1
+                    response = fetch_ohlcv_candles_with_retry(
+                        url=url,
+                        token=token,
+                        retry_count=normalized_config["retry_count"],
+                        retry_failed=normalized_config["retry_failed"],
+                        rate_limiter=rate_limiter,
+                        heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
+                    )
+                    api_elapsed = time.perf_counter() - api_started_perf
+
+                    normalize_started_perf = time.perf_counter()
+                    candles = extract_ohlcv_candles(response)
+                    records = []
+
+                    if not candles:
+                        log_ohlcv_message(
+                            f"API returned 0 candles for {instrument_key} {source} {mode} "
+                            f"{interval_key} {chunk_from} to {chunk_to}."
+                        )
+
+                    for candle in candles:
+                        normalized_record = normalize_ohlcv_candle_record(
+                            candle=candle,
+                            source=source,
+                            mode=mode,
+                            interval=interval,
+                            instrument=instrument,
+                            sync_id=sync_id
+                        )
+
+                        if normalized_record:
+                            records.append(normalized_record)
+                    normalize_elapsed = time.perf_counter() - normalize_started_perf
+
+                    persist_started_perf = time.perf_counter()
+                    inserted_records = persist_ohlcv_records(conn, records)
+                    persist_elapsed = time.perf_counter() - persist_started_perf
+
+                    status_started_perf = time.perf_counter()
+                    record_ohlcv_chunk_status(
+                        conn=conn,
+                        source=source,
+                        mode=mode,
+                        instrument_key=instrument_key,
+                        unit=interval["unit"],
+                        interval_value=interval["interval_value"],
+                        from_date=chunk_from,
+                        to_date=chunk_to,
+                        status_value="success",
+                        record_count=inserted_records,
+                        sync_id=sync_id,
+                        error_message=None
+                    )
+                    conn.commit()
+                    status_elapsed = time.perf_counter() - status_started_perf
+                    chunk_history_index.add(chunk_status_key)
+
+                    if inserted_records:
+                        total_records += inserted_records
+                        metrics["candles_inserted"] += inserted_records
+
+                    log_ohlcv_message(
+                        f"Saved {inserted_records} OHLCV rows. "
+                        f"Total saved={total_records}. "
+                        f"timing: api={api_elapsed:.3f}s, "
+                        f"parse={normalize_elapsed:.3f}s, "
+                        f"db_save={persist_elapsed:.3f}s, "
+                        f"status={status_elapsed:.3f}s, "
+                        f"chunk_total={time.perf_counter() - chunk_started_perf:.3f}s."
+                    )
+
+                    maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics)
+
+                    if normalized_config["request_delay_ms"]:
                         sleep_with_heartbeat(
-                            normalized_config["batch_delay_seconds"],
+                            normalized_config["request_delay_ms"] / 1000,
                             lambda: check_sync_cancelled(conn, sync_id)
                         )
                         check_sync_cancelled(conn, sync_id)
 
-                instrument_key = safe_strip(instrument.get("instrument_key"))
-                trading_symbol = safe_strip(instrument.get("trading_symbol")) or "--"
+                except SyncCancelled:
+                    raise
+                except HTTPException as error:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
 
-                if not instrument_key:
-                    continue
+                    if is_upstox_auth_token_error(error):
+                        raise
 
-                log_ohlcv_message(
-                    f"Instrument {instrument_index}/{len(instruments)} "
-                    f"{trading_symbol} ({instrument_key})"
-                )
-
-                for mode in normalized_config["candle_modes"]:
-                    check_sync_cancelled(conn, sync_id)
-
-                    if source == OHLCV_EXPIRED_SOURCE and mode == OHLCV_INTRADAY_MODE:
-                        metrics["api_calls_skipped"] += 1
-                        log_ohlcv_message(
-                            f"Skipped {instrument_key}: expired intraday is not supported."
-                        )
-                        update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                        continue
-
-                    for interval_key in normalized_config["intervals"]:
-                        check_sync_cancelled(conn, sync_id)
-
-                        interval = get_ohlcv_interval_definition(interval_key)
-
-                        if source == OHLCV_EXPIRED_SOURCE and not interval.get("expired_interval"):
-                            metrics["api_calls_skipped"] += 1
-                            log_ohlcv_message(
-                                f"Skipped {instrument_key}: expired interval {interval_key} is not supported."
-                            )
-                            update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                            continue
-
-                        if mode == OHLCV_INTRADAY_MODE and interval["unit"] in ("weeks", "months"):
-                            metrics["api_calls_skipped"] += 1
-                            log_ohlcv_message(
-                                f"Skipped {instrument_key}: intraday interval {interval_key} is not supported."
-                            )
-                            update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                            continue
-
-                        effective_range = get_effective_ohlcv_date_range_for_instrument(
+                    error_text = str(error.detail)
+                    metrics["failed_instruments"] += 1
+                    failed_items.append({
+                        "instrument_key": instrument_key,
+                        "source": source,
+                        "mode": mode,
+                        "interval": interval_key,
+                        "from_date": str(chunk_from),
+                        "to_date": str(chunk_to),
+                        "error": error_text
+                    })
+                    try:
+                        record_ohlcv_chunk_status(
                             conn=conn,
-                            config=normalized_config,
                             source=source,
                             mode=mode,
                             instrument_key=instrument_key,
                             unit=interval["unit"],
                             interval_value=interval["interval_value"],
-                            saved_bounds_cache=saved_bounds_cache
+                            from_date=chunk_from,
+                            to_date=chunk_to,
+                            status_value="failed",
+                            record_count=0,
+                            sync_id=sync_id,
+                            error_message=error_text
                         )
+                        conn.commit()
+                    except Exception:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                    log_ohlcv_message(
+                        f"API failed {instrument_key} {source} {mode} {interval_key} "
+                        f"{chunk_from} to {chunk_to}: {error_text}"
+                    )
+                    maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                    continue
+                except Exception as error:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
 
-                        if not effective_range:
-                            metrics["api_calls_skipped"] += 1
-                            log_ohlcv_message(
-                                f"Skipped {instrument_key}: saved data already reaches "
-                                f"{normalized_config['to_date']} for {source} {mode} {interval_key}."
-                            )
-                            update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                            continue
-
-                        chunks = split_ohlcv_date_range(
-                            from_date=effective_range["from_date"],
-                            to_date=effective_range["to_date"],
-                            unit=interval["unit"],
-                            interval_value=interval["interval_value"],
-                            source=source
-                        )
-
-                        if mode == OHLCV_INTRADAY_MODE:
-                            chunks = [
-                                {
-                                    "from_date": effective_range["to_date"],
-                                    "to_date": effective_range["to_date"]
-                                }
-                            ]
-
-                        for chunk_index, chunk in enumerate(chunks, start=1):
-                            check_sync_cancelled(conn, sync_id)
-
-                            chunk_from = chunk["from_date"]
-                            chunk_to = chunk["to_date"]
-                            chunk_status_key = get_ohlcv_chunk_status_key(
-                                source=source,
-                                mode=mode,
-                                instrument_key=instrument_key,
-                                unit=interval["unit"],
-                                interval_value=interval["interval_value"],
-                                from_date=chunk_from,
-                                to_date=chunk_to
-                            )
-
-                            if normalized_config["skip_existing"] and chunk_status_key in chunk_history_index:
-                                skipped_days = (chunk_to - chunk_from).days + 1
-                                metrics["api_calls_skipped"] += 1
-                                metrics["candles_skipped"] += skipped_days
-                                log_ohlcv_message(
-                                    f"Skipped API call {instrument_key} {source} {mode} "
-                                    f"{interval_key} {chunk_from} to {chunk_to}: chunk history already checked."
-                                )
-                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                                continue
-
-                            if normalized_config["skip_existing"] and should_skip_ohlcv_chunk_by_saved_bounds(
-                                conn=conn,
-                                source=source,
-                                mode=mode,
-                                instrument_key=instrument_key,
-                                unit=interval["unit"],
-                                interval_value=interval["interval_value"],
-                                from_date=chunk_from,
-                                to_date=chunk_to,
-                                saved_bounds_cache=saved_bounds_cache
-                            ):
-                                skipped_days = (chunk_to - chunk_from).days + 1
-                                metrics["api_calls_skipped"] += 1
-                                metrics["candles_skipped"] += skipped_days
-                                log_ohlcv_message(
-                                    f"Skipped API call {instrument_key} {source} {mode} "
-                                    f"{interval_key} {chunk_from} to {chunk_to}: saved date range already covers it."
-                                )
-                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                                continue
-
-                            url = build_ohlcv_url(
-                                source=source,
-                                mode=mode,
-                                instrument_key=instrument_key,
-                                interval=interval,
-                                from_date=chunk_from,
-                                to_date=chunk_to
-                            )
-
-                            try:
-                                if not first_api_call_logged:
-                                    first_api_call_logged = True
-                                    log_ohlcv_message(
-                                        "First OHLCV API call reached after "
-                                        f"{time.perf_counter() - service_start_perf:.3f}s."
-                                    )
-
-                                log_ohlcv_message(
-                                    f"API {source} {mode} {interval_key} "
-                                    f"chunk {chunk_index}/{len(chunks)} "
-                                    f"{instrument_key} {chunk_from} to {chunk_to}"
-                                )
-
-                                response = fetch_ohlcv_candles_with_retry(
-                                    url=url,
-                                    token=token,
-                                    retry_count=normalized_config["retry_count"],
-                                    retry_failed=normalized_config["retry_failed"],
-                                    rate_limiter=rate_limiter,
-                                    heartbeat_callback=lambda: check_sync_cancelled(conn, sync_id)
-                                )
-                                metrics["api_calls_attempted"] += 1
-
-                                candles = extract_ohlcv_candles(response)
-
-                                if not candles:
-                                    log_ohlcv_message(
-                                        f"API returned 0 candles for {instrument_key} {source} {mode} "
-                                        f"{interval_key} {chunk_from} to {chunk_to}."
-                                    )
-
-                                records = []
-
-                                for candle in candles:
-                                    normalized_record = normalize_ohlcv_candle_record(
-                                        candle=candle,
-                                        source=source,
-                                        mode=mode,
-                                        interval=interval,
-                                        instrument=instrument,
-                                        sync_id=sync_id
-                                    )
-
-                                    if normalized_record:
-                                        records.append(normalized_record)
-
-                                inserted_records = persist_ohlcv_records(conn, records)
-
-                                record_ohlcv_chunk_status(
-                                    conn=conn,
-                                    source=source,
-                                    mode=mode,
-                                    instrument_key=instrument_key,
-                                    unit=interval["unit"],
-                                    interval_value=interval["interval_value"],
-                                    from_date=chunk_from,
-                                    to_date=chunk_to,
-                                    status_value="success",
-                                    record_count=inserted_records,
-                                    sync_id=sync_id,
-                                    error_message=None
-                                )
-                                chunk_history_index.add(chunk_status_key)
-
-                                if inserted_records:
-                                    total_records += inserted_records
-                                    metrics["candles_inserted"] += inserted_records
-
-                                log_ohlcv_message(
-                                    f"Saved {inserted_records} OHLCV rows for "
-                                    f"{instrument_key} {source} {mode} {interval_key} "
-                                    f"{chunk_from} to {chunk_to}. "
-                                    f"Total saved={total_records}."
-                                )
-
-                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
-
-                                if normalized_config["request_delay_ms"]:
-                                    sleep_with_heartbeat(
-                                        normalized_config["request_delay_ms"] / 1000,
-                                        lambda: check_sync_cancelled(conn, sync_id)
-                                    )
-                                    check_sync_cancelled(conn, sync_id)
-
-                            except SyncCancelled:
-                                raise
-                            except HTTPException as error:
-                                try:
-                                    conn.rollback()
-                                except Exception:
-                                    pass
-
-                                metrics["failed_instruments"] += 1
-                                failed_items.append({
-                                    "instrument_key": instrument_key,
-                                    "source": source,
-                                    "mode": mode,
-                                    "interval": interval_key,
-                                    "from_date": chunk_from.isoformat(),
-                                    "to_date": chunk_to.isoformat(),
-                                    "error": error.detail
-                                })
-                                try:
-                                    record_ohlcv_chunk_status(
-                                        conn=conn,
-                                        source=source,
-                                        mode=mode,
-                                        instrument_key=instrument_key,
-                                        unit=interval["unit"],
-                                        interval_value=interval["interval_value"],
-                                        from_date=chunk_from,
-                                        to_date=chunk_to,
-                                        status_value="failed",
-                                        record_count=0,
-                                        sync_id=sync_id,
-                                        error_message=str(error.detail)
-                                    )
-                                    conn.commit()
-                                except Exception:
-                                    try:
-                                        conn.rollback()
-                                    except Exception:
-                                        pass
-                                log_ohlcv_message(
-                                    "API failed "
-                                    f"{instrument_key} {source} {mode} {interval_key} "
-                                    f"{chunk_from} to {chunk_to}: {error.detail}"
-                                )
-                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                                continue
-                            except Exception as error:
-                                try:
-                                    conn.rollback()
-                                except Exception:
-                                    pass
-
-                                metrics["failed_instruments"] += 1
-                                failed_items.append({
-                                    "instrument_key": instrument_key,
-                                    "source": source,
-                                    "mode": mode,
-                                    "interval": interval_key,
-                                    "from_date": chunk_from.isoformat(),
-                                    "to_date": chunk_to.isoformat(),
-                                    "error": str(error)
-                                })
-                                log_ohlcv_message(
-                                    "Save/API failed "
-                                    f"{instrument_key} {source} {mode} {interval_key} "
-                                    f"{chunk_from} to {chunk_to}: {error}"
-                                )
-                                update_ohlcv_metrics_progress(conn, sync_id, metrics)
-                                continue
-
-            source_api_calls_after = int(metrics.get("api_calls_attempted") or 0)
-            source_skips_after = int(metrics.get("api_calls_skipped") or 0)
-            log_ohlcv_message(
-                f"Source {source} completed in {time.perf_counter() - source_start_perf:.3f}s: "
-                f"api_calls={source_api_calls_after - source_api_calls_before}, "
-                f"skipped={source_skips_after - source_skips_before}."
-            )
+                    error_text = str(error)
+                    metrics["failed_instruments"] += 1
+                    failed_items.append({
+                        "instrument_key": instrument_key,
+                        "source": source,
+                        "mode": mode,
+                        "interval": interval_key,
+                        "from_date": str(chunk_from),
+                        "to_date": str(chunk_to),
+                        "error": error_text
+                    })
+                    log_ohlcv_message(
+                        f"Save/API failed {instrument_key} {source} {mode} {interval_key} "
+                        f"{chunk_from} to {chunk_to}: {error_text}"
+                    )
+                    maybe_update_ohlcv_metrics_progress(conn, sync_id, metrics)
+                    continue
 
         total_records = count_ohlcv_records_for_sync(conn, sync_id) or total_records
         metrics["candles_inserted"] = max(
