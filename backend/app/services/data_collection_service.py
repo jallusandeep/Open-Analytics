@@ -402,7 +402,7 @@ def sleep_with_heartbeat(seconds: float, heartbeat_callback: Optional[Callable[[
         if heartbeat_callback:
             heartbeat_callback()
 
-        sleep_seconds = min(30, remaining_seconds)
+        sleep_seconds = min(1, remaining_seconds)
         time.sleep(sleep_seconds)
         remaining_seconds -= sleep_seconds
 

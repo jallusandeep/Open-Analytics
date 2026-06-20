@@ -6771,11 +6771,11 @@ function DataCollection() {
 
     const pollId = window.setInterval(() => {
       loadData(false, { showLoading: false });
-    }, 5000);
+    }, isCancelRequested ? 1000 : 5000);
 
     return () => window.clearInterval(pollId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasActiveJob]);
+  }, [hasActiveJob, isCancelRequested]);
 
   useEffect(() => {
     if (hasActiveJob || activeView !== "monitor") {
