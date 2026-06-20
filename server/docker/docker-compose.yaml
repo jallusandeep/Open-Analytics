@@ -19,6 +19,8 @@ services:
     volumes:
       - ${DATA_VOLUME}:/app/data
     restart: unless-stopped
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     networks:
       - rubik-network
     healthcheck:
@@ -73,6 +75,8 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     networks:
       - rubik-network
     healthcheck:
@@ -98,15 +102,22 @@ services:
   watchtower:
     image: containrrr/watchtower:latest
     container_name: watchtower
+    command:
+      - --label-enable
+      - --interval
+      - ${WATCHTOWER_POLL_INTERVAL:-60}
+      - --cleanup
+      - --rolling-restart
+      - --include-restarting
+      - ${BACKEND_CONTAINER_NAME}
+      - ${FRONTEND_CONTAINER_NAME}
     # Mount the Docker socket so watchtower can interact with the Docker daemon
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DOCKER_API_VERSION=1.44
-      # Optional: Poll for updates every 30 minutes (1800 seconds)
-      - WATCHTOWER_POLL_INTERVAL=600
-      # Optional: Remove old images after updating
-      - WATCHTOWER_CLEANUP=true
+      - REPO_USER=${GHCR_USERNAME:-}
+      - REPO_PASS=${GHCR_TOKEN:-}
     restart: unless-stopped
 
 networks:
