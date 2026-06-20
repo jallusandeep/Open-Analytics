@@ -152,6 +152,7 @@ UPSTOX_COMPANY_FUNDAMENTAL_DEFAULT_BATCH_SIZE = 25
 UPSTOX_COMPANY_FUNDAMENTAL_DEFAULT_REQUEST_DELAY_MS = 250
 UPSTOX_COMPANY_FUNDAMENTAL_DEFAULT_RETRY_COUNT = 3
 UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY = False
+OHLCV_CHUNK_STATUS_SCHEMA_READY = False
 
 
 REQUEST_TIMEOUT_SECONDS = 180
@@ -205,6 +206,9 @@ OHLCV_CURRENT_DAILY_MAX_DAYS = 3653
 OHLCV_CURRENT_INTRADAY_SMALL_MAX_DAYS = 31
 OHLCV_CURRENT_INTRADAY_LARGE_MAX_DAYS = 92
 OHLCV_EXPIRED_MAX_DAYS = 3650
+EQUITY_STOCK_ISIN_PREFIX = "INE"
+OHLCV_CURRENT_NSE_EQUITY_TYPES = ("BE", "BZ", "EQ", "EQUITY", "SM", "ST")
+OHLCV_CURRENT_BSE_EQUITY_TYPES = ("A", "B", "E", "EQ", "EQUITY", "M", "MS", "MT", "P", "T", "TS", "X", "XT", "Z", "ZP")
 
 OHLCV_INTERVAL_OPTIONS = {
     "1minute": {"label": "1 minute", "unit": "minutes", "interval_value": 1, "expired_interval": "1minute"},
@@ -1471,6 +1475,29 @@ def ensure_expired_contract_sync_status_table(conn):
         );
     """)
 
+    for index_sql in [
+        """
+        CREATE INDEX IF NOT EXISTS idx_expired_contract_status_lookup
+        ON upstox_expired_contract_sync_status (
+            underlying_key,
+            expiry,
+            source_type,
+            status
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_expired_contract_status_synced
+        ON upstox_expired_contract_sync_status (synced_at);
+        """
+    ]:
+        try:
+            conn.execute(index_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
 
 def ensure_expired_underlying_sync_status_table(conn):
     conn.execute("""
@@ -1485,6 +1512,29 @@ def ensure_expired_underlying_sync_status_table(conn):
             synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
+    for index_sql in [
+        """
+        CREATE INDEX IF NOT EXISTS idx_expired_underlying_status_lookup
+        ON upstox_expired_underlying_sync_status (
+            underlying_key,
+            status,
+            include_options,
+            include_futures
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_expired_underlying_status_synced
+        ON upstox_expired_underlying_sync_status (synced_at);
+        """
+    ]:
+        try:
+            conn.execute(index_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 
 def has_expired_underlying_been_fully_checked(
@@ -1511,6 +1561,56 @@ def has_expired_underlying_been_fully_checked(
     """, [underlying_key, include_options, include_futures]).fetchone()
 
     return bool(row)
+
+
+def build_expired_underlying_status_index(
+    conn,
+    underlying_keys: List[str],
+    include_options: bool,
+    include_futures: bool,
+    max_expiries: Optional[int] = None,
+    force_refresh: bool = False
+) -> set:
+    if force_refresh or max_expiries:
+        return set()
+
+    clean_keys = unique_preserve_order([
+        safe_strip(underlying_key)
+        for underlying_key in underlying_keys
+        if safe_strip(underlying_key)
+    ])
+
+    if not clean_keys:
+        return set()
+
+    ensure_expired_underlying_sync_status_table(conn)
+    placeholders = ", ".join(["?"] * len(clean_keys))
+
+    rows = conn.execute(f"""
+        SELECT underlying_key
+        FROM upstox_expired_underlying_sync_status
+        WHERE underlying_key IN ({placeholders})
+          AND status = 'success'
+          AND (? = FALSE OR include_options = TRUE)
+          AND (? = FALSE OR include_futures = TRUE);
+    """, [
+        *clean_keys,
+        include_options,
+        include_futures
+    ]).fetchall()
+
+    status_index = {
+        safe_strip(row[0])
+        for row in rows
+        if row and safe_strip(row[0])
+    }
+
+    print(
+        "Expired underlyings bulk indexed DB check loaded "
+        f"{len(status_index)} fully checked underlyings."
+    )
+
+    return status_index
 
 
 def record_expired_underlying_status(
@@ -1589,6 +1689,88 @@ def has_expired_contract_group_been_checked(
     """, [underlying_key, expiry_date, source_type]).fetchone()
 
     return bool(status_row)
+
+
+def get_expired_contract_group_key(
+    underlying_key: str,
+    expiry_date: Any,
+    source_type: str
+) -> tuple:
+    return (
+        safe_strip(underlying_key),
+        normalize_expiry_value(expiry_date),
+        safe_strip(source_type)
+    )
+
+
+def build_expired_contract_group_status_index(
+    conn,
+    underlying_key: str,
+    expiry_dates: List[Any],
+    source_types: List[str],
+    force_refresh: bool = False
+) -> set:
+    if force_refresh:
+        return set()
+
+    clean_underlying_key = safe_strip(underlying_key)
+    clean_expiries = unique_preserve_order([
+        normalize_expiry_value(expiry_date)
+        for expiry_date in expiry_dates
+        if normalize_expiry_value(expiry_date)
+    ])
+    clean_source_types = unique_preserve_order([
+        safe_strip(source_type)
+        for source_type in source_types
+        if safe_strip(source_type)
+    ])
+
+    if not clean_underlying_key or not clean_expiries or not clean_source_types:
+        return set()
+
+    ensure_expired_contract_sync_status_table(conn)
+    expiry_placeholders = ", ".join(["TRY_CAST(? AS DATE)"] * len(clean_expiries))
+    source_type_placeholders = ", ".join(["?"] * len(clean_source_types))
+    status_index = set()
+
+    rows = conn.execute(f"""
+        SELECT underlying_key, expiry, source_type
+        FROM upstox_expired_instruments
+        WHERE underlying_key = ?
+          AND expiry IN ({expiry_placeholders})
+          AND source_type IN ({source_type_placeholders})
+        GROUP BY underlying_key, expiry, source_type;
+    """, [
+        clean_underlying_key,
+        *clean_expiries,
+        *clean_source_types
+    ]).fetchall()
+
+    for row in rows:
+        status_index.add(get_expired_contract_group_key(row[0], row[1], row[2]))
+
+    status_rows = conn.execute(f"""
+        SELECT underlying_key, expiry, source_type
+        FROM upstox_expired_contract_sync_status
+        WHERE underlying_key = ?
+          AND expiry IN ({expiry_placeholders})
+          AND source_type IN ({source_type_placeholders})
+          AND status = 'success';
+    """, [
+        clean_underlying_key,
+        *clean_expiries,
+        *clean_source_types
+    ]).fetchall()
+
+    for row in status_rows:
+        status_index.add(get_expired_contract_group_key(row[0], row[1], row[2]))
+
+    print(
+        "Expired contracts bulk indexed DB check loaded "
+        f"{len(status_index)} checked groups for {clean_underlying_key}."
+    )
+
+    return status_index
 
 
 def record_expired_contract_group_status(
@@ -1672,6 +1854,15 @@ def download_expired_instruments_with_sdk(
     persisted_records = 0
     was_cancelled = False
 
+    underlying_status_index = build_expired_underlying_status_index(
+        conn=conn,
+        underlying_keys=underlying_keys,
+        include_options=include_options,
+        include_futures=include_futures,
+        max_expiries=max_expiries,
+        force_refresh=force_refresh
+    )
+
     def persist_completed_expired_batch():
         nonlocal records
         nonlocal group_statuses
@@ -1710,14 +1901,7 @@ def download_expired_instruments_with_sdk(
         for underlying_index, underlying_key in enumerate(underlying_keys, start=1):
             check_sync_cancelled(conn, sync_id)
 
-            if has_expired_underlying_been_fully_checked(
-                conn,
-                underlying_key=underlying_key,
-                include_options=include_options,
-                include_futures=include_futures,
-                max_expiries=max_expiries,
-                force_refresh=force_refresh
-            ):
+            if safe_strip(underlying_key) in underlying_status_index:
                 skipped_underlyings += 1
                 print(
                     "Skipping expired instruments for "
@@ -1778,18 +1962,33 @@ def download_expired_instruments_with_sdk(
             print(f"Expired expiries found for {underlying_key}: {len(expiries)}")
             underlying_failed = False
             underlying_record_count = 0
+            source_types_to_check = []
+
+            if include_options:
+                source_types_to_check.append(EXPIRED_SOURCE_OPTION)
+
+            if include_futures:
+                source_types_to_check.append(EXPIRED_SOURCE_FUTURE)
+
+            contract_group_status_index = build_expired_contract_group_status_index(
+                conn=conn,
+                underlying_key=underlying_key,
+                expiry_dates=expiries,
+                source_types=source_types_to_check,
+                force_refresh=force_refresh
+            )
 
             for expiry_index, expiry_date in enumerate(expiries, start=1):
                 check_sync_cancelled(conn, sync_id)
 
                 if include_options:
-                    if has_expired_contract_group_been_checked(
-                        conn,
-                        underlying_key=underlying_key,
-                        expiry_date=expiry_date,
-                        source_type=EXPIRED_SOURCE_OPTION,
-                        force_refresh=force_refresh
-                    ):
+                    option_group_key = get_expired_contract_group_key(
+                        underlying_key,
+                        expiry_date,
+                        EXPIRED_SOURCE_OPTION
+                    )
+
+                    if option_group_key in contract_group_status_index:
                         skipped_groups += 1
                         print(
                             f"Options {underlying_key} {expiry_date}: "
@@ -1820,6 +2019,7 @@ def download_expired_instruments_with_sdk(
                                 "record_count": len(option_rows),
                                 "error": None
                             })
+                            contract_group_status_index.add(option_group_key)
 
                             print(
                                 f"Options {underlying_key} {expiry_date} "
@@ -1854,13 +2054,13 @@ def download_expired_instruments_with_sdk(
                 check_sync_cancelled(conn, sync_id)
 
                 if include_futures:
-                    if has_expired_contract_group_been_checked(
-                        conn,
-                        underlying_key=underlying_key,
-                        expiry_date=expiry_date,
-                        source_type=EXPIRED_SOURCE_FUTURE,
-                        force_refresh=force_refresh
-                    ):
+                    future_group_key = get_expired_contract_group_key(
+                        underlying_key,
+                        expiry_date,
+                        EXPIRED_SOURCE_FUTURE
+                    )
+
+                    if future_group_key in contract_group_status_index:
                         skipped_groups += 1
                         print(
                             f"Futures {underlying_key} {expiry_date}: "
@@ -1891,6 +2091,7 @@ def download_expired_instruments_with_sdk(
                                 "record_count": len(future_rows),
                                 "error": None
                             })
+                            contract_group_status_index.add(future_group_key)
 
                             print(
                                 f"Futures {underlying_key} {expiry_date} "
@@ -1932,6 +2133,8 @@ def download_expired_instruments_with_sdk(
                     "include_futures": include_futures,
                     "error": "One or more contract groups failed." if underlying_failed else None
                 })
+                if not underlying_failed:
+                    underlying_status_index.add(safe_strip(underlying_key))
 
             persist_completed_expired_batch()
     except SyncCancelled:
@@ -3544,11 +3747,12 @@ def get_upstox_company_fundamentals_options_service():
 
 
 def fetch_company_fundamental_instruments(conn, config: dict) -> List[dict]:
-    filter_params = []
+    filter_params = [f"{EQUITY_STOCK_ISIN_PREFIX}%"]
 
     where_sql = """
     WHERE isin IS NOT NULL
       AND TRIM(isin) <> ''
+      AND UPPER(COALESCE(isin, '')) LIKE ?
       AND instrument_key IS NOT NULL
       AND TRIM(instrument_key) <> ''
       AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
@@ -4420,6 +4624,9 @@ def sync_upstox_company_fundamentals_service(
     failed_items = []
 
     try:
+        service_start_perf = time.perf_counter()
+        first_api_call_logged = False
+
         if clear_cancel_at_start:
             clear_cancel_signal()
 
@@ -4534,6 +4741,13 @@ def sync_upstox_company_fundamentals_service(
             )
 
             try:
+                if not first_api_call_logged:
+                    first_api_call_logged = True
+                    print(
+                        "[Company Fundamentals] First API call reached after "
+                        f"{time.perf_counter() - service_start_perf:.3f}s."
+                    )
+
                 print(
                     "[Company Fundamentals] API pending "
                     f"{pending_index}/{len(pending_jobs)} "
@@ -5267,6 +5481,12 @@ def ensure_upstox_news_ipo_tables(conn):
                 pass
 
     for index_sql in [
+        "CREATE INDEX IF NOT EXISTS idx_equity_news_status_lookup ON upstox_equity_news_sync_status (instrument_key, status, checked_at);",
+        "CREATE INDEX IF NOT EXISTS idx_equity_news_status_sync ON upstox_equity_news_sync_status (source_sync_id);",
+        "CREATE INDEX IF NOT EXISTS idx_ipo_sync_status_lookup ON upstox_ipo_sync_status (status_filter, issue_type_filter, status);",
+        "CREATE INDEX IF NOT EXISTS idx_ipo_sync_status_sync ON upstox_ipo_sync_status (source_sync_id);",
+        "CREATE INDEX IF NOT EXISTS idx_upstox_ipo_list_status ON upstox_ipo_list (derived_status);",
+        "CREATE INDEX IF NOT EXISTS idx_upstox_ipo_list_updated ON upstox_ipo_list (updated_at);",
         "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_status ON ipo_gmp_scraper (ipo_status);",
         "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_updated ON ipo_gmp_scraper (updated_at);",
         "CREATE INDEX IF NOT EXISTS idx_ipo_gmp_scraper_snapshots_ipo_name ON ipo_gmp_scraper_snapshots (ipo_name);",
@@ -5810,6 +6030,7 @@ def fetch_equity_news_instruments(conn, config: Optional[dict] = None) -> List[d
             FROM upstox_equity_instruments
             WHERE instrument_key IS NOT NULL
               AND TRIM(instrument_key) <> ''
+              AND UPPER(COALESCE(isin, '')) LIKE '{EQUITY_STOCK_ISIN_PREFIX}%'
               {single_filter_sql}
 
             UNION ALL
@@ -5825,6 +6046,7 @@ def fetch_equity_news_instruments(conn, config: Optional[dict] = None) -> List[d
             FROM upstox_instruments
             WHERE instrument_key IS NOT NULL
               AND TRIM(instrument_key) <> ''
+              AND UPPER(COALESCE(isin, '')) LIKE '{EQUITY_STOCK_ISIN_PREFIX}%'
               AND source_type = 'bod_complete'
               AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
               AND UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
@@ -5867,6 +6089,8 @@ def sync_upstox_equity_news_service(
         "failed_items": 0
     }
     failed_items = []
+    service_start_perf = time.perf_counter()
+    first_api_call_logged = False
 
     try:
         if clear_cancel_at_start:
@@ -5996,6 +6220,13 @@ def sync_upstox_equity_news_service(
                 )
 
                 try:
+                    if not first_api_call_logged:
+                        first_api_call_logged = True
+                        print(
+                            "[Equity News] First API call reached after "
+                            f"{time.perf_counter() - service_start_perf:.3f}s."
+                        )
+
                     print(
                         "[Equity News] API batch "
                         f"{batch_start + 1}-{batch_start + len(batch)} "
@@ -6295,6 +6526,58 @@ def build_ipo_detail_url(ipo_id: str) -> str:
     return UPSTOX_IPO_DETAIL_URL.format(ipo_id=urllib.parse.quote(str(ipo_id), safe=""))
 
 
+def build_ipo_completed_status_index(conn, config: dict) -> set:
+    if not config.get("skip_existing") or config.get("force_refresh"):
+        return set()
+
+    statuses = [
+        safe_strip(status_filter).lower()
+        for status_filter in config.get("statuses", [])
+        if safe_strip(status_filter).lower() in ("closed", "listed")
+    ]
+    issue_types = [
+        safe_strip(issue_type_filter).lower()
+        for issue_type_filter in config.get("issue_types", [])
+        if safe_strip(issue_type_filter)
+    ]
+
+    statuses = unique_preserve_order(statuses)
+    issue_types = unique_preserve_order(issue_types)
+
+    if not statuses or not issue_types:
+        return set()
+
+    status_placeholders = ", ".join(["?"] * len(statuses))
+    issue_type_placeholders = ", ".join(["?"] * len(issue_types))
+
+    rows = conn.execute(f"""
+        SELECT status_filter, issue_type_filter
+        FROM upstox_ipo_sync_status
+        WHERE status = 'success'
+          AND LOWER(status_filter) IN ({status_placeholders})
+          AND LOWER(issue_type_filter) IN ({issue_type_placeholders});
+    """, [
+        *statuses,
+        *issue_types
+    ]).fetchall()
+
+    status_index = {
+        (
+            safe_strip(row[0]).lower(),
+            safe_strip(row[1]).lower()
+        )
+        for row in rows
+        if row and safe_strip(row[0]) and safe_strip(row[1])
+    }
+
+    print(
+        "[IPO Calendar] Bulk indexed DB check loaded "
+        f"{len(status_index)} completed status/issue groups."
+    )
+
+    return status_index
+
+
 def extract_ipo_list_rows(response: dict) -> List[dict]:
     data = response.get("data") if isinstance(response, dict) else None
     if isinstance(data, dict):
@@ -6570,23 +6853,20 @@ def sync_upstox_ipo_calendar_service(current_user: dict, config: Optional[dict] 
         token = get_saved_upstox_access_token(conn)
         sync_id = create_sync_run(conn, UPSTOX_IPO_SYNC_TYPE, "running", "IPO Calendar sync started.", current_user=current_user)
         rate_limiter = UpstoxRollingRateLimiter()
+        completed_status_index = build_ipo_completed_status_index(conn, normalized_config)
 
         for status_filter in normalized_config["statuses"]:
             for issue_type_filter in normalized_config["issue_types"]:
                 check_sync_cancelled(conn, sync_id)
 
-                if normalized_config["skip_existing"] and not normalized_config["force_refresh"] and status_filter in ("closed", "listed"):
-                    row = conn.execute("""
-                        SELECT 1
-                        FROM upstox_ipo_sync_status
-                        WHERE status_filter = ?
-                          AND issue_type_filter = ?
-                          AND status = 'success'
-                        LIMIT 1;
-                    """, [status_filter, issue_type_filter]).fetchone()
-                    if row:
-                        metrics["api_calls_skipped"] += 1
-                        continue
+                if (
+                    normalized_config["skip_existing"]
+                    and not normalized_config["force_refresh"]
+                    and status_filter in ("closed", "listed")
+                    and (status_filter.lower(), issue_type_filter.lower()) in completed_status_index
+                ):
+                    metrics["api_calls_skipped"] += 1
+                    continue
 
                 page_number = 1
                 page_count = 0
@@ -8526,68 +8806,6 @@ def split_ohlcv_date_range(from_date: date, to_date: date, unit: str, interval_v
     return chunks
 
 
-def get_existing_ohlcv_dates_for_chunk(
-    conn,
-    source: str,
-    mode: str,
-    instrument_key: str,
-    unit: str,
-    interval_value: int,
-    from_date: date,
-    to_date: date
-) -> set:
-    rows = conn.execute("""
-        SELECT DISTINCT candle_date
-        FROM upstox_ohlcv_candles
-        WHERE provider = ?
-          AND instrument_source = ?
-          AND candle_mode = ?
-          AND instrument_key = ?
-          AND unit = ?
-          AND interval_value = ?
-          AND candle_date BETWEEN ? AND ?;
-    """, [
-        UPSTOX_PROVIDER,
-        source,
-        mode,
-        instrument_key,
-        unit,
-        interval_value,
-        from_date,
-        to_date
-    ]).fetchall()
-
-    return {row[0] for row in rows if row and row[0]}
-
-
-def all_dates_exist_for_chunk(
-    conn,
-    source: str,
-    mode: str,
-    instrument_key: str,
-    unit: str,
-    interval_value: int,
-    from_date: date,
-    to_date: date
-) -> bool:
-    existing_dates = get_existing_ohlcv_dates_for_chunk(
-        conn=conn,
-        source=source,
-        mode=mode,
-        instrument_key=instrument_key,
-        unit=unit,
-        interval_value=interval_value,
-        from_date=from_date,
-        to_date=to_date
-    )
-
-    if not existing_dates:
-        return False
-
-    day_count = (to_date - from_date).days + 1
-
-    return len(existing_dates) >= day_count
-
 def get_ohlcv_available_start_date(source: str, mode: str, unit: str) -> date:
     if source == OHLCV_CURRENT_SOURCE and mode == OHLCV_HISTORICAL_MODE:
         if unit in ("minutes", "hours"):
@@ -8605,6 +8823,11 @@ def get_ohlcv_available_start_date(source: str, mode: str, unit: str) -> date:
 
 # --- Open Analytics OHLCV chunk history helpers ---
 def ensure_ohlcv_chunk_sync_status_table(conn):
+    global OHLCV_CHUNK_STATUS_SCHEMA_READY
+
+    if OHLCV_CHUNK_STATUS_SCHEMA_READY:
+        return
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS upstox_ohlcv_chunk_sync_status (
             provider VARCHAR DEFAULT 'upstox',
@@ -8617,12 +8840,70 @@ def ensure_ohlcv_chunk_sync_status_table(conn):
             to_date DATE NOT NULL,
             status VARCHAR DEFAULT 'success',
             record_count BIGINT DEFAULT 0,
+            returned_count BIGINT DEFAULT 0,
             last_error VARCHAR,
             source_sync_id VARCHAR,
             checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
+    def get_existing_columns(table_name: str) -> set:
+        try:
+            rows = conn.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = ?;
+            """, [table_name]).fetchall()
+            return {row[0] for row in rows}
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return set()
+
+    def add_column_if_missing(column_name: str, column_definition: str):
+        existing_columns = get_existing_columns("upstox_ohlcv_chunk_sync_status")
+
+        if column_name in existing_columns:
+            return
+
+        try:
+            conn.execute(f"""
+                ALTER TABLE upstox_ohlcv_chunk_sync_status
+                ADD COLUMN {column_definition};
+            """)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    add_column_if_missing("provider", "provider VARCHAR DEFAULT 'upstox'")
+    add_column_if_missing("record_count", "record_count BIGINT DEFAULT 0")
+    add_column_if_missing("returned_count", "returned_count BIGINT DEFAULT 0")
+    add_column_if_missing("last_error", "last_error VARCHAR")
+    add_column_if_missing("source_sync_id", "source_sync_id VARCHAR")
+    add_column_if_missing("checked_at", "checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    add_column_if_missing("updated_at", "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
+    existing_columns = get_existing_columns("upstox_ohlcv_chunk_sync_status")
+
+    if "record_count" in existing_columns and "returned_count" in existing_columns:
+        try:
+            conn.execute("""
+                UPDATE upstox_ohlcv_chunk_sync_status
+                SET record_count = COALESCE(record_count, returned_count, 0),
+                    returned_count = COALESCE(returned_count, record_count, 0)
+                WHERE record_count IS NULL
+                   OR returned_count IS NULL;
+            """)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
     for index_sql in [
         """
@@ -8652,48 +8933,128 @@ def ensure_ohlcv_chunk_sync_status_table(conn):
             except Exception:
                 pass
 
+    OHLCV_CHUNK_STATUS_SCHEMA_READY = True
 
-def ohlcv_chunk_status_exists(
-    conn,
+
+def get_ohlcv_chunk_status_key(
     source: str,
     mode: str,
     instrument_key: str,
     unit: str,
     interval_value: int,
     from_date,
-    to_date,
-    force_refresh: bool = False
-) -> bool:
-    if force_refresh:
-        return False
-
-    ensure_ohlcv_chunk_sync_status_table(conn)
-
-    row = conn.execute("""
-        SELECT 1
-        FROM upstox_ohlcv_chunk_sync_status
-        WHERE provider = ?
-          AND instrument_key = ?
-          AND instrument_source = ?
-          AND candle_mode = ?
-          AND unit = ?
-          AND interval_value = ?
-          AND from_date = TRY_CAST(? AS DATE)
-          AND to_date = TRY_CAST(? AS DATE)
-          AND status = 'success'
-        LIMIT 1;
-    """, [
-        UPSTOX_PROVIDER,
-        instrument_key,
-        source,
-        mode,
-        unit,
+    to_date
+) -> tuple:
+    return (
+        safe_strip(source),
+        safe_strip(mode),
+        safe_strip(instrument_key),
+        safe_strip(unit),
         int(interval_value or 1),
         from_date,
         to_date
-    ]).fetchone()
+    )
 
-    return bool(row)
+
+def build_ohlcv_chunk_history_index(
+    conn,
+    source: str,
+    config: dict,
+    instruments: List[dict]
+) -> set:
+    if not config.get("skip_existing") or config.get("force_refresh"):
+        return set()
+
+    instrument_keys = unique_preserve_order([
+        safe_strip(instrument.get("instrument_key"))
+        for instrument in instruments
+        if safe_strip(instrument.get("instrument_key"))
+    ])
+
+    if not instrument_keys:
+        return set()
+
+    interval_rows = []
+
+    for mode in config["candle_modes"]:
+        if source == OHLCV_EXPIRED_SOURCE and mode == OHLCV_INTRADAY_MODE:
+            continue
+
+        for interval_key in config["intervals"]:
+            interval = OHLCV_INTERVAL_OPTIONS.get(interval_key)
+
+            if not interval:
+                continue
+
+            if source == OHLCV_EXPIRED_SOURCE and not interval.get("expired_interval"):
+                continue
+
+            if mode == OHLCV_INTRADAY_MODE and interval["unit"] in ("weeks", "months"):
+                continue
+
+            interval_rows.append((
+                mode,
+                interval["unit"],
+                int(interval["interval_value"] or 1)
+            ))
+
+    if not interval_rows:
+        return set()
+
+    instrument_placeholders = ", ".join(["?"] * len(instrument_keys))
+    history_index = set()
+
+    for mode, unit, interval_value in interval_rows:
+        rows = conn.execute(f"""
+            SELECT
+                instrument_source,
+                candle_mode,
+                instrument_key,
+                unit,
+                interval_value,
+                from_date,
+                to_date
+            FROM upstox_ohlcv_chunk_sync_status
+            WHERE provider = ?
+              AND instrument_source = ?
+              AND candle_mode = ?
+              AND unit = ?
+              AND interval_value = ?
+              AND to_date >= TRY_CAST(? AS DATE)
+              AND from_date <= TRY_CAST(? AS DATE)
+              AND instrument_key IN ({instrument_placeholders})
+              AND status = 'success';
+        """, [
+            UPSTOX_PROVIDER,
+            source,
+            mode,
+            unit,
+            interval_value,
+            config["from_date"],
+            config["to_date"],
+            *instrument_keys
+        ]).fetchall()
+
+        for row in rows:
+            if not row:
+                continue
+
+            history_index.add(get_ohlcv_chunk_status_key(
+                source=row[0],
+                mode=row[1],
+                instrument_key=row[2],
+                unit=row[3],
+                interval_value=row[4],
+                from_date=row[5],
+                to_date=row[6]
+            ))
+
+    log_ohlcv_message(
+        "Bulk indexed DB history check loaded "
+        f"{len(history_index)} checked chunks for source={source}."
+    )
+
+    return history_index
 
 
 def record_ohlcv_chunk_status(
@@ -8745,12 +9106,13 @@ def record_ohlcv_chunk_status(
             to_date,
             status,
             record_count,
+            returned_count,
             last_error,
             source_sync_id,
             checked_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, TRY_CAST(? AS DATE), TRY_CAST(? AS DATE), ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+        VALUES (?, ?, ?, ?, ?, ?, TRY_CAST(? AS DATE), TRY_CAST(? AS DATE), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
     """, [
         UPSTOX_PROVIDER,
         instrument_key,
@@ -8761,6 +9123,7 @@ def record_ohlcv_chunk_status(
         from_date,
         to_date,
         status_value,
+        int(record_count or 0),
         int(record_count or 0),
         error_message,
         sync_id
@@ -8801,32 +9164,11 @@ def build_ohlcv_saved_bounds_cache(
     if not interval_rows:
         return {}
 
-    interval_clauses = []
-    params = [
-        UPSTOX_PROVIDER,
-        source
-    ]
+    instrument_placeholders = ", ".join(["?"] * len(instrument_keys))
+    cache = {}
 
     for mode, unit, interval_value in interval_rows:
-        interval_clauses.append("""
-            (
-                candles.candle_mode = ?
-                AND candles.unit = ?
-                AND candles.interval_value = ?
-            )
-        """)
-        params.extend([mode, unit, interval_value])
-
-    instrument_filter_sql = ""
-
-    if len(instrument_keys) <= OHLCV_SAVED_BOUNDS_INSTRUMENT_FILTER_LIMIT:
-        instrument_placeholders = ", ".join(["?"] * len(instrument_keys))
-        instrument_filter_sql = (
-            f" AND candles.instrument_key IN ({instrument_placeholders})"
-        )
-        params.extend(instrument_keys)
-
-    rows = conn.execute(f"""
+        rows = conn.execute(f"""
             SELECT
                 candles.candle_mode,
                 candles.instrument_key,
@@ -8838,31 +9180,38 @@ def build_ohlcv_saved_bounds_cache(
             FROM upstox_ohlcv_candles candles
             WHERE candles.provider = ?
               AND candles.instrument_source = ?
-              AND ({" OR ".join(interval_clauses)})
-              {instrument_filter_sql}
+              AND candles.candle_mode = ?
+              AND candles.unit = ?
+              AND candles.interval_value = ?
+              AND candles.instrument_key IN ({instrument_placeholders})
             GROUP BY
                 candles.candle_mode,
                 candles.instrument_key,
                 candles.unit,
                 candles.interval_value;
-        """, params).fetchall()
+        """, [
+            UPSTOX_PROVIDER,
+            source,
+            mode,
+            unit,
+            int(interval_value or 0),
+            *instrument_keys
+        ]).fetchall()
 
-    cache = {}
-
-    for row in rows:
-        cache[(
-            row[0],
-            row[1],
-            row[2],
-            int(row[3] or 0)
-        )] = {
-            "min_date": row[4],
-            "max_date": row[5],
-            "count": int(row[6] or 0)
-        }
+        for row in rows:
+            cache[(
+                row[0],
+                row[1],
+                row[2],
+                int(row[3] or 0)
+            )] = {
+                "min_date": row[4],
+                "max_date": row[5],
+                "count": int(row[6] or 0)
+            }
 
     log_ohlcv_message(
-        f"Loaded saved OHLCV bounds cache for source={source}: "
+        f"Bulk indexed DB check loaded saved OHLCV bounds for source={source}: "
         f"{len(cache)} instrument/mode/interval groups."
     )
 
@@ -8891,38 +9240,10 @@ def get_saved_ohlcv_date_bounds(
             "count": 0
         })
 
-    row = conn.execute("""
-        SELECT
-            MIN(candle_date),
-            MAX(candle_date),
-            COUNT(1)
-        FROM upstox_ohlcv_candles
-        WHERE provider = ?
-          AND instrument_source = ?
-          AND candle_mode = ?
-          AND instrument_key = ?
-          AND unit = ?
-          AND interval_value = ?;
-    """, [
-        UPSTOX_PROVIDER,
-        source,
-        mode,
-        instrument_key,
-        unit,
-        interval_value
-    ]).fetchone()
-
-    if not row:
-        return {
-            "min_date": None,
-            "max_date": None,
-            "count": 0
-        }
-
     return {
-        "min_date": row[0],
-        "max_date": row[1],
-        "count": int(row[2] or 0)
+        "min_date": None,
+        "max_date": None,
+        "count": 0
     }
 
 
@@ -9013,13 +9334,34 @@ def fetch_ohlcv_instruments(conn, source: str, config: dict) -> List[dict]:
     params = []
 
     if source == OHLCV_CURRENT_SOURCE:
+        nse_type_placeholders = ", ".join(["?"] * len(OHLCV_CURRENT_NSE_EQUITY_TYPES))
+        bse_type_placeholders = ", ".join(["?"] * len(OHLCV_CURRENT_BSE_EQUITY_TYPES))
+        params.extend([
+            f"{EQUITY_STOCK_ISIN_PREFIX}%",
+            *OHLCV_CURRENT_NSE_EQUITY_TYPES,
+            *OHLCV_CURRENT_BSE_EQUITY_TYPES
+        ])
+
         where_sql = """
         WHERE instrument_key IS NOT NULL
           AND TRIM(instrument_key) <> ''
+          AND UPPER(COALESCE(isin, '')) LIKE ?
           AND source_type = 'bod_complete'
-          AND UPPER(COALESCE(segment, '')) IN ('NSE_EQ', 'BSE_EQ')
-          AND UPPER(COALESCE(instrument_type, '')) IN ('EQ', 'EQUITY')
-        """
+          AND (
+              (
+                  UPPER(COALESCE(segment, '')) = 'NSE_EQ'
+                  AND UPPER(COALESCE(instrument_type, '')) IN ({nse_type_placeholders})
+              )
+              OR
+              (
+                  UPPER(COALESCE(segment, '')) = 'BSE_EQ'
+                  AND UPPER(COALESCE(instrument_type, '')) IN ({bse_type_placeholders})
+              )
+          )
+        """.format(
+            nse_type_placeholders=nse_type_placeholders,
+            bse_type_placeholders=bse_type_placeholders
+        )
 
         if config["single_instrument_key"]:
             where_sql += " AND instrument_key = ?"
@@ -9704,6 +10046,8 @@ def sync_upstox_ohlcv_daily_service(
         "failed_instruments": 0
     }
     failed_items = []
+    service_start_perf = time.perf_counter()
+    first_api_call_logged = False
 
     try:
         if clear_cancel_at_start:
@@ -9755,6 +10099,7 @@ def sync_upstox_ohlcv_daily_service(
         for source in normalized_config["sources"]:
             check_sync_cancelled(conn, sync_id)
 
+            source_start_perf = time.perf_counter()
             instruments = fetch_ohlcv_instruments(conn, source, normalized_config)
 
             if not instruments:
@@ -9764,14 +10109,35 @@ def sync_upstox_ohlcv_daily_service(
             token = analytical_token if source == OHLCV_CURRENT_SOURCE else access_token
 
             log_ohlcv_message(
-                f"Source {source}: {len(instruments)} instruments loaded."
+                f"Source {source}: {len(instruments)} instruments loaded "
+                f"in {time.perf_counter() - source_start_perf:.3f}s."
             )
 
+            source_api_calls_before = int(metrics.get("api_calls_attempted") or 0)
+            source_skips_before = int(metrics.get("api_calls_skipped") or 0)
+
+            bounds_start_perf = time.perf_counter()
             saved_bounds_cache = build_ohlcv_saved_bounds_cache(
                 conn=conn,
                 source=source,
                 config=normalized_config,
                 instruments=instruments
+            )
+            log_ohlcv_message(
+                f"Saved bounds indexed DB check completed in "
+                f"{time.perf_counter() - bounds_start_perf:.3f}s."
+            )
+
+            history_start_perf = time.perf_counter()
+            chunk_history_index = build_ohlcv_chunk_history_index(
+                conn=conn,
+                source=source,
+                config=normalized_config,
+                instruments=instruments
+            )
+            log_ohlcv_message(
+                f"Chunk history indexed DB check completed in "
+                f"{time.perf_counter() - history_start_perf:.3f}s."
             )
 
             for instrument_index, instrument in enumerate(instruments, start=1):
@@ -9874,18 +10240,17 @@ def sync_upstox_ohlcv_daily_service(
 
                             chunk_from = chunk["from_date"]
                             chunk_to = chunk["to_date"]
-
-                            if normalized_config["skip_existing"] and ohlcv_chunk_status_exists(
-                                conn=conn,
+                            chunk_status_key = get_ohlcv_chunk_status_key(
                                 source=source,
                                 mode=mode,
                                 instrument_key=instrument_key,
                                 unit=interval["unit"],
                                 interval_value=interval["interval_value"],
                                 from_date=chunk_from,
-                                to_date=chunk_to,
-                                force_refresh=bool(normalized_config.get("force_refresh", False))
-                            ):
+                                to_date=chunk_to
+                            )
+
+                            if normalized_config["skip_existing"] and chunk_status_key in chunk_history_index:
                                 skipped_days = (chunk_to - chunk_from).days + 1
                                 metrics["api_calls_skipped"] += 1
                                 metrics["candles_skipped"] += skipped_days
@@ -9927,6 +10292,13 @@ def sync_upstox_ohlcv_daily_service(
                             )
 
                             try:
+                                if not first_api_call_logged:
+                                    first_api_call_logged = True
+                                    log_ohlcv_message(
+                                        "First OHLCV API call reached after "
+                                        f"{time.perf_counter() - service_start_perf:.3f}s."
+                                    )
+
                                 log_ohlcv_message(
                                     f"API {source} {mode} {interval_key} "
                                     f"chunk {chunk_index}/{len(chunks)} "
@@ -9975,6 +10347,7 @@ def sync_upstox_ohlcv_daily_service(
                                     sync_id=sync_id,
                                     error_message=None
                                 )
+                                chunk_history_index.add(chunk_status_key)
 
                                 if inserted_records:
                                     total_records += inserted_records
@@ -10065,6 +10438,14 @@ def sync_upstox_ohlcv_daily_service(
                                 )
                                 update_ohlcv_metrics_progress(conn, sync_id, metrics)
                                 continue
+
+            source_api_calls_after = int(metrics.get("api_calls_attempted") or 0)
+            source_skips_after = int(metrics.get("api_calls_skipped") or 0)
+            log_ohlcv_message(
+                f"Source {source} completed in {time.perf_counter() - source_start_perf:.3f}s: "
+                f"api_calls={source_api_calls_after - source_api_calls_before}, "
+                f"skipped={source_skips_after - source_skips_before}."
+            )
 
         total_records = count_ohlcv_records_for_sync(conn, sync_id) or total_records
         metrics["candles_inserted"] = max(
