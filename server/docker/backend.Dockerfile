@@ -1,9 +1,10 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
     curl \
     dos2unix \
     tzdata \
@@ -23,12 +24,6 @@ RUN pip install \
     --retries=5 \
     -r requirements.txt
 
-
-# Install dos2unix to fix Windows CRLF issues
-RUN apt-get update && apt-get install -y dos2unix && rm -rf /var/lib/apt/lists/*
-
-
-# Copy application code
 COPY backend/ ./backend/
 
 # Create data directory structure
@@ -48,6 +43,34 @@ COPY backend/ ./backend/
 
 # Fix line endings for Python files (skip if dos2unix fails on binary files)
 RUN find ./backend -type f -name "*.py" -exec dos2unix {} + || true
+
+RUN apt-get update && apt-get install -y \
+    chromium \
+    chromium-driver \
+    fonts-liberation \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libgtk-3-0 \
+    libgbm1 \
+    libasound2 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libxshmfence1 \
+    libxss1 \
+    libxext6 \
+    libxfixes3 \
+    libglib2.0-0 \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN which chromium && chromium --version
+RUN which chromedriver && chromedriver --version
+
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 # Copy entrypoint script
 COPY server/docker/entrypoint.sh /app/entrypoint.sh

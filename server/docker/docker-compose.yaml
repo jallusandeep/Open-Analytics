@@ -1,7 +1,3 @@
-# Data folder configuration
-# The data folder path is automatically detected by docker-start.sh/docker-start.bat scripts
-# They set HOST_DATA_DIR to the absolute path of the project's data/ folder
-# To manually override, set HOST_DATA_DIR environment variable or in .env file
 
 services:
   backend:
@@ -13,9 +9,6 @@ services:
       DATA_DIR: ${DATA_DIR}
       DATABASE_URL: ${DATABASE_URL}
       DUCKDB_PATH: ${DUCKDB_PATH}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_USERNAME: ${ADMIN_USERNAME}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_SYSTEM_SECRET_KEY: ${JWT_SYSTEM_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM}
@@ -26,6 +19,8 @@ services:
     volumes:
       - ${DATA_VOLUME}:/app/data
     restart: unless-stopped
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     networks:
       - rubik-network
     healthcheck:
@@ -75,11 +70,13 @@ services:
       - "${FRONTEND_PORT}:3000"
     environment:
       NODE_ENV: ${NODE_ENV}
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_UPSTOX_REDIRECT_URL: ${VITE_UPSTOX_REDIRECT_URL}
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     networks:
       - rubik-network
     healthcheck:
@@ -105,23 +102,22 @@ services:
   watchtower:
     image: containrrr/watchtower:latest
     container_name: watchtower
+    command:
+      - --label-enable
+      - --interval
+      - ${WATCHTOWER_POLL_INTERVAL:-60}
+      - --cleanup
+      - --rolling-restart
+      - --include-restarting
+      - ${BACKEND_CONTAINER_NAME}
+      - ${FRONTEND_CONTAINER_NAME}
     # Mount the Docker socket so watchtower can interact with the Docker daemon
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DOCKER_API_VERSION=1.44
-      # Enable Slack notifications
-      - WATCHTOWER_NOTIFICATIONS=slack
-      # Paste your Slack webhook URL here
-      - WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL=${SLACK_WEBHOOK_URL}
-      # Optional: Set the notification level (info, verbose, debug)
-      - WATCHTOWER_NOTIFICATIONS_LEVEL=info
-      # Optional: Add an identifier to your notifications (e.g., the server name)
-      - WATCHTOWER_NOTIFICATION_SLACK_IDENTIFIER=Rubik
-      # Optional: Poll for updates every 30 minutes (1800 seconds)
-      - WATCHTOWER_POLL_INTERVAL=600
-      # Optional: Remove old images after updating
-      - WATCHTOWER_CLEANUP=true
+      - REPO_USER=${GHCR_USERNAME:-}
+      - REPO_PASS=${GHCR_TOKEN:-}
     restart: unless-stopped
 
 networks:

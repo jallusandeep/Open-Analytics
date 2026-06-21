@@ -18,7 +18,6 @@ import {
   updateAdminUser
 } from "../../api/adminApi";
 import MainLayout from "../../components/layout/MainLayout";
-import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import FloatingInput from "../../components/common/FloatingInput";
 import Select from "../../components/common/Select";
@@ -1015,27 +1014,23 @@ function UserAccounts() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={saving}
               onClick={closeCreateModal}
             />
 
-            <Tooltip text="Save user" side="top">
-              <button
-                type="submit"
-                form="create-user-form"
-                disabled={saving}
-                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Save user"
-              >
-                {saving ? (
-                  <Spinner size="xs" color="light" />
-                ) : (
-                  <Check size={15} />
-                )}
-              </button>
-            </Tooltip>
+            <IconButton
+              icon={Check}
+              label="Save user"
+              type="submit"
+              form="create-user-form"
+              variant="filterApply"
+              size="filter"
+              tooltipSide="top"
+              loading={saving}
+            />
           </>
         }
       >
@@ -1114,27 +1109,23 @@ function UserAccounts() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={updating}
               onClick={closeEditModal}
             />
 
-            <Tooltip text="Update user" side="top">
-              <button
-                type="submit"
-                form="edit-user-form"
-                disabled={updating}
-                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Update user"
-              >
-                {updating ? (
-                  <Spinner size="xs" color="light" />
-                ) : (
-                  <Check size={15} />
-                )}
-              </button>
-            </Tooltip>
+            <IconButton
+              icon={Check}
+              label="Update user"
+              type="submit"
+              form="edit-user-form"
+              variant="filterApply"
+              size="filter"
+              tooltipSide="top"
+              loading={updating}
+            />
           </>
         }
       >
@@ -1249,27 +1240,22 @@ function UserAccounts() {
             <IconButton
               icon={X}
               label="Cancel"
-              variant="danger"
+              variant="filterCancel"
+              size="filter"
               tooltipSide="top"
               disabled={deleting}
               onClick={closeDeleteModal}
             />
 
-            <Tooltip text="Confirm delete" side="top">
-              <button
-                type="button"
-                onClick={confirmDeleteUser}
-                disabled={deleting}
-                className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-emerald-300 outline-none transition hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="Confirm delete"
-              >
-                {deleting ? (
-                  <Spinner size="xs" color="light" />
-                ) : (
-                  <Check size={15} />
-                )}
-              </button>
-            </Tooltip>
+            <IconButton
+              icon={Check}
+              label="Confirm delete"
+              variant="filterApply"
+              size="filter"
+              tooltipSide="top"
+              loading={deleting}
+              onClick={confirmDeleteUser}
+            />
           </>
         }
       >

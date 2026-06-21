@@ -1,4 +1,5 @@
 import Tooltip from "./Tooltip";
+import Spinner from "./Spinner";
 import { oaIconButtonStyles } from "./uiStyles";
 
 function IconButton({
@@ -9,8 +10,15 @@ function IconButton({
   variant = "default",
   disabled = false,
   active = false,
-  tooltipSide = "top"
+  tooltipSide = "top",
+  loading = false,
+  form,
+  iconSize = 14,
+  size = "default"
 }) {
+  const selectedBaseClass =
+    size === "filter" ? oaIconButtonStyles.filterBase : oaIconButtonStyles.base;
+
   const selectedButtonClass =
     oaIconButtonStyles.variantButton[variant] ||
     oaIconButtonStyles.variantButton.default;
@@ -38,11 +46,16 @@ function IconButton({
       <button
         type={type}
         onClick={handleClick}
-        disabled={disabled}
+        disabled={disabled || loading}
+        form={form}
         aria-label={label}
-        className={`${oaIconButtonStyles.base} ${finalButtonClass}`}
+        className={`${selectedBaseClass} ${finalButtonClass}`}
       >
-        {Icon && <Icon size={14} className={selectedIconClass} />}
+        {loading ? (
+          <Spinner size="xs" color="light" />
+        ) : (
+          Icon && <Icon size={iconSize} className={selectedIconClass} />
+        )}
       </button>
     </Tooltip>
   );

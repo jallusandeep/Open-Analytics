@@ -42,6 +42,18 @@ textarea {
     monospace;
 }
 
+.oa-app-input-font {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace !important;
+}
+
 /* Global menu / popup animation */
 @keyframes oaMenuIn {
   from {
@@ -91,6 +103,10 @@ input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
   animation-name: oaAutofillStart;
   animation-duration: 0.01s;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  letter-spacing: inherit !important;
   -webkit-box-shadow: 0 0 0 1000px #000 inset !important;
   box-shadow: 0 0 0 1000px #000 inset !important;
   -webkit-text-fill-color: #e5e7eb !important;
@@ -98,14 +114,63 @@ input:-webkit-autofill:active {
   transition: background-color 9999s ease-in-out 0s !important;
 }
 
+input:-webkit-autofill::first-line,
+input:-webkit-autofill:hover::first-line,
+input:-webkit-autofill:focus::first-line,
+input:-webkit-autofill:active::first-line {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace !important;
+  font-size: 0.875rem !important;
+  font-weight: 400 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.25rem !important;
+}
+
 input:not(:-webkit-autofill) {
   animation-name: oaAutofillCancel;
   animation-duration: 0.01s;
 }
 
+input:-internal-autofill-previewed,
 input:-internal-autofill-selected {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace !important;
+  font-size: 0.875rem !important;
+  font-weight: 400 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.25rem !important;
   background-color: #000 !important;
   color: #e5e7eb !important;
+  -webkit-text-fill-color: #e5e7eb !important;
+}
+
+.oa-floating-input__control {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace !important;
+  height: 100%;
+  min-width: 0;
+  line-height: 1.25rem;
 }
 
 .oa-floating-input__control:-webkit-autofill + .oa-floating-input__label,
@@ -123,7 +188,9 @@ input:-internal-autofill-selected {
 }
 
 .oa-floating-input__control:-webkit-autofill {
-  padding-top: 0.5rem !important;
+  font-family: inherit !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
 }
 
 @keyframes oaAutofillStart {

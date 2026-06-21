@@ -9,3 +9,8 @@ bcrypt==4.0.1
 python-jose[cryptography]
 email-validator
 upstox-python-sdk
+pandas
+lxml
+beautifulsoup4
+html5lib
+selenium

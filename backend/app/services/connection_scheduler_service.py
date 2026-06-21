@@ -10,11 +10,12 @@ from app.database import get_connection
 from app.services.connection_service import (
     get_app_metadata_value,
     get_ist_now,
+    get_upstox_notifier_webhook_url,
     get_upstox_connection_raw,
     parse_db_datetime,
     safe_strip,
     set_app_metadata_value,
-    upstox_access_token_request_post
+    trigger_upstox_access_token_request
 )
 from app.telegram_alerts_msg.message_templates import (
     build_upstox_access_token_reminder_message,
@@ -30,8 +31,9 @@ from app.telegram_alerts_msg.telegram_sender import (
 IST_TIMEZONE = "Asia/Kolkata"
 IST_TZINFO = timezone(timedelta(hours=5, minutes=30))
 
-UPSTOX_TOKEN_CHECK_HOUR = 3
-UPSTOX_TOKEN_CHECK_MINUTE = 30
+UPSTOX_TOKEN_CHECK_HOUR = 6
+UPSTOX_TOKEN_CHECK_MINUTE = 0
+UPSTOX_REMINDER_END_HOUR = 22
 UPSTOX_REMINDER_INTERVAL_SECONDS = 60 * 60
 UPSTOX_TOKEN_EXPIRY_WARNING_DAYS = 1
 UPSTOX_ANALYTICAL_TOKEN_VALIDITY_DAYS = 365
@@ -72,27 +74,20 @@ def get_seconds_until_next_upstox_check(now: datetime | None = None) -> int:
     return max(wait_seconds, 60)
 
 
+def is_upstox_reminder_window(now: datetime | None = None) -> bool:
+    current_time = now or get_connection_scheduler_ist_now()
+
+    return (
+        current_time.hour >= UPSTOX_TOKEN_CHECK_HOUR
+        and current_time.hour < UPSTOX_REMINDER_END_HOUR
+    )
+
+
 def parse_jwt_expiry(token: str):
     token_value = safe_strip(token)
 
     if not token_value:
         return None
-
-
-def get_analytical_token_expiry(token: str, token_updated_at):
-    token_value = safe_strip(token)
-
-    if not token_value:
-        return None
-
-    jwt_expiry = parse_jwt_expiry(token_value)
-
-    if jwt_expiry:
-        return jwt_expiry
-
-    saved_at = parse_db_datetime(token_updated_at) or get_ist_now()
-
-    return saved_at + timedelta(days=UPSTOX_ANALYTICAL_TOKEN_VALIDITY_DAYS)
 
     try:
         parts = token_value.split(".")
@@ -118,6 +113,22 @@ def get_analytical_token_expiry(token: str, token_updated_at):
 
     except Exception:
         return None
+
+
+def get_analytical_token_expiry(token: str, token_updated_at):
+    token_value = safe_strip(token)
+
+    if not token_value:
+        return None
+
+    jwt_expiry = parse_jwt_expiry(token_value)
+
+    if jwt_expiry:
+        return jwt_expiry
+
+    saved_at = parse_db_datetime(token_updated_at) or get_ist_now()
+
+    return saved_at + timedelta(days=UPSTOX_ANALYTICAL_TOKEN_VALIDITY_DAYS)
 
 
 def get_token_expiry_state(token: str, expiry_date, now: datetime):
@@ -156,6 +167,19 @@ def format_token_status(label: str, state: str, expiry_date) -> str:
         return f"{label}: expires at {expiry_label} IST"
 
     return f"{label}: valid until {expiry_label} IST"
+
+
+def format_upstox_access_token_request_error(message: str) -> str:
+    clean_message = safe_strip(message)
+
+    if "invalid notifier url" in clean_message.lower():
+        return (
+            "Invalid notifier url. Configure the Upstox app's Notifier Webhook "
+            "Endpoint to the production backend URL: "
+            f"{get_upstox_notifier_webhook_url()}"
+        )
+
+    return clean_message
 
 
 def get_upstox_token_status():
@@ -201,7 +225,11 @@ def get_upstox_token_status():
         return {
             "configured": True,
             "valid": token_is_valid,
-            "message": "Upstox tokens are valid." if token_is_valid else "Upstox token requires update."
+            "message": (
+                "Upstox tokens are valid."
+                if token_is_valid
+                else "Upstox token requires update."
+            )
         }
 
     finally:
@@ -229,6 +257,7 @@ def notify_admin_super_admins_upstox_token_expiry_service():
         analytical_token_updated_at = upstox_connection[12]
 
         now = get_ist_now()
+
         access_expiry_date = parse_db_datetime(access_expiry_value)
         analytical_expiry_date = get_analytical_token_expiry(
             token=analytical_token,
@@ -260,6 +289,8 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 "token_valid": True
             }
 
+        reminder_window_open = is_upstox_reminder_window()
+
         access_last_sent_value = get_app_metadata_value(
             conn,
             "upstox_access_token_reminder_last_sent_at"
@@ -272,45 +303,41 @@ def notify_admin_super_admins_upstox_token_expiry_service():
         )
         analytical_last_sent_at = parse_db_datetime(analytical_last_sent_value)
 
-        access_should_send = access_needs_reminder and not (
+        access_should_send = reminder_window_open and access_needs_reminder and not (
             access_last_sent_at
             and now - access_last_sent_at < timedelta(hours=1)
         )
 
-        analytical_should_send = analytical_needs_reminder and not (
+        analytical_should_send = reminder_window_open and analytical_needs_reminder and not (
             analytical_last_sent_at
             and now - analytical_last_sent_at < timedelta(hours=1)
         )
 
-        if not access_should_send and not analytical_should_send:
-            conn.commit()
-
-            return {
-                "status": "skipped",
-                "message": "Upstox token reminder already sent within the last hour.",
-                "token_valid": False
-            }
-
         auto_request_status = "skipped"
         auto_request_message = "Upstox API key or API secret is missing."
+        access_request_last_attempted_value = get_app_metadata_value(
+            conn,
+            "upstox_access_token_request_last_attempted_at"
+        )
+        access_request_last_attempted_at = parse_db_datetime(
+            access_request_last_attempted_value
+        )
+        access_should_request = access_needs_reminder and not (
+            access_request_last_attempted_at
+            and now - access_request_last_attempted_at < timedelta(hours=1)
+        )
 
-        if access_should_send and api_key and api_secret:
+        if access_should_request and api_key and api_secret:
             try:
-                token_request_response = upstox_access_token_request_post(
+                token_request_response = trigger_upstox_access_token_request(
+                    conn=conn,
                     client_id=api_key,
                     client_secret=api_secret
                 )
 
                 auto_request_status = "success"
-                auto_request_message = (
-                    token_request_response.get("message")
-                    or "Upstox access token approval request triggered."
-                )
-
-                set_app_metadata_value(
-                    conn,
-                    "upstox_access_token_request_last_triggered_at",
-                    now.strftime("%Y-%m-%d %H:%M:%S")
+                auto_request_message = token_request_response.get("message") or (
+                    "Upstox access token approval request triggered."
                 )
 
             except HTTPException as request_error:
@@ -324,11 +351,44 @@ def notify_admin_super_admins_upstox_token_expiry_service():
                 else:
                     auto_request_message = str(request_detail)
 
+                auto_request_message = format_upstox_access_token_request_error(
+                    auto_request_message
+                )
                 auto_request_status = "failed"
 
             except Exception as request_error:
                 auto_request_status = "failed"
-                auto_request_message = str(request_error)
+                auto_request_message = format_upstox_access_token_request_error(
+                    str(request_error)
+                )
+
+        elif access_needs_reminder and api_key and api_secret:
+            auto_request_status = "skipped"
+            auto_request_message = "Upstox access token request already attempted within the last hour."
+
+        if not reminder_window_open:
+            conn.commit()
+
+            return {
+                "status": auto_request_status,
+                "message": (
+                    "Upstox token request check processed outside Telegram "
+                    f"reminder window. Request status: {auto_request_message}"
+                ),
+                "token_valid": False
+            }
+
+        if not access_should_send and not analytical_should_send:
+            conn.commit()
+
+            return {
+                "status": "skipped",
+                "message": (
+                    "Upstox token request check processed. Telegram reminder "
+                    "was already sent within the last hour."
+                ),
+                "token_valid": False
+            }
 
         try:
             bot_token = get_telegram_bot_token(conn)
@@ -337,7 +397,10 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
             return {
                 "status": "skipped",
-                "message": "Telegram bot is not configured. Upstox token reminder check was still processed.",
+                "message": (
+                    "Telegram bot is not configured. Upstox token reminder "
+                    "check was still processed."
+                ),
                 "token_valid": False
             }
 
@@ -424,7 +487,10 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
         return {
             "status": "success",
-            "message": f"Upstox token reminder sent to {sent_count} admin/super admin delivery target(s).",
+            "message": (
+                "Upstox token reminder sent to "
+                f"{sent_count} admin/super admin delivery target(s)."
+            ),
             "token_valid": False
         }
 
@@ -473,14 +539,25 @@ def connection_scheduler_loop():
 
     while not _connection_scheduler_stop_event.is_set():
         now = get_connection_scheduler_ist_now()
-        today_check_time = now.replace(
+        today_start_time = now.replace(
             hour=UPSTOX_TOKEN_CHECK_HOUR,
             minute=UPSTOX_TOKEN_CHECK_MINUTE,
             second=0,
             microsecond=0
         )
+        today_end_time = now.replace(
+            hour=UPSTOX_REMINDER_END_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0
+        )
 
-        if now < today_check_time:
+        if now < today_start_time:
+            wait_seconds = get_seconds_until_next_upstox_check(now)
+            _connection_scheduler_stop_event.wait(wait_seconds)
+            continue
+
+        if now >= today_end_time:
             wait_seconds = get_seconds_until_next_upstox_check(now)
             _connection_scheduler_stop_event.wait(wait_seconds)
             continue

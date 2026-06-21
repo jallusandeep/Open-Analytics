@@ -2,25 +2,25 @@ export const oaTableStyles = {
   wrapper: "relative rounded border border-oa-border bg-black oa-table-font",
   inner: "overflow-visible rounded",
   headerRow:
-    "grid rounded-t bg-[#121316] px-3 py-2.5",
+    "grid rounded-t bg-[#121316] py-2.5",
   headerText:
     "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-oa-muted",
   headerCell:
-    "relative flex min-w-0 items-center justify-between gap-2 pr-8",
+    "relative flex min-w-0 items-center justify-between gap-2 pl-3 pr-8",
   headerCellNoFilter:
-    "relative flex min-w-0 items-center gap-2",
+    "relative flex min-w-0 items-center gap-2 px-3",
   headerLabel: "min-w-0 truncate leading-none",
   dataRow:
-    "grid items-center border-b border-oa-border px-3 py-2 last:border-b-0 hover:bg-oa-panel/60",
+    "grid items-center border-b border-oa-border py-2 last:border-b-0 hover:bg-oa-panel/60",
   dataText:
     "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
-  dataCell: "min-w-0 truncate",
+  dataCell: "min-w-0 truncate px-3",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
-  actionHeader: "relative flex min-w-0 items-center justify-end",
+  actionHeader: "relative flex min-w-0 items-center justify-end px-3",
   actionHeaderLabel:
     "min-w-0 truncate font-mono text-[11px] font-bold uppercase leading-none tracking-[0.12em] text-oa-muted",
-  actionCell: "flex min-w-0 items-center justify-end"
+  actionCell: "flex min-w-0 items-center justify-end px-3"
 };
 
 export const oaCardStyles = {
@@ -123,6 +123,13 @@ export const oaSelectStyles = {
   optionCheck: "shrink-0 text-sky-300"
 };
 
+export const oaCheckboxControlStyles = {
+  wrapper:
+    "flex h-8 w-full cursor-pointer items-center justify-start gap-2 rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus-within:border-blue-500",
+  checkbox: "h-4 w-4 shrink-0 accent-emerald-500",
+  label: "truncate"
+};
+
 export const oaInputStyles = {
   base:
     "h-8 w-full rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-white outline-none placeholder:text-oa-muted transition focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
@@ -131,6 +138,8 @@ export const oaInputStyles = {
 export const oaIconButtonStyles = {
   base:
     "flex h-8 w-8 shrink-0 items-center justify-center rounded border outline-none transition disabled:cursor-not-allowed disabled:opacity-40",
+  filterBase:
+    "flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border outline-none transition disabled:cursor-not-allowed disabled:opacity-40",
 
   variantIcon: {
     default: "text-oa-muted",
@@ -139,7 +148,9 @@ export const oaIconButtonStyles = {
     refresh: "text-amber-300",
     search: "text-sky-300",
     filter: "text-indigo-300",
-    danger: "text-red-400"
+    danger: "text-red-400",
+    filterCancel: "text-red-400",
+    filterApply: "text-emerald-300"
   },
 
   variantButton: {
@@ -148,25 +159,31 @@ export const oaIconButtonStyles = {
     primary:
       "border-oa-border bg-white hover:border-sky-500/40 hover:bg-zinc-200 focus:border-blue-500",
     add:
-      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+      "border-oa-border bg-black hover:border-emerald-500/60 hover:bg-emerald-950/40 focus:border-emerald-500",
     refresh:
-      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+      "border-oa-border bg-black hover:border-amber-500/60 hover:bg-amber-950/40 focus:border-amber-500",
     search:
-      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+      "border-oa-border bg-black hover:border-sky-500/60 hover:bg-sky-950/40 focus:border-sky-500",
     filter:
-      "border-oa-border bg-black hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+      "border-oa-border bg-black hover:border-indigo-500/60 hover:bg-indigo-950/40 focus:border-indigo-500",
     danger:
-      "border-oa-border bg-black hover:border-red-500/60 hover:bg-red-950/40 focus:border-red-500"
+      "border-red-500/40 bg-red-950/20 hover:border-red-500/70 hover:bg-red-950/50 focus:border-red-500",
+    filterCancel:
+      "border-oa-border bg-black text-red-400 hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-300 focus:border-red-500",
+    filterApply:
+      "border-oa-border bg-black text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
   },
 
   variantActive: {
     default: "border-blue-500 bg-oa-card",
     primary: "border-blue-500 bg-white",
-    add: "border-blue-500 bg-oa-card",
-    refresh: "border-blue-500 bg-oa-card",
-    search: "border-blue-500 bg-oa-card",
-    filter: "border-blue-500 bg-oa-card",
-    danger: "border-red-500 bg-red-950/40"
+    add: "border-emerald-500 bg-emerald-950/40",
+    refresh: "border-amber-500 bg-amber-950/40",
+    search: "border-sky-500 bg-sky-950/40",
+    filter: "border-indigo-500 bg-indigo-950/40",
+    danger: "border-red-500 bg-red-950/50",
+    filterCancel: "border-red-500 bg-red-950/40",
+    filterApply: "border-emerald-500 bg-emerald-950/40"
   }
 };
 

@@ -98,14 +98,14 @@ function FloatingInput({
         className={`relative flex ${wrapperClass} items-center gap-2 border bg-black transition-colors duration-200 ${
           error
             ? "border-red-500/70 focus-within:border-red-400"
-            : "border-oa-border focus-within:border-oa-accent"
+            : "border-oa-border focus-within:border-blue-500"
         } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
       >
         {Icon && (
           <Icon
             size={16}
             className={`shrink-0 transition-colors duration-200 ${
-              focused ? "text-oa-accent" : "text-oa-muted"
+              focused ? "text-blue-400" : "text-oa-muted"
             }`}
           />
         )}
@@ -133,7 +133,7 @@ function FloatingInput({
           disabled={disabled}
           required={required}
           placeholder=""
-          className={`oa-floating-input__control w-full bg-transparent text-oa-text outline-none placeholder:text-oa-muted disabled:cursor-not-allowed ${inputTextClass} ${rightPaddingClass} ${inputClassName}`}
+          className={`oa-floating-input__control oa-app-input-font w-full bg-transparent text-oa-text outline-none placeholder:text-oa-muted disabled:cursor-not-allowed ${inputTextClass} ${rightPaddingClass} ${inputClassName}`}
         />
 
         {rightElement ? (
