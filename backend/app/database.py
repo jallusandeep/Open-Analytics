@@ -1295,16 +1295,38 @@ def init_database():
                 include_full_statement BOOLEAN DEFAULT FALSE,
                 api_status VARCHAR,
                 data_status VARCHAR DEFAULT 'success',
+                units_in VARCHAR,
+                latest_period VARCHAR,
                 period_label VARCHAR,
                 report_date DATE,
                 sector VARCHAR,
                 company_profile TEXT,
+                sector_market_cap_inr_value DOUBLE,
+                sector_market_cap_inr_unit VARCHAR,
+                sector_market_cap_inr_formatted VARCHAR,
+                sector_market_cap_usd_value DOUBLE,
+                sector_market_cap_usd_unit VARCHAR,
+                sector_market_cap_usd_formatted VARCHAR,
                 market_cap_inr_value DOUBLE,
                 market_cap_inr_unit VARCHAR,
                 market_cap_inr_formatted VARCHAR,
                 market_cap_usd_value DOUBLE,
                 market_cap_usd_unit VARCHAR,
                 market_cap_usd_formatted VARCHAR,
+                period_count BIGINT DEFAULT 0,
+                item_count BIGINT DEFAULT 0,
+                latest_revenue DOUBLE,
+                latest_operating_profit DOUBLE,
+                latest_net_profit DOUBLE,
+                latest_total_asset DOUBLE,
+                latest_total_liability DOUBLE,
+                latest_operating_cash_flow DOUBLE,
+                latest_investing_cash_flow DOUBLE,
+                latest_financing_cash_flow DOUBLE,
+                latest_promoter_holding_pct DOUBLE,
+                latest_fii_holding_pct DOUBLE,
+                latest_dii_holding_pct DOUBLE,
+                latest_public_holding_pct DOUBLE,
                 total_asset DOUBLE,
                 total_liability DOUBLE,
                 revenue DOUBLE,
@@ -1351,6 +1373,8 @@ def init_database():
                 competitor_market_cap_usd_value DOUBLE,
                 competitor_market_cap_usd_unit VARCHAR,
                 competitor_market_cap_usd_formatted VARCHAR,
+                corporate_action_count BIGINT DEFAULT 0,
+                competitor_count BIGINT DEFAULT 0,
                 summary_json JSON,
                 history_json JSON,
                 full_statement_json JSON,
@@ -1377,16 +1401,38 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN include_full_statement BOOLEAN DEFAULT FALSE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN api_status VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN data_status VARCHAR DEFAULT 'success';")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN units_in VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_period VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN period_label VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN report_date DATE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN company_profile TEXT;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector_market_cap_inr_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector_market_cap_inr_unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector_market_cap_inr_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector_market_cap_usd_value DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector_market_cap_usd_unit VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN sector_market_cap_usd_formatted VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_inr_value DOUBLE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_inr_unit VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_inr_formatted VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_usd_value DOUBLE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_usd_unit VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN market_cap_usd_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN period_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN item_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_revenue DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_operating_profit DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_net_profit DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_total_asset DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_total_liability DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_operating_cash_flow DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_investing_cash_flow DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_financing_cash_flow DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_promoter_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_fii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_dii_holding_pct DOUBLE;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN latest_public_holding_pct DOUBLE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN total_asset DOUBLE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN total_liability DOUBLE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN revenue DOUBLE;")
@@ -1433,6 +1479,8 @@ def init_database():
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_usd_value DOUBLE;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_usd_unit VARCHAR;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_market_cap_usd_formatted VARCHAR;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN corporate_action_count BIGINT DEFAULT 0;")
+        safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN competitor_count BIGINT DEFAULT 0;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN summary_json JSON;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN history_json JSON;")
         safe_execute(conn, "ALTER TABLE upstox_company_fundamentals ADD COLUMN full_statement_json JSON;")

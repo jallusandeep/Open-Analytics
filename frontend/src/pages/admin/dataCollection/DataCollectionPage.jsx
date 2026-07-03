@@ -152,6 +152,7 @@ function DataCollection() {
   const [cancelRequested, setCancelRequested] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const activeSyncControllerRef = useRef(null);
+  const lastActiveJobRef = useRef(null);
 
   const [monitorSearch, setMonitorSearch] = useState("");
   const [appliedMonitorSearch, setAppliedMonitorSearch] = useState("");
@@ -985,9 +986,13 @@ function DataCollection() {
     companyFundamentalsSortConfig
   ]);
 
-  async function loadPreview(customPage = previewPage) {
+  async function loadPreview(customPage = previewPage, options = {}) {
+    const { showLoading = true } = options;
     const previewMode = getPreviewMode(activeView);
-    setPreviewLoading(true);
+
+    if (showLoading) {
+      setPreviewLoading(true);
+    }
 
     try {
       const params = {
@@ -1009,18 +1014,22 @@ function DataCollection() {
       setPreviewData(nextData);
       setPreviewPage(nextData.page || customPage);
     } catch (error) {
-      setPreviewData(emptyPreviewData);
-      showToast(
-        getApiErrorMessage(
-          error,
-          previewMode === "expired"
-            ? "Unable to load expired instruments."
-            : "Unable to load current instruments."
-        ),
-        "error"
-      );
+      if (showLoading) {
+        setPreviewData(emptyPreviewData);
+        showToast(
+          getApiErrorMessage(
+            error,
+            previewMode === "expired"
+              ? "Unable to load expired instruments."
+              : "Unable to load current instruments."
+          ),
+          "error"
+        );
+      }
     } finally {
-      setPreviewLoading(false);
+      if (showLoading) {
+        setPreviewLoading(false);
+      }
     }
   }
 
@@ -1255,6 +1264,60 @@ function DataCollection() {
       if (showLoading) {
         setCompanyFundamentalsLoading(false);
       }
+    }
+  }
+
+  function refreshActivePreviewForCompletedJob(syncType) {
+    if (syncType === "upstox_current_instruments" && activeView === "current_preview") {
+      loadPreview(previewPage, { showLoading: false });
+      return;
+    }
+
+    if (syncType === "upstox_expired_instruments" && activeView === "expired_preview") {
+      loadPreview(previewPage, { showLoading: false });
+      return;
+    }
+
+    if (syncType === "upstox_ohlcv_daily" && activeView === "ohlcv") {
+      loadOhlcvPreview(ohlcvPage, { showLoading: false });
+      return;
+    }
+
+    if (syncType === "upstox_market_holidays" && activeView === "market_calendar") {
+      loadMarketCalendarPreview(marketCalendarPage, { showLoading: false });
+      return;
+    }
+
+    if (syncType === "upstox_equity_news" && activeView === "equity_news") {
+      loadEquityNewsPreview(equityNewsPage, { showLoading: false });
+      return;
+    }
+
+    if (
+      syncType === "upstox_ipo_calendar" &&
+      activeView === "ipo_calendar" &&
+      ipoCalendarSubTab === "ipo"
+    ) {
+      loadIpoCalendarPreview(ipoCalendarPage, { showLoading: false });
+      return;
+    }
+
+    if (
+      syncType === "ipo_gmp_scraper" &&
+      activeView === "ipo_calendar" &&
+      ipoCalendarSubTab === "ipo_scraper"
+    ) {
+      loadIpoScraperPreview(ipoScraperPage, { showLoading: false });
+      return;
+    }
+
+    if (
+      syncType === "upstox_company_fundamentals" &&
+      activeView === "company_fundamentals"
+    ) {
+      loadCompanyFundamentalsPreview(companyFundamentalsPage, {
+        showLoading: false
+      });
     }
   }
 
@@ -3806,6 +3869,25 @@ function DataCollection() {
   ]);
 
   useEffect(() => {
+    const isCurrentPreviewRunning =
+      activeView === "current_preview" && isCurrentJobRunning;
+    const isExpiredPreviewRunning =
+      activeView === "expired_preview" && isExpiredJobRunning;
+
+    if (!isCurrentPreviewRunning && !isExpiredPreviewRunning) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(() => {
+      loadPreview(previewPage, { showLoading: false });
+    }, 5000);
+
+    return () => window.clearInterval(pollId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, isCurrentJobRunning, isExpiredJobRunning, previewPage]);
+
+
+  useEffect(() => {
     if (activeView !== "ohlcv" || !isOhlcvJobRunning) {
       return undefined;
     }
@@ -3897,6 +3979,19 @@ function DataCollection() {
     return () => window.clearInterval(pollId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, isCompanyFundamentalsJobRunning, companyFundamentalsPage]);
+
+  useEffect(() => {
+    const previousActiveJob = lastActiveJobRef.current;
+    const currentActiveJob = summary.active_job || null;
+
+    if (previousActiveJob && previousActiveJob !== currentActiveJob) {
+      refreshActivePreviewForCompletedJob(previousActiveJob);
+    }
+
+    lastActiveJobRef.current = currentActiveJob;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary.active_job]);
+
 
   useEffect(() => {
     if (!hasActiveJob) {

@@ -21,6 +21,35 @@ def safe_float(value: Any) -> Optional[float]:
         return None
 
 
+def get_company_fundamentals_token_candidates(conn) -> List[tuple]:
+    row = conn.execute("""
+        SELECT access_token, analytical_token, connection_status
+        FROM external_connections
+        WHERE provider = ?
+          AND record_status = 'S'
+        LIMIT 1;
+    """, [UPSTOX_PROVIDER]).fetchone()
+
+    if not row:
+        return []
+
+    connection_status = row[2] or "saved"
+
+    if connection_status == "disconnected":
+        return []
+
+    access_token = normalize_upstox_token(row[0])
+    analytical_token = normalize_upstox_token(row[1])
+    candidates = []
+
+    if access_token:
+        candidates.append(("access token", access_token))
+
+    if analytical_token and analytical_token != access_token:
+        candidates.append(("analytical token", analytical_token))
+
+    return candidates
+
 def ensure_upstox_company_fundamentals_tables(conn):
     global UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY
 
@@ -1482,32 +1511,21 @@ def sync_upstox_company_fundamentals_service(
         normalized_config = normalize_company_fundamentals_config(
             config or get_default_company_fundamentals_options_payload()
         )
-        token_candidates = []
-
-        try:
-            analytical_token = get_saved_upstox_analytical_token(conn)
-        except HTTPException:
-            analytical_token = ""
-
-        try:
-            access_token = get_optional_upstox_access_token(conn)
-        except Exception:
-            access_token = ""
-
-        if analytical_token:
-            token_candidates.append(("analytical token", analytical_token))
-
-        if access_token and access_token != analytical_token:
-            token_candidates.append(("access token", access_token))
+        token_candidates = get_company_fundamentals_token_candidates(conn)
 
         if not token_candidates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Upstox analytical token or access token is missing. "
-                    "Save token in Connections first."
+                    "Company Fundamentals requires a valid Upstox access token. "
+                    "Generate or refresh the Upstox access token in Connections first."
                 )
             )
+
+        print(
+            "[Company Fundamentals] Token candidates available: "
+            + ", ".join(token_label for token_label, _ in token_candidates)
+        )
 
         instruments = fetch_company_fundamental_instruments(conn, normalized_config)
 

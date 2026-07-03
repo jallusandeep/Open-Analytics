@@ -3,6 +3,8 @@ import time
 import traceback
 from typing import Any, Callable, Dict, Optional
 
+from fastapi import HTTPException
+
 from app.database import get_connection
 from app.services.data_collection_service import mark_stale_sync_runs
 
@@ -47,6 +49,12 @@ def data_collection_queue_worker():
 
         try:
             item["target"](**item["kwargs"])
+        except HTTPException as error:
+            print(
+                "Queued data collection job failed: "
+                f"{item.get('job_name') or item['target'].__name__} - "
+                f"HTTP {error.status_code}: {error.detail}"
+            )
         except Exception as error:
             print(
                 "Queued data collection job failed: "
