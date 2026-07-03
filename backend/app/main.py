@@ -18,6 +18,7 @@ from app.api.v1.user_routes import router as user_router
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.connection_routes import router as connection_router
 from app.api.v1.data_collection_routes import router as data_collection_router
+from app.api.v1.quant_research_routes import router as quant_research_router
 
 
 app = FastAPI(
@@ -65,6 +66,7 @@ app.include_router(user_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(connection_router, prefix="/api/v1")
 app.include_router(data_collection_router, prefix="/api/v1")
+app.include_router(quant_research_router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -122,3 +124,4 @@ def get_db_version():
 
     finally:
         conn.close()
+
