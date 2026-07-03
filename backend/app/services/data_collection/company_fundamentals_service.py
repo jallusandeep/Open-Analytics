@@ -1093,6 +1093,20 @@ def first_history_period(history: Any) -> Optional[str]:
     return None
 
 
+def first_non_empty_list(*values: Any) -> List[dict]:
+    fallback = []
+
+    for value in values:
+        if not isinstance(value, list):
+            continue
+
+        if value:
+            return value
+
+        fallback = value
+
+    return fallback
+
 def get_ratio_pair(rows: Any, ratio_name: str) -> dict:
     if not isinstance(rows, list):
         return {"company": None, "sector": None}
@@ -1166,9 +1180,21 @@ def normalize_company_fundamentals_record(
     sector_market_cap_inr = data_dict.get("sector_market_cap_inr") if isinstance(data_dict, dict) else {}
     sector_market_cap_usd = data_dict.get("sector_market_cap_usd") if isinstance(data_dict, dict) else {}
 
-    income_rows = data_dict.get("income_statement") if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_INCOME_STATEMENT else []
-    cash_flow_rows = data_dict.get("cash_flow") if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_CASH_FLOW else []
-    balance_history = data_dict.get("history") if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_BALANCE_SHEET else []
+    income_rows = (
+        first_non_empty_list(data_dict.get("income_statement"), data_dict.get("history"), data)
+        if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_INCOME_STATEMENT
+        else []
+    )
+    cash_flow_rows = (
+        first_non_empty_list(data_dict.get("cash_flow"), data_dict.get("history"), data)
+        if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_CASH_FLOW
+        else []
+    )
+    balance_history = (
+        first_non_empty_list(data_dict.get("history"), data_dict.get("balance_sheet"), data)
+        if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_BALANCE_SHEET
+        else []
+    )
 
     revenue_history = get_history_entries_from_category_rows(income_rows, "revenue")
     operating_profit_history = get_history_entries_from_category_rows(income_rows, "operating_profit")
@@ -1180,13 +1206,21 @@ def normalize_company_fundamentals_record(
 
     latest_balance = balance_history[0] if isinstance(balance_history, list) and balance_history and isinstance(balance_history[0], dict) else {}
 
-    shareholding_rows = data_list if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_SHARE_HOLDINGS else []
+    shareholding_rows = (
+        first_non_empty_list(data_list, data_dict.get("share_holdings"), data_dict.get("shareholding"))
+        if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_SHARE_HOLDINGS
+        else []
+    )
     promoter_history = get_history_entries_from_category_rows(shareholding_rows, "promoters")
     fii_history = get_history_entries_from_category_rows(shareholding_rows, "fii")
     dii_history = get_history_entries_from_category_rows(shareholding_rows, "dii") or get_history_entries_from_category_rows(shareholding_rows, "other_dii")
     public_history = get_history_entries_from_category_rows(shareholding_rows, "public")
 
-    ratios_rows = data_list if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_KEY_RATIOS else []
+    ratios_rows = (
+        first_non_empty_list(data_list, data_dict.get("key_ratios"), data_dict.get("ratios"))
+        if endpoint == UPSTOX_COMPANY_FUNDAMENTAL_ENDPOINT_KEY_RATIOS
+        else []
+    )
     pe_ratio = get_ratio_pair(ratios_rows, "P/E")
     pb_ratio = get_ratio_pair(ratios_rows, "P/B")
     roa_ratio = get_ratio_pair(ratios_rows, "ROA")

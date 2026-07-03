@@ -46,6 +46,7 @@ def start_detached_collection_job(target, **kwargs):
     return enqueue_data_collection_job(
         target,
         job_name=target.__name__,
+        job_key=target.__name__,
         kwargs=kwargs
     )
 

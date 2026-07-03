@@ -93,24 +93,35 @@ def ensure_data_collection_queue_worker_started():
 
 def get_data_collection_queue_summary() -> Dict[str, Any]:
     with _queue_condition:
+        sorted_jobs = sorted(
+            _job_queue,
+            key=lambda item: (item["priority"], item["sequence"])
+        )
         jobs = [
             item.get("job_name") or item["target"].__name__
-            for item in sorted(
-                _job_queue,
-                key=lambda item: (item["priority"], item["sequence"])
-            )
+            for item in sorted_jobs
+        ]
+        job_details = [
+            {
+                "job_name": item.get("job_name") or item["target"].__name__,
+                "job_key": item.get("job_key") or item.get("job_name") or item["target"].__name__,
+                "queue_position": index + 1,
+                "priority": item["priority"]
+            }
+            for index, item in enumerate(sorted_jobs)
         ]
 
     return {
         "count": len(jobs),
-        "jobs": jobs
+        "jobs": jobs,
+        "job_details": job_details
     }
-
 
 def enqueue_data_collection_job(
     target: Callable[..., Any],
     *,
     job_name: Optional[str] = None,
+    job_key: Optional[str] = None,
     kwargs: Optional[Dict[str, Any]] = None,
     priority: int = DATA_COLLECTION_MANUAL_PRIORITY
 ) -> int:
@@ -120,8 +131,19 @@ def enqueue_data_collection_job(
 
     active_job_offset = 1 if has_active_data_collection_job() else 0
     normalized_priority = int(priority)
+    normalized_job_name = job_name or target.__name__
+    normalized_job_key = job_key or normalized_job_name
 
     with _queue_condition:
+        sorted_jobs = sorted(
+            _job_queue,
+            key=lambda item: (item["priority"], item["sequence"])
+        )
+        for index, item in enumerate(sorted_jobs, start=1):
+            existing_job_key = item.get("job_key") or item.get("job_name") or item["target"].__name__
+            if existing_job_key == normalized_job_key:
+                return active_job_offset + index
+
         queue_position = (
             active_job_offset
             + sum(1 for item in _job_queue if item["priority"] <= normalized_priority)
@@ -130,7 +152,8 @@ def enqueue_data_collection_job(
 
         _job_queue.append({
             "target": target,
-            "job_name": job_name or target.__name__,
+            "job_name": normalized_job_name,
+            "job_key": normalized_job_key,
             "kwargs": kwargs or {},
             "priority": normalized_priority,
             "sequence": _job_sequence

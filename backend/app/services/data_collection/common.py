@@ -563,12 +563,9 @@ def mark_stale_sync_runs(conn):
             duration_seconds = date_diff('second', started_at, CURRENT_TIMESTAMP),
             message = 'Sync run was interrupted before completion.'
         WHERE status IN ('running', 'cancel_requested')
-          AND (
-              COALESCE(last_heartbeat_at, started_at)
-                  < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')
-              OR started_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 hour')
-          );
-    """, [STALE_RUNNING_HEARTBEAT_MINUTES, STALE_RUNNING_RUN_HOURS])
+          AND COALESCE(last_heartbeat_at, started_at)
+              < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute');
+    """, [STALE_RUNNING_HEARTBEAT_MINUTES])
 
     conn.commit()
 

@@ -1432,6 +1432,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "current");
         showToast(
           response.data.message || "Current Instruments collection started.",
           "success"
@@ -1491,6 +1492,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "expired");
         showToast(
           response.data.message || "Expired Instruments collection started.",
           "success"
@@ -1746,6 +1748,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "ohlcv");
         showToast(
           response.data.message || "OHLCV collection started.",
           "success"
@@ -1803,6 +1806,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "equity_news");
         showToast(
           response.data.message || "Equity News collection started.",
           "success"
@@ -1868,6 +1872,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "ipo_calendar");
         showToast(
           response.data.message || "IPO Calendar collection started.",
           "success"
@@ -1933,6 +1938,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "ipo_scraper");
         showToast(
           response.data.message || "IPO Scrapper collection started.",
           "success"
@@ -1998,6 +2004,9 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(
+          response.data?.status === "queued" ? null : "company_fundamentals"
+        );
         showToast(
           response.data.message || "Company Fundamentals collection started.",
           "success"
@@ -2066,6 +2075,7 @@ function DataCollection() {
 
       if (response.data?.status === "started" || response.data?.status === "queued") {
         backgroundStarted = true;
+        setRunningJob(response.data?.status === "queued" ? null : "market_calendar");
         showToast(
           response.data.message || "Market Calendar collection started.",
           "success"

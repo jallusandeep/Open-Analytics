@@ -766,6 +766,7 @@ def execute_due_schedules_once():
                 enqueue_data_collection_job(
                     run_schedule_job,
                     job_name=f"scheduled:{job_type}",
+                    job_key=job_type,
                     kwargs={
                         "schedule_id": schedule_id,
                         "job_type": job_type
