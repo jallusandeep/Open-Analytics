@@ -86,13 +86,18 @@ export default function QuantResearch() {
           <div>
             <h1 className="text-lg font-semibold text-white">Predictions</h1>
             <p className="mt-1 text-sm text-oa-muted">
-              Automated OHLCV based equity predictions with buy, hold, and sell recommendations.
+              Automated OHLCV, ML, and deep-learning predictions with dynamic model-weighted recommendations.
             </p>
           </div>
 
           <div className="text-right text-xs text-oa-muted">
             <div>Trading date: <span className="text-oa-text">{meta?.trading_date || "-"}</span></div>
             <div>Equities: <span className="text-oa-text">{meta?.row_count ?? rows.length}</span></div>
+            <div>
+              Weights: <span className="text-oa-text">T {formatNumber((meta?.weights?.technical || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / ML {formatNumber((meta?.weights?.ml || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Deep {formatNumber((meta?.weights?.deep_learning || 0) * 100, 0)}%</span>
+            </div>
           </div>
         </div>
 
@@ -111,13 +116,16 @@ export default function QuantResearch() {
           </div>
 
           <div className="overflow-auto">
-            <table className="min-w-[1320px] w-full border-collapse text-left text-xs">
+            <table className="min-w-[1500px] w-full border-collapse text-left text-xs">
               <thead className="sticky top-0 bg-oa-panel text-oa-muted">
                 <tr>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">Rank</th>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">Symbol</th>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">Prediction</th>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">Score</th>
+                  <th className="border-b border-oa-border px-3 py-2 font-medium">Tech</th>
+                  <th className="border-b border-oa-border px-3 py-2 font-medium">ML</th>
+                  <th className="border-b border-oa-border px-3 py-2 font-medium">Deep</th>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">Close</th>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">1D %</th>
                   <th className="border-b border-oa-border px-3 py-2 font-medium">5D %</th>
@@ -137,7 +145,7 @@ export default function QuantResearch() {
               <tbody className="text-oa-text">
                 {!loading && !error && rows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-6 text-center text-oa-muted" colSpan={17}>
+                    <td className="px-3 py-6 text-center text-oa-muted" colSpan={20}>
                       No prediction rows found. OHLCV data may need to be collected first.
                     </td>
                   </tr>
@@ -153,6 +161,9 @@ export default function QuantResearch() {
                       </span>
                     </td>
                     <td className="px-3 py-2">{formatNumber(row.prediction_score)}</td>
+                    <td className="px-3 py-2">{formatNumber(row.technical_score)}</td>
+                    <td className="px-3 py-2">{formatNumber(row.ml_score)}</td>
+                    <td className="px-3 py-2">{formatNumber(row.deep_learning_score)}</td>
                     <td className="px-3 py-2">{formatPrice(row.close_price)}</td>
                     <td className="px-3 py-2">{formatNumber(row.return_1d)}</td>
                     <td className="px-3 py-2">{formatNumber(row.return_5d)}</td>
@@ -176,3 +187,5 @@ export default function QuantResearch() {
     </MainLayout>
   );
 }
+
+

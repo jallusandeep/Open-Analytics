@@ -6,6 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from app.database import get_connection
+
 from app.schemas.quant_research_schema import QuantActionResponse
 from app.services.quant.quant_backtest_service import run_quant_backtest_service
 from app.services.quant.quant_data_service import (
@@ -51,6 +53,19 @@ def action_response(data: dict[str, Any]) -> QuantActionResponse:
     )
 
 
+def recommendation_from_score(score: float | None) -> str:
+    if score is None:
+        return "HOLD"
+
+    if score >= 65:
+        return "BUY"
+
+    if score <= 40:
+        return "SELL"
+
+    return "HOLD"
+
+
 def recommendation_from_signal(signal_label: str | None) -> str:
     clean_label = str(signal_label or "").strip().lower()
 
@@ -63,20 +78,195 @@ def recommendation_from_signal(signal_label: str | None) -> str:
     return "HOLD"
 
 
+def clamp_score(value: Any, default: float | None = None) -> float | None:
+    try:
+        score = float(value)
+    except Exception:
+        return default
+
+    return max(0.0, min(100.0, score))
+
+
+def normalize_model_score(value: Any) -> float | None:
+    try:
+        raw_score = float(value)
+    except Exception:
+        return None
+
+    return max(0.0, min(100.0, 50.0 + (raw_score / 2.0)))
+
+
+def model_quality(model: dict[str, Any] | None) -> float:
+    if not model:
+        return 0.0
+
+    values = []
+    for key in ["precision_score", "recall_score", "accuracy"]:
+        try:
+            metric = float(model.get(key))
+        except Exception:
+            metric = 0.0
+
+        if metric > 0:
+            values.append(metric)
+
+    if not values:
+        return 0.0
+
+    return max(0.05, min(1.0, sum(values) / len(values)))
+
+
+def normalize_weights(source_quality: dict[str, float]) -> dict[str, float]:
+    clean_quality = {
+        key: max(0.0, float(value or 0.0))
+        for key, value in source_quality.items()
+    }
+    total = sum(clean_quality.values())
+
+    if total <= 0:
+        return {"technical": 1.0, "ml": 0.0, "deep_learning": 0.0}
+
+    return {
+        key: value / total
+        for key, value in clean_quality.items()
+    }
+
+
+def latest_model(models: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for model in models:
+        if str(model.get("status") or "").lower() == "success":
+            return model
+
+    return models[0] if models else None
+
+
+def get_latest_ml_predictions_by_instrument(limit: int) -> dict[str, dict[str, Any]]:
+    conn = get_connection()
+
+    try:
+        rows = conn.execute("""
+            WITH latest_model AS (
+                SELECT model_id
+                FROM quant_ml_models
+                WHERE status = 'success'
+                ORDER BY trained_at DESC
+                LIMIT 1
+            ),
+            latest_predictions AS (
+                SELECT
+                    prediction.instrument_key,
+                    prediction.trading_symbol,
+                    prediction.trading_date,
+                    prediction.prediction_score,
+                    prediction.prediction_label,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prediction.instrument_key
+                        ORDER BY prediction.trading_date DESC, prediction.created_at DESC
+                    ) AS row_number
+                FROM quant_ml_predictions prediction
+                JOIN latest_model model ON model.model_id = prediction.model_id
+            )
+            SELECT
+                instrument_key,
+                trading_symbol,
+                trading_date,
+                prediction_score,
+                prediction_label
+            FROM latest_predictions
+            WHERE row_number = 1
+            LIMIT ?;
+        """, [limit]).fetchall()
+
+        return {
+            row[0]: {
+                "instrument_key": row[0],
+                "trading_symbol": row[1],
+                "trading_date": str(row[2]) if row[2] else None,
+                "prediction_score": row[3],
+                "prediction_label": row[4]
+            }
+            for row in rows
+        }
+
+    except Exception:
+        return {}
+
+    finally:
+        conn.close()
+
+
+def get_latest_deep_learning_predictions_by_instrument(limit: int) -> dict[str, dict[str, Any]]:
+    conn = get_connection()
+
+    try:
+        rows = conn.execute("""
+            WITH latest_model AS (
+                SELECT dl_model_id
+                FROM quant_deep_learning_models
+                WHERE status = 'success'
+                ORDER BY trained_at DESC
+                LIMIT 1
+            ),
+            latest_predictions AS (
+                SELECT
+                    prediction.instrument_key,
+                    prediction.trading_symbol,
+                    prediction.target_date,
+                    prediction.prediction_score,
+                    prediction.prediction_label,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prediction.instrument_key
+                        ORDER BY prediction.target_date DESC, prediction.created_at DESC
+                    ) AS row_number
+                FROM quant_deep_learning_predictions prediction
+                JOIN latest_model model ON model.dl_model_id = prediction.dl_model_id
+            )
+            SELECT
+                instrument_key,
+                trading_symbol,
+                target_date,
+                prediction_score,
+                prediction_label
+            FROM latest_predictions
+            WHERE row_number = 1
+            LIMIT ?;
+        """, [limit]).fetchall()
+
+        return {
+            row[0]: {
+                "instrument_key": row[0],
+                "trading_symbol": row[1],
+                "target_date": str(row[2]) if row[2] else None,
+                "prediction_score": row[3],
+                "prediction_label": row[4]
+            }
+            for row in rows
+        }
+
+    except Exception:
+        return {}
+
+    finally:
+        conn.close()
+
+
 @router.get("/predictions/auto", response_model=QuantActionResponse)
 def quant_auto_predictions(
     limit: int = Query(default=1000, ge=1, le=1000),
-    rebuild: bool = Query(default=False)
+    rebuild: bool = Query(default=False),
+    include_deep_learning: bool = Query(default=True),
+    train_missing_models: bool = Query(default=False)
 ) -> QuantActionResponse:
     build_steps: list[dict[str, Any]] = []
 
-    def run_step(name: str, action, payload: dict[str, Any] | None = None) -> None:
+    def run_step(name: str, action, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         result = action(payload) if payload is not None else action()
         build_steps.append({
             "step": name,
             "status": result.get("status"),
             "message": result.get("message")
         })
+        return result
 
     rankings_result = get_quant_rankings_service(limit=limit)
     rankings = rankings_result.get("rankings", [])
@@ -107,6 +297,39 @@ def quant_auto_predictions(
             run_step("trade_plans", build_quant_trade_plans_service, {"trading_date": trading_date, "limit": limit})
             trade_plan_result = get_quant_trade_plans_service(trading_date=trading_date, limit=limit)
 
+    ml_models = get_quant_ml_models_service(limit=5).get("models", [])
+    ml_model = latest_model(ml_models)
+    ml_predictions = get_latest_ml_predictions_by_instrument(limit)
+
+    if rankings and train_missing_models and (rebuild or not ml_model or not ml_predictions):
+        run_step("ml_dataset", build_quant_ml_dataset_service, {"limit": 200000})
+        run_step("ml_train", train_quant_rule_baseline_model_service, None)
+        ml_models = get_quant_ml_models_service(limit=5).get("models", [])
+        ml_model = latest_model(ml_models)
+        ml_predictions = get_latest_ml_predictions_by_instrument(limit)
+
+    dl_models: list[dict[str, Any]] = []
+    dl_model: dict[str, Any] | None = None
+    dl_predictions: dict[str, dict[str, Any]] = {}
+
+    if include_deep_learning:
+        dl_models = get_quant_deep_learning_models_service(limit=5).get("models", [])
+        dl_model = latest_model(dl_models)
+        dl_predictions = get_latest_deep_learning_predictions_by_instrument(limit)
+
+        if rankings and train_missing_models and (rebuild or not dl_model or not dl_predictions):
+            run_step("deep_learning_dataset", build_quant_deep_learning_dataset_service, {"limit": 100000})
+            run_step("deep_learning_train", train_quant_sequence_rule_baseline_service, None)
+            dl_models = get_quant_deep_learning_models_service(limit=5).get("models", [])
+            dl_model = latest_model(dl_models)
+            dl_predictions = get_latest_deep_learning_predictions_by_instrument(limit)
+
+    weights = normalize_weights({
+        "technical": 0.65,
+        "ml": model_quality(ml_model),
+        "deep_learning": model_quality(dl_model) if include_deep_learning else 0.0
+    })
+
     risk_by_key = {
         row.get("instrument_key"): row
         for row in risk_result.get("risk", [])
@@ -124,15 +347,40 @@ def quant_auto_predictions(
         risk = risk_by_key.get(instrument_key, {})
         plan = plan_by_key.get(instrument_key, {})
         signal_label = ranking.get("signal_label")
+        technical_score = clamp_score(ranking.get("final_score"), 50.0)
+        ml_prediction = ml_predictions.get(instrument_key, {})
+        dl_prediction = dl_predictions.get(instrument_key, {})
+        ml_score = normalize_model_score(ml_prediction.get("prediction_score"))
+        dl_score = normalize_model_score(dl_prediction.get("prediction_score"))
+
+        weighted_parts = []
+        if technical_score is not None:
+            weighted_parts.append((technical_score, weights.get("technical", 0.0)))
+        if ml_score is not None:
+            weighted_parts.append((ml_score, weights.get("ml", 0.0)))
+        if dl_score is not None:
+            weighted_parts.append((dl_score, weights.get("deep_learning", 0.0)))
+
+        used_weight = sum(weight for _, weight in weighted_parts)
+        ensemble_score = (
+            sum(score * weight for score, weight in weighted_parts) / used_weight
+            if used_weight > 0
+            else technical_score
+        )
+        recommendation = recommendation_from_score(ensemble_score)
 
         rows.append({
             "instrument_key": instrument_key,
             "trading_symbol": ranking.get("trading_symbol"),
             "trading_date": ranking.get("trading_date"),
             "rank_number": ranking.get("rank_number"),
-            "recommendation": recommendation_from_signal(signal_label),
+            "recommendation": recommendation,
+            "technical_recommendation": recommendation_from_signal(signal_label),
             "signal_label": signal_label,
-            "prediction_score": ranking.get("final_score"),
+            "prediction_score": ensemble_score,
+            "technical_score": technical_score,
+            "ml_score": ml_score,
+            "deep_learning_score": dl_score,
             "close_price": ranking.get("close_price"),
             "return_1d": ranking.get("return_1d"),
             "return_5d": ranking.get("return_5d"),
@@ -150,11 +398,18 @@ def quant_auto_predictions(
             "reason": plan.get("plan_reason") or ranking.get("signal_reason")
         })
 
+    rows.sort(key=lambda row: row.get("prediction_score") or 0, reverse=True)
+
     return action_response({
         "status": rankings_result.get("status") or "success",
         "message": rankings_result.get("message"),
         "trading_date": trading_date,
         "build_steps": build_steps,
+        "weights": weights,
+        "models": {
+            "ml": ml_model,
+            "deep_learning": dl_model
+        },
         "row_count": len(rows),
         "rows": rows
     })
@@ -242,4 +497,8 @@ def quant_deep_learning_datasets() -> QuantActionResponse:
 @router.get("/deep-learning/models", response_model=QuantActionResponse)
 def quant_deep_learning_models() -> QuantActionResponse:
     return action_response(get_quant_deep_learning_models_service())
+
+
+
+
 

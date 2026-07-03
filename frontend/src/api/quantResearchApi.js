@@ -2,7 +2,7 @@ import axiosClient from "./axiosClient";
 
 export function getAutomatedStockPredictions() {
   return axiosClient.get("/quant-research/predictions/auto", {
-    params: { limit: 1000, rebuild: false }
+    params: { limit: 1000, rebuild: false, include_deep_learning: true, train_missing_models: false }
   });
 }
 
@@ -73,4 +73,6 @@ export function getQuantDeepLearningDatasets() {
 export function getQuantDeepLearningModels() {
   return axiosClient.get("/quant-research/deep-learning/models");
 }
+
+
 
