@@ -4065,6 +4065,10 @@ function DataCollection() {
               activeView={activeView}
               onViewChange={handleViewChange}
               diskSpace={summary.disk_space}
+              queuedJobCount={summary.queued_jobs?.count || 0}
+              elapsedSeconds={elapsedSeconds}
+              activeJobStatus={summary.active_job_status}
+              activeJobLabel={summary.active_job ? getSyncTypeLabel(summary.active_job) : ""}
             >
               {activeView === "monitor" ? (
                 <MonitorContent

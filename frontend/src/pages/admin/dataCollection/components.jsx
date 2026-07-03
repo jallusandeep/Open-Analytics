@@ -238,6 +238,10 @@ export function DataCollectionShell({
   activeView,
   onViewChange,
   diskSpace,
+  activeJobLabel,
+  activeJobStatus,
+  elapsedSeconds,
+  queuedJobCount = 0,
   children
 }) {
   const diskUsedText = formatBytes(diskSpace?.used_bytes);
@@ -254,13 +258,31 @@ export function DataCollectionShell({
       <div className="shrink-0">
         <div className={`${oaCardStyles.header} flex items-center justify-between gap-3`}>
           <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
-          <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-none text-oa-muted">
-            <HardDrive size={13} className="shrink-0 text-sky-300" />
-            <span className="shrink-0 uppercase tracking-[0.08em]">Disk</span>
-            <span className="min-w-0 truncate text-white">
-              {diskUsedText} / {diskTotalText}
-            </span>
-            <span className="shrink-0 text-oa-muted">({diskPercent})</span>
+          <div className="flex min-w-0 items-center gap-2">
+            {activeJobLabel ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-950/40 px-2 py-1 font-mono text-[11px] leading-none text-cyan-100">
+                <span className="shrink-0 uppercase tracking-[0.08em]">
+                  {activeJobStatus === "cancel_requested" ? "Cancelling" : "Running"}
+                </span>
+                <span className="min-w-0 truncate text-white">{activeJobLabel}</span>
+                <span className="shrink-0 text-cyan-200">
+                  {formatDuration(elapsedSeconds)}
+                </span>
+              </span>
+            ) : null}
+            {queuedJobCount > 0 ? (
+              <span className="inline-flex shrink-0 items-center rounded border border-amber-500/40 bg-amber-950/40 px-2 py-1 font-mono text-[11px] leading-none text-amber-100">
+                Queued {queuedJobCount}
+              </span>
+            ) : null}
+            <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-none text-oa-muted">
+              <HardDrive size={13} className="shrink-0 text-sky-300" />
+              <span className="shrink-0 uppercase tracking-[0.08em]">Disk</span>
+              <span className="min-w-0 truncate text-white">
+                {diskUsedText} / {diskTotalText}
+              </span>
+              <span className="shrink-0 text-oa-muted">({diskPercent})</span>
+            </div>
           </div>
         </div>
 

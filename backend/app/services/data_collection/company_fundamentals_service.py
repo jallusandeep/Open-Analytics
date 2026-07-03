@@ -23,7 +23,7 @@ def safe_float(value: Any) -> Optional[float]:
 
 def get_company_fundamentals_token_candidates(conn) -> List[tuple]:
     row = conn.execute("""
-        SELECT access_token, analytical_token, connection_status
+        SELECT access_token, connection_status
         FROM external_connections
         WHERE provider = ?
           AND record_status = 'S'
@@ -33,22 +33,18 @@ def get_company_fundamentals_token_candidates(conn) -> List[tuple]:
     if not row:
         return []
 
-    connection_status = row[2] or "saved"
+    connection_status = row[1] or "saved"
 
     if connection_status == "disconnected":
         return []
 
     access_token = normalize_upstox_token(row[0])
-    analytical_token = normalize_upstox_token(row[1])
-    candidates = []
 
-    if access_token:
-        candidates.append(("access token", access_token))
+    if not access_token:
+        return []
 
-    if analytical_token and analytical_token != access_token:
-        candidates.append(("analytical token", analytical_token))
+    return [("access token", access_token)]
 
-    return candidates
 
 def ensure_upstox_company_fundamentals_tables(conn):
     global UPSTOX_COMPANY_FUNDAMENTALS_SCHEMA_READY

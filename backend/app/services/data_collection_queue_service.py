@@ -18,9 +18,14 @@ _job_sequence = 0
 _queue_condition = threading.Condition()
 _worker_lock = threading.Lock()
 _worker_thread: Optional[threading.Thread] = None
+_active_job: Optional[Dict[str, Any]] = None
 
 
 def has_active_data_collection_job() -> bool:
+    with _queue_condition:
+        if _active_job:
+            return True
+
     conn = get_connection()
 
     try:
@@ -44,8 +49,19 @@ def wait_for_data_collection_slot():
 
 
 def data_collection_queue_worker():
+    global _active_job
+
     while True:
         item = get_next_data_collection_job()
+
+        with _queue_condition:
+            _active_job = {
+                "job_name": item.get("job_name") or item["target"].__name__,
+                "job_key": item.get("job_key") or item.get("job_name") or item["target"].__name__,
+                "priority": item["priority"],
+                "started_at": time.time()
+            }
+            _queue_condition.notify_all()
 
         try:
             item["target"](**item["kwargs"])
@@ -61,6 +77,10 @@ def data_collection_queue_worker():
                 f"{item.get('job_name') or item['target'].__name__} - {error}"
             )
             traceback.print_exc()
+        finally:
+            with _queue_condition:
+                _active_job = None
+                _queue_condition.notify_all()
 
 
 def get_next_data_collection_job() -> Dict[str, Any]:
@@ -101,6 +121,7 @@ def ensure_data_collection_queue_worker_started():
 
 def get_data_collection_queue_summary() -> Dict[str, Any]:
     with _queue_condition:
+        active_job = dict(_active_job) if _active_job else None
         sorted_jobs = sorted(
             _job_queue,
             key=lambda item: (item["priority"], item["sequence"])
@@ -122,7 +143,8 @@ def get_data_collection_queue_summary() -> Dict[str, Any]:
     return {
         "count": len(jobs),
         "jobs": jobs,
-        "job_details": job_details
+        "job_details": job_details,
+        "active_job": active_job
     }
 
 def enqueue_data_collection_job(
@@ -143,6 +165,11 @@ def enqueue_data_collection_job(
     normalized_job_key = job_key or normalized_job_name
 
     with _queue_condition:
+        if _active_job:
+            active_job_key = _active_job.get("job_key") or _active_job.get("job_name")
+            if active_job_key == normalized_job_key:
+                return 1
+
         sorted_jobs = sorted(
             _job_queue,
             key=lambda item: (item["priority"], item["sequence"])

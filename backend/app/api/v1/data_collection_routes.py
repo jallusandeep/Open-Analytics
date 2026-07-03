@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import require_admin_or_super_admin
@@ -42,11 +44,29 @@ router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
 PREVIEW_PAGE_SIZE_DEFAULT = 500
 
 
+COLLECTION_TARGET_SYNC_TYPES = {
+    "sync_upstox_current_instruments_service": "upstox_current_instruments",
+    "sync_upstox_expired_instruments_service": "upstox_expired_instruments",
+    "sync_upstox_ohlcv_daily_service": "upstox_ohlcv_daily",
+    "sync_upstox_market_holidays_service": "upstox_market_holidays",
+    "sync_upstox_equity_news_service": "upstox_equity_news",
+    "sync_upstox_ipo_calendar_service": "upstox_ipo_calendar",
+    "sync_ipo_gmp_scraper_service": "ipo_gmp_scraper",
+    "sync_upstox_company_fundamentals_service": "upstox_company_fundamentals"
+}
+
+
+def get_collection_job_name(target):
+    return COLLECTION_TARGET_SYNC_TYPES.get(target.__name__, target.__name__)
+
+
 def start_detached_collection_job(target, **kwargs):
+    job_name = get_collection_job_name(target)
+
     return enqueue_data_collection_job(
         target,
-        job_name=target.__name__,
-        job_key=target.__name__,
+        job_name=job_name,
+        job_key=job_name,
         kwargs=kwargs
     )
 
@@ -74,7 +94,16 @@ def get_upstox_data_collection_summary(
     current_user: dict = Depends(require_admin_or_super_admin)
 ):
     data = get_data_collection_summary_service()
-    data["queued_jobs"] = get_data_collection_queue_summary()
+    queue_summary = get_data_collection_queue_summary()
+    data["queued_jobs"] = queue_summary
+
+    if not data.get("active_job") and queue_summary.get("active_job"):
+        active_queue_job = queue_summary["active_job"]
+        data["active_job"] = active_queue_job.get("job_name") or active_queue_job.get("job_key")
+        data["active_job_status"] = "running"
+        started_at = active_queue_job.get("started_at")
+        if started_at:
+            data["active_job_started_at"] = datetime.fromtimestamp(started_at).isoformat(sep=" ")
 
     return {
         "status": "success",
