@@ -1,3 +1,5 @@
+import threading
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,8 +20,37 @@ from app.api.v1.user_routes import router as user_router
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.connection_routes import router as connection_router
 from app.api.v1.data_collection_routes import router as data_collection_router
-from app.api.v1.quant_research_routes import router as quant_research_router
+from app.api.v1.quant_research_routes import (
+    latest_active_prediction_run,
+    refresh_prediction_cache_job,
+    router as quant_research_router
+)
 
+
+
+
+def start_quant_prediction_refresh_on_startup() -> None:
+    if not settings.QUANT_REFRESH_ON_STARTUP:
+        return
+
+    if latest_active_prediction_run():
+        print("Quant prediction refresh already running; startup refresh skipped.")
+        return
+
+    config = {
+        "limit": settings.QUANT_REFRESH_LIMIT,
+        "rebuild": settings.QUANT_REFRESH_REBUILD,
+        "include_deep_learning": settings.QUANT_REFRESH_INCLUDE_DEEP_LEARNING,
+        "train_missing_models": settings.QUANT_REFRESH_TRAIN_MISSING_MODELS
+    }
+    thread = threading.Thread(
+        target=refresh_prediction_cache_job,
+        args=(config,),
+        name="open-analytics-quant-prediction-startup-refresh",
+        daemon=True
+    )
+    thread.start()
+    print("Quant prediction refresh queued on startup.")
 
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
@@ -53,6 +84,7 @@ def startup_event():
     init_database()
     start_data_collection_scheduler()
     start_connection_scheduler()
+    start_quant_prediction_refresh_on_startup()
 
 
 @app.on_event("shutdown")

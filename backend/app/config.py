@@ -21,6 +21,12 @@ class Settings(BaseSettings):
         "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
     )
 
+    QUANT_REFRESH_ON_STARTUP: bool = False
+    QUANT_REFRESH_LIMIT: int = 1000
+    QUANT_REFRESH_INCLUDE_DEEP_LEARNING: bool = True
+    QUANT_REFRESH_TRAIN_MISSING_MODELS: bool = False
+    QUANT_REFRESH_REBUILD: bool = False
+
     class Config:
         env_file = str(BACKEND_ROOT / ".env")
 
