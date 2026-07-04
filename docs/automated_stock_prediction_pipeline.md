@@ -41,6 +41,19 @@ It calls:
 GET /api/v1/quant-research/predictions/auto
 ```
 
+This is a fast cached read. If no cache exists, or the cache is stale, the backend queues a background refresh and the page polls automatically until saved rows are available. The frontend does not wait for heavy OHLCV, indicator, ML, or deep-learning computation inside the browser request.
+
+Background refresh endpoint:
+
+```text
+POST /api/v1/quant-research/predictions/refresh
+```
+
+The refresh stores results in DuckDB cache tables:
+
+- `quant_prediction_runs`: run status, trading date, weights, model metadata, build steps, and config
+- `quant_prediction_rows`: saved prediction rows as JSON for fast readback
+
 Current query parameters:
 
 ```text
@@ -48,6 +61,8 @@ limit=1000
 rebuild=false
 include_deep_learning=true
 train_missing_models=false
+stale_minutes=30
+auto_refresh=true
 ```
 
 Meaning:
@@ -56,6 +71,8 @@ Meaning:
 - `rebuild=false`: do not rebuild all feature/ranking tables on every page load
 - `include_deep_learning=true`: include deep-learning predictions if available
 - `train_missing_models=false`: do not train ML/DL models during normal page load
+- `stale_minutes=30`: treat cached results older than 30 minutes as stale
+- `auto_refresh=true`: queue a backend refresh when cache is stale or missing
 
 ### `frontend/src/pages/admin/QuantResearch.jsx`
 
@@ -133,14 +150,16 @@ quant_auto_predictions()
 
 Responsibilities:
 
-1. Load latest technical rankings.
-2. If no rankings exist, build features, labels, rankings, risk, and trade plans.
-3. Load risk rows and trade plans for the latest trading date.
-4. Load latest ML model and ML predictions.
-5. Load latest deep-learning model and deep-learning predictions when available.
-6. Compute dynamic source weights.
-7. Blend technical, ML, and deep-learning scores.
-8. Return final table rows.
+1. `GET /predictions/auto` reads the latest completed prediction cache from DuckDB.
+2. If cache is missing or stale, it queues a background refresh and returns immediately.
+3. `POST /predictions/refresh` starts the same background refresh directly.
+4. The background builder loads latest technical rankings.
+5. If no rankings exist, it builds features, labels, rankings, risk, and trade plans.
+6. It loads risk rows and trade plans for the latest trading date.
+7. It loads latest ML predictions and deep-learning predictions when available.
+8. It computes dynamic source and indicator weights.
+9. It blends technical, ML, and deep-learning scores.
+10. It saves final rows to `quant_prediction_rows` for high-speed readback.
 
 Supporting functions:
 
@@ -484,7 +503,3 @@ GET /api/v1/quant-research/predictions/auto?limit=1000&rebuild=false&include_dee
 ## Current Limitation
 
 The ML and deep-learning implementations are rule baselines stored in ML/DL tables. They are integrated into the ensemble and weighted by model metrics, but they are not yet neural-network models from a framework such as PyTorch or TensorFlow.
-
-
-
-

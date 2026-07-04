@@ -42,9 +42,12 @@ export default function QuantResearch() {
 
   useEffect(() => {
     let active = true;
+    let pollTimer = null;
 
-    async function loadPredictions() {
-      setLoading(true);
+    async function loadPredictions(showLoading = false) {
+      if (showLoading) {
+        setLoading(true);
+      }
       setError("");
 
       try {
@@ -57,6 +60,10 @@ export default function QuantResearch() {
 
         setRows(Array.isArray(data.rows) ? data.rows : []);
         setMeta(data);
+
+        if (data.status === "building" || data.cache_status === "missing" || data.refresh_started || data.active_run) {
+          pollTimer = window.setTimeout(() => loadPredictions(false), 10000);
+        }
       } catch (err) {
         if (!active) {
           return;
@@ -72,12 +79,24 @@ export default function QuantResearch() {
       }
     }
 
-    loadPredictions();
+    loadPredictions(true);
 
     return () => {
       active = false;
+      if (pollTimer) {
+        window.clearTimeout(pollTimer);
+      }
     };
   }, []);
+
+  const isCacheBuilding = meta?.status === "building" || meta?.cache_status === "missing";
+  const statusText = isCacheBuilding
+    ? "Prediction cache is building in the background. This page will update automatically."
+    : meta?.active_run || meta?.refresh_started
+      ? "Showing cached predictions while the background refresh runs."
+      : meta?.cache_status === "stale"
+        ? "Showing cached predictions. A refresh will run in the background."
+        : "Latest cached recommendations";
 
   return (
     <MainLayout>
@@ -134,12 +153,12 @@ export default function QuantResearch() {
             {loading ? (
               <div className="flex items-center gap-2">
                 <Spinner color="light" />
-                <span>Building latest OHLCV predictions...</span>
+                <span>Loading cached predictions...</span>
               </div>
             ) : error ? (
               <span className="text-red-200">{error}</span>
             ) : (
-              <span>Latest generated recommendations</span>
+              <span>{statusText}</span>
             )}
           </div>
 
@@ -174,7 +193,7 @@ export default function QuantResearch() {
                 {!loading && !error && rows.length === 0 ? (
                   <tr>
                     <td className="px-3 py-6 text-center text-oa-muted" colSpan={20}>
-                      No prediction rows found. OHLCV data may need to be collected first.
+                      No cached prediction rows found yet. The background refresh may still be running.
                     </td>
                   </tr>
                 ) : null}
@@ -215,9 +234,3 @@ export default function QuantResearch() {
     </MainLayout>
   );
 }
-
-
-
-
-
-
