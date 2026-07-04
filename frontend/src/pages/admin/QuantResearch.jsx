@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCcw } from "lucide-react";
 
-import { getAutomatedStockPredictions } from "../../api/quantResearchApi";
+import { getAutomatedStockPredictions, refreshAutomatedStockPredictions } from "../../api/quantResearchApi";
 import Spinner from "../../components/common/Spinner";
 import MainLayout from "../../components/layout/MainLayout";
 
@@ -40,63 +41,69 @@ export default function QuantResearch() {
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let active = true;
-    let pollTimer = null;
+  const [refreshing, setRefreshing] = useState(false);
 
-    async function loadPredictions(showLoading = false) {
-      if (showLoading) {
-        setLoading(true);
-      }
-      setError("");
-
-      try {
-        const response = await getAutomatedStockPredictions();
-        const data = response.data?.data || {};
-
-        if (!active) {
-          return;
-        }
-
-        setRows(Array.isArray(data.rows) ? data.rows : []);
-        setMeta(data);
-
-        if (data.status === "building" || data.cache_status === "missing" || data.refresh_started || data.active_run) {
-          pollTimer = window.setTimeout(() => loadPredictions(false), 10000);
-        }
-      } catch (err) {
-        if (!active) {
-          return;
-        }
-
-        setError(err?.response?.data?.detail || err?.message || "Unable to load predictions.");
-        setRows([]);
-        setMeta(null);
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
+  const loadPredictions = useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setLoading(true);
     }
+    setError("");
 
-    loadPredictions(true);
+    try {
+      const response = await getAutomatedStockPredictions();
+      const data = response.data?.data || {};
 
-    return () => {
-      active = false;
-      if (pollTimer) {
-        window.clearTimeout(pollTimer);
-      }
-    };
+      setRows(Array.isArray(data.rows) ? data.rows : []);
+      setMeta(data);
+      setRefreshing(Boolean(data.active_run));
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to load predictions.");
+      setRows([]);
+      setMeta(null);
+      setRefreshing(false);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const isCacheBuilding = meta?.status === "building" || meta?.cache_status === "missing";
-  const statusText = isCacheBuilding
-    ? "Prediction cache is building in the background. This page will update automatically."
-    : meta?.active_run || meta?.refresh_started
-      ? "Showing cached predictions while the background refresh runs."
-      : meta?.cache_status === "stale"
-        ? "Showing cached predictions. A refresh will run in the background."
-        : "Latest cached recommendations";
+  useEffect(() => {
+    loadPredictions(true);
+  }, [loadPredictions]);
+
+  useEffect(() => {
+    if (!meta?.active_run) {
+      return undefined;
+    }
+
+    const pollTimer = window.setTimeout(() => loadPredictions(false), 5000);
+    return () => window.clearTimeout(pollTimer);
+  }, [loadPredictions, meta?.active_run]);
+
+  async function handleRefreshPredictions() {
+    setRefreshing(true);
+    setError("");
+
+    try {
+      const response = await refreshAutomatedStockPredictions();
+      const data = response.data?.data || {};
+      setMeta((current) => ({
+        ...(current || {}),
+        ...data,
+        active_run: data.active_run || current?.active_run || { status: "running", message: data.message || "Prediction refresh queued." }
+      }));
+      window.setTimeout(() => loadPredictions(false), 1000);
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to refresh predictions.");
+      setRefreshing(false);
+    }
+  }
+
+  const activeRunMessage = meta?.active_run?.message || "Prediction refresh is running.";
+  const statusText = meta?.active_run
+    ? `Building fresh predictions: ${activeRunMessage}`
+    : meta?.cache_status === "missing"
+      ? "No saved predictions found. Use Refresh Predictions to build fresh data."
+      : "Latest saved recommendations from DB";
 
   return (
     <MainLayout>
@@ -109,7 +116,19 @@ export default function QuantResearch() {
             </p>
           </div>
 
-          <div className="text-right text-xs text-oa-muted">
+          <div className="flex flex-col items-end gap-2">
+            <button
+              type="button"
+              onClick={handleRefreshPredictions}
+              disabled={refreshing}
+              className="inline-flex h-9 items-center gap-2 rounded border border-oa-border bg-oa-card px-3 text-xs font-semibold text-oa-text transition hover:border-sky-500/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+              title="Build fresh predictions and replace the saved DB cache"
+            >
+              <RefreshCcw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              <span>{refreshing ? "Building..." : "Refresh Predictions"}</span>
+            </button>
+
+            <div className="text-right text-xs text-oa-muted">
             <div>Trading date: <span className="text-oa-text">{meta?.trading_date || "-"}</span></div>
             <div>Equities: <span className="text-oa-text">{meta?.row_count ?? rows.length}</span></div>
             <div>
@@ -146,6 +165,7 @@ export default function QuantResearch() {
               <span className="text-oa-text"> / PVT {formatNumber((meta?.technical_profile?.indicator_weights?.pvt_slope_20 || 0) * 100, 0)}%</span>
             </div>
           </div>
+        </div>
         </div>
 
         <div className="rounded border border-oa-border bg-black">
@@ -193,7 +213,7 @@ export default function QuantResearch() {
                 {!loading && !error && rows.length === 0 ? (
                   <tr>
                     <td className="px-3 py-6 text-center text-oa-muted" colSpan={20}>
-                      No cached prediction rows found yet. The background refresh may still be running.
+                      No saved prediction rows found. Click Refresh Predictions to build fresh data.
                     </td>
                   </tr>
                 ) : null}

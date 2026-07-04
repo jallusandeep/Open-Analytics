@@ -41,15 +41,15 @@ It calls:
 GET /api/v1/quant-research/predictions/auto
 ```
 
-This is a fast cached read. If no cache exists, or the cache is stale, the backend queues a background refresh and the page polls automatically until saved rows are available. The frontend does not wait for heavy OHLCV, indicator, ML, or deep-learning computation inside the browser request.
+This is a fast cached read. It only reads saved prediction rows from DuckDB and does not start a fresh build when the page opens.
 
-Background refresh endpoint:
+Manual refresh endpoint used by the Refresh Predictions button:
 
 ```text
 POST /api/v1/quant-research/predictions/refresh
 ```
 
-The refresh stores results in DuckDB cache tables:
+The refresh builds fresh data in the backend, stores the new result in DuckDB cache tables, and removes old cached prediction runs after the new run is saved:
 
 - `quant_prediction_runs`: run status, trading date, weights, model metadata, build steps, and config
 - `quant_prediction_rows`: saved prediction rows as JSON for fast readback
@@ -61,8 +61,6 @@ limit=1000
 rebuild=false
 include_deep_learning=true
 train_missing_models=false
-stale_minutes=30
-auto_refresh=true
 ```
 
 Meaning:
@@ -71,8 +69,6 @@ Meaning:
 - `rebuild=false`: do not rebuild all feature/ranking tables on every page load
 - `include_deep_learning=true`: include deep-learning predictions if available
 - `train_missing_models=false`: do not train ML/DL models during normal page load
-- `stale_minutes=30`: treat cached results older than 30 minutes as stale
-- `auto_refresh=true`: queue a backend refresh when cache is stale or missing
 
 ### `frontend/src/pages/admin/QuantResearch.jsx`
 
@@ -150,9 +146,9 @@ quant_auto_predictions()
 
 Responsibilities:
 
-1. `GET /predictions/auto` reads the latest completed prediction cache from DuckDB.
-2. If cache is missing or stale, it queues a background refresh and returns immediately.
-3. `POST /predictions/refresh` starts the same background refresh directly.
+1. `GET /predictions/auto` reads the latest completed prediction cache from DuckDB only.
+2. If cache is missing, it returns an empty state and does not build automatically.
+3. `POST /predictions/refresh` starts a background refresh only when the user clicks Refresh Predictions.
 4. The background builder loads latest technical rankings.
 5. If no rankings exist, it builds features, labels, rankings, risk, and trade plans.
 6. It loads risk rows and trade plans for the latest trading date.

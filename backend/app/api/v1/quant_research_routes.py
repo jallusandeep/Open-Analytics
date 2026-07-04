@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import uuid4
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Query
@@ -488,19 +489,28 @@ def build_prediction_payload(
     limit: int = 1000,
     rebuild: bool = False,
     include_deep_learning: bool = True,
-    train_missing_models: bool = False
+    train_missing_models: bool = False,
+    progress_callback: Callable[[str], None] | None = None
 ) -> dict[str, Any]:
     build_steps: list[dict[str, Any]] = []
 
+    def report_progress(message: str) -> None:
+        if progress_callback:
+            progress_callback(message)
+
     def run_step(name: str, action, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        display_name = name.replace("_", " ")
+        report_progress(f"Building {display_name}...")
         result = action(payload) if payload is not None else action()
         build_steps.append({
             "step": name,
             "status": result.get("status"),
             "message": result.get("message")
         })
+        report_progress(f"Completed {display_name}.")
         return result
 
+    report_progress("Loading saved rankings...")
     rankings_result = get_quant_rankings_service(limit=limit)
     rankings = rankings_result.get("rankings", [])
 
@@ -514,10 +524,12 @@ def build_prediction_payload(
         ]:
             run_step(name, action, payload)
 
+        report_progress("Reloading rankings...")
         rankings_result = get_quant_rankings_service(limit=limit)
         rankings = rankings_result.get("rankings", [])
 
     trading_date = rankings_result.get("trading_date")
+    report_progress("Loading risk and trade plans...")
     risk_result = get_quant_risk_daily_service(trading_date=trading_date, limit=limit) if trading_date else {"risk": []}
     trade_plan_result = get_quant_trade_plans_service(trading_date=trading_date, limit=limit) if trading_date else {"plans": []}
 
@@ -530,6 +542,7 @@ def build_prediction_payload(
             run_step("trade_plans", build_quant_trade_plans_service, {"trading_date": trading_date, "limit": limit})
             trade_plan_result = get_quant_trade_plans_service(trading_date=trading_date, limit=limit)
 
+    report_progress("Loading ML predictions...")
     ml_models = get_quant_ml_models_service(limit=5).get("models", [])
     ml_model = latest_model(ml_models)
     ml_predictions = get_latest_ml_predictions_by_instrument(limit)
@@ -537,6 +550,7 @@ def build_prediction_payload(
     if rankings and train_missing_models and (rebuild or not ml_model or not ml_predictions):
         run_step("ml_dataset", build_quant_ml_dataset_service, {"limit": 200000})
         run_step("ml_train", train_quant_rule_baseline_model_service, None)
+        report_progress("Reloading ML predictions...")
         ml_models = get_quant_ml_models_service(limit=5).get("models", [])
         ml_model = latest_model(ml_models)
         ml_predictions = get_latest_ml_predictions_by_instrument(limit)
@@ -546,6 +560,7 @@ def build_prediction_payload(
     dl_predictions: dict[str, dict[str, Any]] = {}
 
     if include_deep_learning:
+        report_progress("Loading deep-learning predictions...")
         dl_models = get_quant_deep_learning_models_service(limit=5).get("models", [])
         dl_model = latest_model(dl_models)
         dl_predictions = get_latest_deep_learning_predictions_by_instrument(limit)
@@ -553,10 +568,12 @@ def build_prediction_payload(
         if rankings and train_missing_models and (rebuild or not dl_model or not dl_predictions):
             run_step("deep_learning_dataset", build_quant_deep_learning_dataset_service, {"limit": 100000})
             run_step("deep_learning_train", train_quant_sequence_rule_baseline_service, None)
+            report_progress("Reloading deep-learning predictions...")
             dl_models = get_quant_deep_learning_models_service(limit=5).get("models", [])
             dl_model = latest_model(dl_models)
             dl_predictions = get_latest_deep_learning_predictions_by_instrument(limit)
 
+    report_progress("Calculating dynamic indicator weights...")
     technical_profile = get_dynamic_technical_profile()
     latest_indicator_scores = get_latest_indicator_scores_by_instrument(trading_date, limit)
     weights = normalize_weights({
@@ -576,6 +593,7 @@ def build_prediction_payload(
         if row.get("instrument_key")
     }
 
+    report_progress("Building final recommendation rows...")
     rows = []
     for ranking in rankings:
         instrument_key = ranking.get("instrument_key")
@@ -634,6 +652,7 @@ def build_prediction_payload(
         })
 
     rows.sort(key=lambda row: row.get("prediction_score") or 0, reverse=True)
+    report_progress(f"Saving {len(rows)} prediction rows...")
 
     return {
         "status": rankings_result.get("status") or "success",
@@ -649,7 +668,6 @@ def build_prediction_payload(
         "row_count": len(rows),
         "rows": rows
     }
-
 
 def ensure_prediction_cache_tables() -> None:
     conn = get_connection()
@@ -757,8 +775,6 @@ def load_latest_prediction_cache(limit: int = 1000) -> dict[str, Any] | None:
         """, [run[0], limit]).fetchall()
         rows = [json.loads(record[0]) for record in row_records]
         completed_at = run[4]
-        stale_after = datetime.utcnow() - timedelta(minutes=30)
-        is_stale = completed_at is None or completed_at < stale_after
 
         return {
             "status": "success",
@@ -770,7 +786,7 @@ def load_latest_prediction_cache(limit: int = 1000) -> dict[str, Any] | None:
             "models": json.loads(run[9] or "{}"),
             "row_count": run[6] or len(rows),
             "rows": rows,
-            "cache_status": "stale" if is_stale else "ready",
+            "cache_status": "ready",
             "cache_run_id": run[0],
             "cache_started_at": run[3].isoformat() if hasattr(run[3], "isoformat") else str(run[3]),
             "cache_completed_at": completed_at.isoformat() if hasattr(completed_at, "isoformat") else str(completed_at),
@@ -829,6 +845,27 @@ def save_prediction_cache(payload: dict[str, Any], config: dict[str, Any]) -> st
         conn.close()
 
 
+def update_prediction_refresh_progress(run_id: str, message: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute("""
+            UPDATE quant_prediction_runs
+            SET message = ?
+            WHERE run_id = ? AND status = 'running';
+        """, [message, run_id])
+    finally:
+        conn.close()
+
+
+def cleanup_old_prediction_cache(keep_run_id: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM quant_prediction_rows WHERE run_id <> ?;", [keep_run_id])
+        conn.execute("DELETE FROM quant_prediction_runs WHERE run_id <> ?;", [keep_run_id])
+    finally:
+        conn.close()
+
+
 def mark_prediction_refresh_failed(run_id: str, error: Exception) -> None:
     ensure_prediction_cache_tables()
     conn = get_connection()
@@ -855,7 +892,10 @@ def refresh_prediction_cache_job(config: dict[str, Any]) -> None:
         conn.close()
 
     try:
-        payload = build_prediction_payload(**config)
+        def report_progress(message: str) -> None:
+            update_prediction_refresh_progress(run_id, message)
+
+        payload = build_prediction_payload(**config, progress_callback=report_progress)
         completed_run_id = save_prediction_cache(payload, config)
         conn = get_connection()
         try:
@@ -866,6 +906,7 @@ def refresh_prediction_cache_job(config: dict[str, Any]) -> None:
             """, [datetime.utcnow(), f"Completed as cache run {completed_run_id}.", run_id])
         finally:
             conn.close()
+        cleanup_old_prediction_cache(completed_run_id)
     except Exception as exc:
         mark_prediction_refresh_failed(run_id, exc)
 
@@ -902,46 +943,19 @@ def quant_predictions_refresh(
 
 @router.get("/predictions/auto", response_model=QuantActionResponse)
 def quant_auto_predictions(
-    background_tasks: BackgroundTasks,
-    limit: int = Query(default=1000, ge=1, le=1000),
-    rebuild: bool = Query(default=False),
-    include_deep_learning: bool = Query(default=True),
-    train_missing_models: bool = Query(default=False),
-    stale_minutes: int = Query(default=30, ge=1, le=1440),
-    auto_refresh: bool = Query(default=True)
+    limit: int = Query(default=1000, ge=1, le=1000)
 ) -> QuantActionResponse:
-    config = {
-        "limit": limit,
-        "rebuild": rebuild,
-        "include_deep_learning": include_deep_learning,
-        "train_missing_models": train_missing_models
-    }
     cached = load_latest_prediction_cache(limit=limit)
-    refresh_started = False
+    active_run = latest_active_prediction_run()
 
     if cached:
-        completed_at_value = cached.get("cache_completed_at")
-        completed_at = None
-        if completed_at_value:
-            try:
-                completed_at = datetime.fromisoformat(str(completed_at_value))
-            except ValueError:
-                completed_at = None
-        stale_after = datetime.utcnow() - timedelta(minutes=stale_minutes)
-        is_stale = completed_at is None or completed_at < stale_after
-        if auto_refresh and (rebuild or is_stale):
-            refresh_started = queue_prediction_refresh(background_tasks, config)
-        cached["cache_status"] = "stale" if is_stale else "ready"
-        cached["refresh_started"] = refresh_started
-        cached["active_run"] = latest_active_prediction_run()
+        cached["refresh_started"] = False
+        cached["active_run"] = active_run
         return action_response(cached)
 
-    if auto_refresh:
-        refresh_started = queue_prediction_refresh(background_tasks, config)
-
     return action_response({
-        "status": "building",
-        "message": "Prediction cache is building in the background.",
+        "status": "missing",
+        "message": "No saved prediction cache found. Use Refresh Predictions to build fresh data.",
         "trading_date": None,
         "row_count": 0,
         "rows": [],
@@ -949,10 +963,9 @@ def quant_auto_predictions(
         "technical_profile": {},
         "models": {},
         "cache_status": "missing",
-        "refresh_started": refresh_started,
-        "active_run": latest_active_prediction_run()
+        "refresh_started": False,
+        "active_run": active_run
     })
-
 @router.get("/readiness", response_model=QuantActionResponse)
 def quant_readiness() -> QuantActionResponse:
     return action_response(get_quant_data_readiness_service())
@@ -1036,5 +1049,3 @@ def quant_deep_learning_datasets() -> QuantActionResponse:
 @router.get("/deep-learning/models", response_model=QuantActionResponse)
 def quant_deep_learning_models() -> QuantActionResponse:
     return action_response(get_quant_deep_learning_models_service())
-
-
