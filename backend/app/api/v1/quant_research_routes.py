@@ -132,6 +132,237 @@ def normalize_weights(source_quality: dict[str, float]) -> dict[str, float]:
     }
 
 
+
+
+TECHNICAL_INDICATORS = [
+    {"key": "return_1d", "label": "Return 1D"},
+    {"key": "return_5d", "label": "Return 5D"},
+    {"key": "return_10d", "label": "Return 10D"},
+    {"key": "return_20d", "label": "Return 20D"},
+    {"key": "range_pct", "label": "Daily Range"},
+    {"key": "close_position", "label": "Close Position"},
+    {"key": "gap_pct", "label": "Gap"},
+    {"key": "volume_ratio_20", "label": "Volume Ratio 20"},
+    {"key": "distance_sma_20_pct", "label": "SMA 20 Distance"},
+    {"key": "distance_sma_50_pct", "label": "SMA 50 Distance"},
+    {"key": "volatility_20", "label": "Volatility 20"},
+    {"key": "momentum_20", "label": "Momentum 20"},
+    {"key": "rsi_14", "label": "RSI 14"},
+    {"key": "macd_line", "label": "MACD Line"},
+    {"key": "macd_signal", "label": "MACD Signal"},
+    {"key": "macd_histogram", "label": "MACD Histogram"},
+    {"key": "bollinger_position", "label": "Bollinger Position"},
+    {"key": "bollinger_width", "label": "Bollinger Width"},
+    {"key": "atr_14_pct", "label": "ATR 14 %"},
+    {"key": "stochastic_k_14", "label": "Stochastic K 14"},
+    {"key": "stochastic_d_3", "label": "Stochastic D 3"},
+    {"key": "adx_14", "label": "ADX 14"},
+    {"key": "roc_12", "label": "ROC 12"},
+    {"key": "williams_r_14", "label": "Williams R 14"},
+    {"key": "mfi_14", "label": "MFI 14"},
+    {"key": "chaikin_money_flow_20", "label": "Chaikin Money Flow 20"},
+    {"key": "vwap_distance_20", "label": "VWAP Distance 20"},
+    {"key": "donchian_position_20", "label": "Donchian Position 20"},
+    {"key": "obv_slope_20", "label": "OBV Slope 20"},
+    {"key": "pvt_slope_20", "label": "PVT Slope 20"}
+]
+
+
+def normalize_indicator_weights(indicator_quality: dict[str, float]) -> dict[str, float]:
+    keys = [indicator["key"] for indicator in TECHNICAL_INDICATORS]
+    clean_quality = {
+        key: max(0.0, float(indicator_quality.get(key) or 0.0))
+        for key in keys
+    }
+    total = sum(clean_quality.values())
+
+    if total <= 0:
+        equal_weight = 1.0 / len(keys)
+        return {key: equal_weight for key in keys}
+
+    return {
+        key: value / total
+        for key, value in clean_quality.items()
+    }
+
+
+def get_dynamic_technical_profile() -> dict[str, Any]:
+    conn = get_connection()
+    indicator_select = ",\n                    ".join(
+        f"feature.{indicator['key']}" for indicator in TECHNICAL_INDICATORS
+    )
+    metric_select = ",\n                ".join(
+        f"COALESCE(CORR({indicator['key']}, target_value), 0.0) AS {indicator['key']}_corr"
+        for indicator in TECHNICAL_INDICATORS
+    )
+
+    try:
+        row = conn.execute(f"""
+            WITH training_rows AS (
+                SELECT
+                    {indicator_select},
+                    CASE WHEN label.future_positive_10d THEN 1.0 ELSE 0.0 END AS target_value
+                FROM quant_features_daily feature
+                JOIN quant_labels_daily label
+                  ON label.instrument_key = feature.instrument_key
+                 AND label.trading_date = feature.trading_date
+                WHERE label.future_positive_10d IS NOT NULL
+                  AND feature.trading_date < (
+                      SELECT MAX(trading_date)
+                      FROM quant_features_daily
+                  )
+                ORDER BY feature.trading_date DESC
+                LIMIT 200000
+            )
+            SELECT
+                COUNT(*) AS sample_count,
+                {metric_select}
+            FROM training_rows;
+        """).fetchone()
+
+        sample_count = int(row[0] or 0) if row else 0
+        correlations: dict[str, float] = {}
+        indicator_quality: dict[str, float] = {}
+        indicator_direction: dict[str, int] = {}
+
+        for index, indicator in enumerate(TECHNICAL_INDICATORS, start=1):
+            key = indicator["key"]
+            try:
+                correlation = float(row[index] or 0.0) if row else 0.0
+            except Exception:
+                correlation = 0.0
+
+            correlations[key] = correlation
+            indicator_quality[key] = abs(correlation)
+            indicator_direction[key] = -1 if correlation < 0 else 1
+
+        indicator_weights = normalize_indicator_weights(indicator_quality)
+        average_quality = sum(indicator_quality.values()) / len(indicator_quality)
+        technical_quality = max(0.20, min(1.0, average_quality * 8.0)) if sample_count >= 100 else 0.35
+
+        return {
+            "sample_count": sample_count,
+            "indicator_correlations": correlations,
+            "indicator_quality": indicator_quality,
+            "indicator_direction": indicator_direction,
+            "indicator_weights": indicator_weights,
+            "component_weights": {
+                "return": sum(indicator_weights.get(key, 0.0) for key in ["return_1d", "return_5d", "return_10d", "return_20d", "momentum_20", "roc_12", "rsi_14", "williams_r_14", "stochastic_k_14", "stochastic_d_3"]),
+                "volume": sum(indicator_weights.get(key, 0.0) for key in ["volume_ratio_20", "mfi_14", "chaikin_money_flow_20", "obv_slope_20", "pvt_slope_20"]),
+                "trend": sum(indicator_weights.get(key, 0.0) for key in ["distance_sma_20_pct", "distance_sma_50_pct", "close_position", "gap_pct", "macd_line", "macd_signal", "macd_histogram", "adx_14", "donchian_position_20", "vwap_distance_20"]),
+                "risk": sum(indicator_weights.get(key, 0.0) for key in ["range_pct", "volatility_20", "atr_14_pct", "bollinger_width"])
+            },
+            "technical_quality": technical_quality
+        }
+
+    except Exception:
+        indicator_weights = normalize_indicator_weights({})
+        return {
+            "sample_count": 0,
+            "indicator_correlations": {},
+            "indicator_quality": {},
+            "indicator_direction": {},
+            "indicator_weights": indicator_weights,
+            "component_weights": {
+                "return": sum(indicator_weights.get(key, 0.0) for key in ["return_1d", "return_5d", "return_10d", "return_20d", "momentum_20", "roc_12", "rsi_14", "williams_r_14", "stochastic_k_14", "stochastic_d_3"]),
+                "volume": sum(indicator_weights.get(key, 0.0) for key in ["volume_ratio_20", "mfi_14", "chaikin_money_flow_20", "obv_slope_20", "pvt_slope_20"]),
+                "trend": sum(indicator_weights.get(key, 0.0) for key in ["distance_sma_20_pct", "distance_sma_50_pct", "close_position", "gap_pct", "macd_line", "macd_signal", "macd_histogram", "adx_14", "donchian_position_20", "vwap_distance_20"]),
+                "risk": sum(indicator_weights.get(key, 0.0) for key in ["range_pct", "volatility_20", "atr_14_pct", "bollinger_width"])
+            },
+            "technical_quality": 0.35
+        }
+
+    finally:
+        conn.close()
+
+
+def get_latest_indicator_scores_by_instrument(trading_date: str | None, limit: int) -> dict[str, dict[str, float]]:
+    if not trading_date:
+        return {}
+
+    conn = get_connection()
+    score_columns = []
+    for indicator in TECHNICAL_INDICATORS:
+        key = indicator["key"]
+        score_columns.append(f"""
+                CASE
+                    WHEN {key} IS NULL THEN NULL
+                    ELSE CUME_DIST() OVER (ORDER BY {key}) * 100.0
+                END AS {key}_score
+        """)
+
+    try:
+        rows = conn.execute(f"""
+            WITH latest_features AS (
+                SELECT
+                    instrument_key,
+                    trading_symbol,
+                    {", ".join(indicator["key"] for indicator in TECHNICAL_INDICATORS)}
+                FROM quant_features_daily
+                WHERE trading_date = TRY_CAST(? AS DATE)
+            ),
+            scored AS (
+                SELECT
+                    instrument_key,
+                    trading_symbol,
+                    {", ".join(score_columns)}
+                FROM latest_features
+            )
+            SELECT
+                instrument_key,
+                {", ".join(indicator["key"] + "_score" for indicator in TECHNICAL_INDICATORS)}
+            FROM scored
+            LIMIT ?;
+        """, [trading_date, limit]).fetchall()
+
+        scores_by_key: dict[str, dict[str, float]] = {}
+        for row in rows:
+            instrument_key = row[0]
+            scores_by_key[instrument_key] = {}
+            for index, indicator in enumerate(TECHNICAL_INDICATORS, start=1):
+                try:
+                    score = float(row[index]) if row[index] is not None else None
+                except Exception:
+                    score = None
+                if score is not None:
+                    scores_by_key[instrument_key][indicator["key"]] = max(0.0, min(100.0, score))
+
+        return scores_by_key
+
+    except Exception:
+        return {}
+
+    finally:
+        conn.close()
+
+
+def weighted_technical_score(
+    ranking: dict[str, Any],
+    indicator_scores: dict[str, float],
+    technical_profile: dict[str, Any]
+) -> float | None:
+    indicator_weights = technical_profile.get("indicator_weights") or {}
+    indicator_direction = technical_profile.get("indicator_direction") or {}
+    weighted_parts = []
+
+    for indicator in TECHNICAL_INDICATORS:
+        key = indicator["key"]
+        score = indicator_scores.get(key)
+        weight = float(indicator_weights.get(key) or 0.0)
+        direction = int(indicator_direction.get(key) or 1)
+
+        if score is None or weight <= 0:
+            continue
+
+        directional_score = 100.0 - score if direction < 0 else score
+        weighted_parts.append((directional_score, weight))
+
+    total_weight = sum(weight for _, weight in weighted_parts)
+    if total_weight <= 0:
+        return clamp_score(ranking.get("final_score"), 50.0)
+
+    return sum(score * weight for score, weight in weighted_parts) / total_weight
+
 def latest_model(models: list[dict[str, Any]]) -> dict[str, Any] | None:
     for model in models:
         if str(model.get("status") or "").lower() == "success":
@@ -324,8 +555,10 @@ def quant_auto_predictions(
             dl_model = latest_model(dl_models)
             dl_predictions = get_latest_deep_learning_predictions_by_instrument(limit)
 
+    technical_profile = get_dynamic_technical_profile()
+    latest_indicator_scores = get_latest_indicator_scores_by_instrument(trading_date, limit)
     weights = normalize_weights({
-        "technical": 0.65,
+        "technical": technical_profile["technical_quality"],
         "ml": model_quality(ml_model),
         "deep_learning": model_quality(dl_model) if include_deep_learning else 0.0
     })
@@ -347,7 +580,7 @@ def quant_auto_predictions(
         risk = risk_by_key.get(instrument_key, {})
         plan = plan_by_key.get(instrument_key, {})
         signal_label = ranking.get("signal_label")
-        technical_score = clamp_score(ranking.get("final_score"), 50.0)
+        technical_score = weighted_technical_score(ranking, latest_indicator_scores.get(instrument_key, {}), technical_profile)
         ml_prediction = ml_predictions.get(instrument_key, {})
         dl_prediction = dl_predictions.get(instrument_key, {})
         ml_score = normalize_model_score(ml_prediction.get("prediction_score"))
@@ -406,6 +639,7 @@ def quant_auto_predictions(
         "trading_date": trading_date,
         "build_steps": build_steps,
         "weights": weights,
+        "technical_profile": technical_profile,
         "models": {
             "ml": ml_model,
             "deep_learning": dl_model
@@ -497,6 +731,16 @@ def quant_deep_learning_datasets() -> QuantActionResponse:
 @router.get("/deep-learning/models", response_model=QuantActionResponse)
 def quant_deep_learning_models() -> QuantActionResponse:
     return action_response(get_quant_deep_learning_models_service())
+
+
+
+
+
+
+
+
+
+
 
 
 

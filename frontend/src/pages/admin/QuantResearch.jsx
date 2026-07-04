@@ -94,9 +94,37 @@ export default function QuantResearch() {
             <div>Trading date: <span className="text-oa-text">{meta?.trading_date || "-"}</span></div>
             <div>Equities: <span className="text-oa-text">{meta?.row_count ?? rows.length}</span></div>
             <div>
-              Weights: <span className="text-oa-text">T {formatNumber((meta?.weights?.technical || 0) * 100, 0)}%</span>
+              Model weights: <span className="text-oa-text">T {formatNumber((meta?.weights?.technical || 0) * 100, 0)}%</span>
               <span className="text-oa-text"> / ML {formatNumber((meta?.weights?.ml || 0) * 100, 0)}%</span>
               <span className="text-oa-text"> / Deep {formatNumber((meta?.weights?.deep_learning || 0) * 100, 0)}%</span>
+            </div>
+            <div>
+              Input weights: <span className="text-oa-text">Ret {formatNumber((meta?.technical_profile?.component_weights?.return || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Vol {formatNumber((meta?.technical_profile?.component_weights?.volume || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Trend {formatNumber((meta?.technical_profile?.component_weights?.trend || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Risk {formatNumber((meta?.technical_profile?.component_weights?.risk || 0) * 100, 0)}%</span>
+            </div>
+            <div>
+              Indicators: <span className="text-oa-text">R1 {formatNumber((meta?.technical_profile?.indicator_weights?.return_1d || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / R5 {formatNumber((meta?.technical_profile?.indicator_weights?.return_5d || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / R10 {formatNumber((meta?.technical_profile?.indicator_weights?.return_10d || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / R20 {formatNumber((meta?.technical_profile?.indicator_weights?.return_20d || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Vol {formatNumber((meta?.technical_profile?.indicator_weights?.volume_ratio_20 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Vlt {formatNumber((meta?.technical_profile?.indicator_weights?.volatility_20 || 0) * 100, 0)}%</span>
+            </div>
+            <div>
+              Classic: <span className="text-oa-text">RSI {formatNumber((meta?.technical_profile?.indicator_weights?.rsi_14 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / MACD {formatNumber(((meta?.technical_profile?.indicator_weights?.macd_line || 0) + (meta?.technical_profile?.indicator_weights?.macd_signal || 0) + (meta?.technical_profile?.indicator_weights?.macd_histogram || 0)) * 100, 0)}%</span>
+              <span className="text-oa-text"> / BB {formatNumber(((meta?.technical_profile?.indicator_weights?.bollinger_position || 0) + (meta?.technical_profile?.indicator_weights?.bollinger_width || 0)) * 100, 0)}%</span>
+              <span className="text-oa-text"> / ATR {formatNumber((meta?.technical_profile?.indicator_weights?.atr_14_pct || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Stoch {formatNumber(((meta?.technical_profile?.indicator_weights?.stochastic_k_14 || 0) + (meta?.technical_profile?.indicator_weights?.stochastic_d_3 || 0)) * 100, 0)}%</span>
+              <span className="text-oa-text"> / ADX {formatNumber((meta?.technical_profile?.indicator_weights?.adx_14 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / MFI {formatNumber((meta?.technical_profile?.indicator_weights?.mfi_14 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / CMF {formatNumber((meta?.technical_profile?.indicator_weights?.chaikin_money_flow_20 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / VWAP {formatNumber((meta?.technical_profile?.indicator_weights?.vwap_distance_20 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / Don {formatNumber((meta?.technical_profile?.indicator_weights?.donchian_position_20 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / OBV {formatNumber((meta?.technical_profile?.indicator_weights?.obv_slope_20 || 0) * 100, 0)}%</span>
+              <span className="text-oa-text"> / PVT {formatNumber((meta?.technical_profile?.indicator_weights?.pvt_slope_20 || 0) * 100, 0)}%</span>
             </div>
           </div>
         </div>
@@ -187,5 +215,9 @@ export default function QuantResearch() {
     </MainLayout>
   );
 }
+
+
+
+
 
 

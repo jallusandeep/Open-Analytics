@@ -40,6 +40,25 @@ def ensure_quant_features_daily_table(conn) -> None:
             volatility_20 DOUBLE,
             momentum_20 DOUBLE,
 
+            rsi_14 DOUBLE,
+            macd_line DOUBLE,
+            macd_signal DOUBLE,
+            macd_histogram DOUBLE,
+            bollinger_position DOUBLE,
+            bollinger_width DOUBLE,
+            atr_14_pct DOUBLE,
+            stochastic_k_14 DOUBLE,
+            stochastic_d_3 DOUBLE,
+            adx_14 DOUBLE,
+            roc_12 DOUBLE,
+            williams_r_14 DOUBLE,
+            mfi_14 DOUBLE,
+            chaikin_money_flow_20 DOUBLE,
+            vwap_distance_20 DOUBLE,
+            donchian_position_20 DOUBLE,
+            obv_slope_20 DOUBLE,
+            pvt_slope_20 DOUBLE,
+
             source_table VARCHAR DEFAULT 'ohlcv_daily',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -70,6 +89,35 @@ def ensure_quant_features_daily_table(conn) -> None:
             except Exception:
                 pass
 
+
+
+    for column_sql in [
+        "ALTER TABLE quant_features_daily ADD COLUMN rsi_14 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN macd_line DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN macd_signal DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN macd_histogram DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN bollinger_position DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN bollinger_width DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN atr_14_pct DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN stochastic_k_14 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN stochastic_d_3 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN adx_14 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN roc_12 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN williams_r_14 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN mfi_14 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN chaikin_money_flow_20 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN vwap_distance_20 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN donchian_position_20 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN obv_slope_20 DOUBLE;",
+        "ALTER TABLE quant_features_daily ADD COLUMN pvt_slope_20 DOUBLE;"
+    ]:
+        try:
+            conn.execute(column_sql)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 def get_ohlcv_daily_status(conn) -> Dict[str, Any]:
     row = conn.execute("""
@@ -253,6 +301,25 @@ def build_quant_features_daily_service(payload: Optional[dict] = None) -> Dict[s
                 volatility_20,
                 momentum_20,
 
+                rsi_14,
+                macd_line,
+                macd_signal,
+                macd_histogram,
+                bollinger_position,
+                bollinger_width,
+                atr_14_pct,
+                stochastic_k_14,
+                stochastic_d_3,
+                adx_14,
+                roc_12,
+                williams_r_14,
+                mfi_14,
+                chaikin_money_flow_20,
+                vwap_distance_20,
+                donchian_position_20,
+                obv_slope_20,
+                pvt_slope_20,
+
                 source_table,
                 created_at,
                 updated_at
@@ -291,6 +358,11 @@ def build_quant_features_daily_service(payload: Optional[dict] = None) -> Dict[s
                         ORDER BY trading_date
                     ) AS close_10d_ago,
 
+                    LAG(close_price, 12) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                    ) AS close_12d_ago,
+
                     LAG(close_price, 20) OVER (
                         PARTITION BY instrument_key
                         ORDER BY trading_date
@@ -299,7 +371,17 @@ def build_quant_features_daily_service(payload: Optional[dict] = None) -> Dict[s
                     LAG(close_price, 1) OVER (
                         PARTITION BY instrument_key
                         ORDER BY trading_date
-                    ) AS previous_close
+                    ) AS previous_close,
+
+                    LAG(high_price, 1) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                    ) AS previous_high,
+
+                    LAG(low_price, 1) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                    ) AS previous_low
                 FROM base
             ),
             returns AS (
@@ -308,7 +390,73 @@ def build_quant_features_daily_service(payload: Optional[dict] = None) -> Dict[s
                     CASE
                         WHEN close_1d_ago IS NULL OR close_1d_ago = 0 THEN NULL
                         ELSE (close_price - close_1d_ago) / close_1d_ago
-                    END AS return_1d_for_vol
+                    END AS return_1d_for_vol,
+
+                    CASE
+                        WHEN previous_close IS NULL THEN NULL
+                        ELSE close_price - previous_close
+                    END AS price_change,
+
+                    CASE
+                        WHEN previous_close IS NULL THEN NULL
+                        ELSE GREATEST(close_price - previous_close, 0)
+                    END AS gain_1d,
+
+                    CASE
+                        WHEN previous_close IS NULL THEN NULL
+                        ELSE GREATEST(previous_close - close_price, 0)
+                    END AS loss_1d,
+
+                    GREATEST(
+                        high_price - low_price,
+                        ABS(high_price - COALESCE(previous_close, close_price)),
+                        ABS(low_price - COALESCE(previous_close, close_price))
+                    ) AS true_range,
+
+                    CASE
+                        WHEN previous_high IS NULL OR previous_low IS NULL THEN NULL
+                        WHEN high_price - previous_high > previous_low - low_price
+                         AND high_price - previous_high > 0
+                        THEN high_price - previous_high
+                        ELSE 0
+                    END AS plus_dm,
+
+                    CASE
+                        WHEN previous_high IS NULL OR previous_low IS NULL THEN NULL
+                        WHEN previous_low - low_price > high_price - previous_high
+                         AND previous_low - low_price > 0
+                        THEN previous_low - low_price
+                        ELSE 0
+                    END AS minus_dm,
+
+                    CASE
+                        WHEN previous_close IS NULL THEN 0
+                        WHEN close_price > previous_close THEN CAST(volume AS DOUBLE)
+                        WHEN close_price < previous_close THEN -CAST(volume AS DOUBLE)
+                        ELSE 0
+                    END AS signed_volume,
+
+                    CASE
+                        WHEN previous_close IS NULL OR previous_close = 0 THEN 0
+                        ELSE ((close_price - previous_close) / previous_close) * CAST(volume AS DOUBLE)
+                    END AS pvt_increment,
+
+                    CASE
+                        WHEN high_price IS NULL OR low_price IS NULL OR high_price = low_price THEN 0
+                        ELSE (((close_price - low_price) - (high_price - close_price)) / (high_price - low_price)) * CAST(volume AS DOUBLE)
+                    END AS money_flow_volume,
+
+                    CASE
+                        WHEN previous_close IS NULL THEN 0
+                        WHEN close_price > previous_close THEN ((high_price + low_price + close_price) / 3.0) * CAST(volume AS DOUBLE)
+                        ELSE 0
+                    END AS positive_money_flow,
+
+                    CASE
+                        WHEN previous_close IS NULL THEN 0
+                        WHEN close_price < previous_close THEN ((high_price + low_price + close_price) / 3.0) * CAST(volume AS DOUBLE)
+                        ELSE 0
+                    END AS negative_money_flow
                 FROM lagged
             ),
             enriched AS (
@@ -332,12 +480,236 @@ def build_quant_features_daily_service(payload: Optional[dict] = None) -> Dict[s
                         ROWS BETWEEN 49 PRECEDING AND CURRENT ROW
                     ) AS sma_50,
 
+                    AVG(close_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 11 PRECEDING AND CURRENT ROW
+                    ) AS sma_12,
+
+                    AVG(close_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 25 PRECEDING AND CURRENT ROW
+                    ) AS sma_26,
+
+                    STDDEV_SAMP(close_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS close_stddev_20,
+
+                    AVG(gain_1d) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS avg_gain_14,
+
+                    AVG(loss_1d) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS avg_loss_14,
+
+                    AVG(true_range) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS atr_14,
+
+                    MIN(low_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS lowest_low_14,
+
+                    MAX(high_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS highest_high_14,
+
+                    AVG(plus_dm) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS plus_dm_14,
+
+                    AVG(minus_dm) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS minus_dm_14,
+
+                    MAX(high_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS highest_high_20,
+
+                    MIN(low_price) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS lowest_low_20,
+
+                    SUM(CAST(volume AS DOUBLE) * ((high_price + low_price + close_price) / 3.0)) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS vwap_numerator_20,
+
+                    SUM(CAST(volume AS DOUBLE)) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS vwap_denominator_20,
+
+                    SUM(money_flow_volume) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS cmf_numerator_20,
+
+                    SUM(CAST(volume AS DOUBLE)) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS cmf_denominator_20,
+
+                    SUM(positive_money_flow) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS positive_money_flow_14,
+
+                    SUM(negative_money_flow) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 13 PRECEDING AND CURRENT ROW
+                    ) AS negative_money_flow_14,
+
+                    SUM(signed_volume) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS obv,
+
+                    SUM(pvt_increment) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS pvt,
+
                     STDDEV_SAMP(return_1d_for_vol) OVER (
                         PARTITION BY instrument_key
                         ORDER BY trading_date
                         ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
                     ) AS volatility_20
                 FROM returns
+            ),
+            indicator_seed AS (
+                SELECT
+                    *,
+                    LAG(obv, 20) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                    ) AS obv_20d_ago,
+                    LAG(pvt, 20) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                    ) AS pvt_20d_ago
+                FROM enriched
+            ),
+            indicator_base AS (
+                SELECT
+                    *,
+                    (sma_12 - sma_26) AS macd_line,
+                    CASE
+                        WHEN avg_loss_14 IS NULL OR avg_loss_14 = 0 THEN 100
+                        WHEN avg_gain_14 IS NULL THEN 0
+                        ELSE 100 - (100 / (1 + (avg_gain_14 / avg_loss_14)))
+                    END AS rsi_14,
+                    CASE
+                        WHEN sma_20 IS NULL OR close_stddev_20 IS NULL OR close_stddev_20 = 0 THEN NULL
+                        ELSE (close_price - (sma_20 - (2 * close_stddev_20))) / (4 * close_stddev_20)
+                    END AS bollinger_position,
+                    CASE
+                        WHEN sma_20 IS NULL OR sma_20 = 0 OR close_stddev_20 IS NULL THEN NULL
+                        ELSE (4 * close_stddev_20) / sma_20
+                    END AS bollinger_width,
+                    CASE
+                        WHEN close_price IS NULL OR close_price = 0 THEN NULL
+                        ELSE atr_14 / close_price
+                    END AS atr_14_pct,
+                    CASE
+                        WHEN highest_high_14 IS NULL
+                          OR lowest_low_14 IS NULL
+                          OR highest_high_14 = lowest_low_14
+                        THEN NULL
+                        ELSE (close_price - lowest_low_14) / (highest_high_14 - lowest_low_14) * 100
+                    END AS stochastic_k_14,
+                    CASE
+                        WHEN atr_14 IS NULL OR atr_14 = 0 THEN NULL
+                        ELSE 100 * plus_dm_14 / atr_14
+                    END AS plus_di_14,
+                    CASE
+                        WHEN atr_14 IS NULL OR atr_14 = 0 THEN NULL
+                        ELSE 100 * minus_dm_14 / atr_14
+                    END AS minus_di_14
+                FROM indicator_seed
+            ),
+            final_indicators AS (
+                SELECT
+                    *,
+                    AVG(macd_line) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 8 PRECEDING AND CURRENT ROW
+                    ) AS macd_signal,
+                    AVG(stochastic_k_14) OVER (
+                        PARTITION BY instrument_key
+                        ORDER BY trading_date
+                        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+                    ) AS stochastic_d_3,
+                    CASE
+                        WHEN plus_di_14 IS NULL OR minus_di_14 IS NULL OR plus_di_14 + minus_di_14 = 0 THEN NULL
+                        ELSE 100 * ABS(plus_di_14 - minus_di_14) / (plus_di_14 + minus_di_14)
+                    END AS adx_14,
+                    CASE
+                        WHEN close_12d_ago IS NULL OR close_12d_ago = 0 THEN NULL
+                        ELSE (close_price - close_12d_ago) / close_12d_ago
+                    END AS roc_12,
+                    CASE
+                        WHEN highest_high_14 IS NULL OR lowest_low_14 IS NULL OR highest_high_14 = lowest_low_14 THEN NULL
+                        ELSE -100 * (highest_high_14 - close_price) / (highest_high_14 - lowest_low_14)
+                    END AS williams_r_14,
+                    CASE
+                        WHEN negative_money_flow_14 IS NULL OR negative_money_flow_14 = 0 THEN 100
+                        WHEN positive_money_flow_14 IS NULL THEN 0
+                        ELSE 100 - (100 / (1 + (positive_money_flow_14 / negative_money_flow_14)))
+                    END AS mfi_14,
+                    CASE
+                        WHEN cmf_denominator_20 IS NULL OR cmf_denominator_20 = 0 THEN NULL
+                        ELSE cmf_numerator_20 / cmf_denominator_20
+                    END AS chaikin_money_flow_20,
+                    CASE
+                        WHEN vwap_denominator_20 IS NULL OR vwap_denominator_20 = 0 THEN NULL
+                        WHEN vwap_numerator_20 / vwap_denominator_20 = 0 THEN NULL
+                        ELSE (close_price - (vwap_numerator_20 / vwap_denominator_20)) / (vwap_numerator_20 / vwap_denominator_20)
+                    END AS vwap_distance_20,
+                    CASE
+                        WHEN highest_high_20 IS NULL OR lowest_low_20 IS NULL OR highest_high_20 = lowest_low_20 THEN NULL
+                        ELSE (close_price - lowest_low_20) / (highest_high_20 - lowest_low_20) * 100
+                    END AS donchian_position_20,
+                    CASE
+                        WHEN obv_20d_ago IS NULL OR obv_20d_ago = 0 THEN NULL
+                        ELSE (obv - obv_20d_ago) / ABS(obv_20d_ago)
+                    END AS obv_slope_20,
+                    CASE
+                        WHEN pvt_20d_ago IS NULL OR pvt_20d_ago = 0 THEN NULL
+                        ELSE (pvt - pvt_20d_ago) / ABS(pvt_20d_ago)
+                    END AS pvt_slope_20
+                FROM indicator_base
             )
             SELECT
                 instrument_key,
@@ -416,10 +788,29 @@ def build_quant_features_daily_service(payload: Optional[dict] = None) -> Dict[s
                     ELSE (close_price - close_20d_ago) / close_20d_ago
                 END AS momentum_20,
 
+                rsi_14,
+                macd_line,
+                macd_signal,
+                macd_line - macd_signal AS macd_histogram,
+                bollinger_position,
+                bollinger_width,
+                atr_14_pct,
+                stochastic_k_14,
+                stochastic_d_3,
+                adx_14,
+                roc_12,
+                williams_r_14,
+                mfi_14,
+                chaikin_money_flow_20,
+                vwap_distance_20,
+                donchian_position_20,
+                obv_slope_20,
+                pvt_slope_20,
+
                 'ohlcv_daily' AS source_table,
                 CURRENT_TIMESTAMP AS created_at,
                 CURRENT_TIMESTAMP AS updated_at
-            FROM enriched;
+            FROM final_indicators;
         """, params)
 
         conn.execute("COMMIT")
@@ -522,4 +913,12 @@ def get_quant_features_summary_service() -> Dict[str, Any]:
 
     finally:
         conn.close()
+
+
+
+
+
+
+
+
 
