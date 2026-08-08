@@ -507,10 +507,7 @@ def set_app_metadata_value(conn, key: str, value: str):
 
 
 def is_upstox_reminder_window(now_time: datetime) -> bool:
-    return (
-        now_time.hour >= UPSTOX_REMINDER_START_HOUR
-        and now_time.hour < UPSTOX_REMINDER_END_HOUR
-    )
+    return now_time.hour == UPSTOX_REMINDER_START_HOUR
 
 
 def should_send_upstox_reminder(conn, now_time: datetime) -> bool:
@@ -524,9 +521,7 @@ def should_send_upstox_reminder(conn, now_time: datetime) -> bool:
     if not last_sent_at:
         return True
 
-    return now_time - last_sent_at >= timedelta(
-        minutes=UPSTOX_REMINDER_REPEAT_MINUTES
-    )
+    return last_sent_at.date() != now_time.date()
 
 
 def should_trigger_upstox_access_token_request(conn, now_time: datetime) -> bool:
@@ -540,9 +535,7 @@ def should_trigger_upstox_access_token_request(conn, now_time: datetime) -> bool
     if not last_triggered_at:
         return True
 
-    return now_time - last_triggered_at >= timedelta(
-        minutes=UPSTOX_REMINDER_REPEAT_MINUTES
-    )
+    return last_triggered_at.date() != now_time.date()
 
 
 def build_upstox_access_token_approval_reminder_message(
