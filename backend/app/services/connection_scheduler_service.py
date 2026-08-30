@@ -466,17 +466,20 @@ def notify_admin_super_admins_upstox_token_expiry_service():
 
         sent_count = 0
 
-        for message in reminder_messages:
-            for chat_id in chat_ids:
-                try:
-                    send_telegram_message(
-                        bot_token=bot_token,
-                        chat_id=chat_id,
-                        message=message
-                    )
-                    sent_count += 1
-                except Exception as error:
-                    print(f"Unable to send Upstox token Telegram reminder: {error}")
+        combined_reminder_message = "\n\n--------------------\n\n".join(
+            reminder_messages
+        )
+
+        for chat_id in chat_ids:
+            try:
+                send_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    message=combined_reminder_message
+                )
+                sent_count += 1
+            except Exception as error:
+                print(f"Unable to send Upstox token Telegram reminder: {error}")
 
         conn.commit()
 
