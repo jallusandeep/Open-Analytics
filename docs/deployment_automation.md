@@ -1,54 +1,56 @@
-# Deployment Automation
+# Open Analytics Deployment Automation
 
-The production deployment is automated through GitHub Actions and Docker.
+The production deployment is automated through GitHub Actions, GitHub Container Registry (GHCR), Docker Compose, and Watchtower.
 
-## Trigger
+## Deployment flow
 
-Pushing to the `production` branch runs:
+Pushing to the `production` branch, or manually running the workflow, executes:
 
 ```text
 .github/workflows/deploy.yaml
 ```
 
-Without any Rubik server secrets, the workflow still builds and pushes Docker images. Server deployment is opt-in and only runs when the GitHub variable `ENABLE_RUBIK_DEPLOY` is set to `true`.`r`n`r`nThe workflow:
+The workflow:
 
-1. Builds the backend Docker image.
-2. Builds the frontend Docker image.
-3. Pushes both images to GitHub Container Registry.
-4. SSHes into the Rubik server.
-5. Pulls the latest images with Docker Compose.
-6. Restarts backend, frontend, and Watchtower.
-7. Waits for backend `/health`.
-8. Triggers quant prediction refresh in the background.
+1. Builds the Open Analytics backend image.
+2. Builds the Open Analytics frontend image.
+3. Pushes both images to GHCR with the `latest` tag.
+4. Leaves deployment to Watchtower on the Open Analytics server.
 
-## Optional Deploy Toggle`r`n`r`nTo enable SSH deployment to Rubik, add this GitHub Actions variable:`r`n`r`n```text`r`nENABLE_RUBIK_DEPLOY=true`r`n``` `r`n`r`nIf this variable is missing or set to anything else, the Docker build still runs and the deploy job is skipped.`r`n`r`n## Required GitHub Secrets For Deploy
+Watchtower polls GHCR every 60 seconds by default. When it detects a new image digest, it pulls the image, performs a rolling restart of the labeled backend and frontend containers, and removes the replaced image.
 
-Add these in GitHub repository settings under `Settings -> Secrets and variables -> Actions` only when `ENABLE_RUBIK_DEPLOY=true`:
+## Server requirements
+
+The Open Analytics server must have:
+
+- Docker and the Docker Compose plugin installed.
+- `server/docker/docker-compose.yaml` deployed on the server.
+- A `.env` file containing the required ports, container names, JWT keys, data volume, image names, and GHCR credentials.
+- The Watchtower service running as part of the Docker Compose stack.
+
+For private GHCR packages, configure these values in the server `.env` file:
 
 ```text
-RUBIK_HOST=192.168.29.103
-RUBIK_USER=rubik
-RUBIK_PASSWORD=<server password>
-RUBIK_DEPLOY_DIR=/opt/open-analytics/server/docker
-GHCR_TOKEN=<classic PAT or fine-grained token with package read access>
+GHCR_USERNAME=<GitHub username or organization>
+GHCR_TOKEN=<token with package read access>
 ```
 
-Do not commit the server password or token to the repository.
+Do not commit credentials to the repository.
 
-## Server Requirements
+## Images
 
-The Rubik server should have:
+The workflow publishes:
 
-- Docker installed
-- Docker Compose plugin installed
-- `server/docker/docker-compose.yaml` deployed under `RUBIK_DEPLOY_DIR`
-- A `.env` file in `RUBIK_DEPLOY_DIR` containing the existing Docker Compose values such as ports, container names, JWT keys, data volume, and image names
+```text
+ghcr.io/<repository-owner>/openanalytics-backend2:latest
+ghcr.io/<repository-owner>/openanalytics-frontend2:latest
+```
 
-The workflow overrides `BACKEND_IMAGE` and `FRONTEND_IMAGE` at deploy time, so the server pulls the image produced by the same GitHub push.
+Set `BACKEND_IMAGE` and `FRONTEND_IMAGE` in the server `.env` file to these image names.
 
-## Prediction Refresh
+## Prediction refresh
 
-The backend container receives these environment variables from Docker Compose:
+The backend container supports these startup settings:
 
 ```text
 QUANT_REFRESH_ON_STARTUP=true
@@ -58,11 +60,4 @@ QUANT_REFRESH_TRAIN_MISSING_MODELS=false
 QUANT_REFRESH_REBUILD=false
 ```
 
-When the backend starts, it queues a quant prediction refresh in a background thread. The deploy workflow also calls:
-
-```text
-POST /api/v1/quant-research/predictions/refresh
-```
-
-This keeps the prediction cache table updated after every deployment without making the browser wait for heavy computation.
-
+When enabled, the backend queues the quant prediction refresh after the updated container starts.
