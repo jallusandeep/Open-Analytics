@@ -560,7 +560,8 @@ def build_upstox_access_token_approval_reminder_message(
         f"Previous status: {previous_status or '--'}\n"
         f"Current status: {current_status or '--'}\n\n"
         f"{approval_text}\n\n"
-        f"Details: {request_message or '--'}"
+        f"Details: {request_message or '--'}\n\n"
+        "This reminder repeats once a day until the access token is valid."
     )
 
 
@@ -619,7 +620,7 @@ def maybe_request_upstox_access_token_and_send_reminder(
 
         return {
             "status": "skipped",
-            "message": "Upstox reminder was already sent recently."
+            "message": "Upstox reminder was already sent today."
         }
 
     try:
