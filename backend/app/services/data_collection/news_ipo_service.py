@@ -2077,18 +2077,76 @@ def calculate_ipo_gmp_gain(ipo_gmp: Any, price_band: Any) -> Optional[str]:
     return f"{format_ipo_gmp_money(estimated_listing)} ({gain_percent:.2f}%)"
 
 
-def find_ipo_gmp_table_from_html(url: str):
-    tables = pd.read_html(url)
+def normalize_ipo_gmp_column_name(column: Any) -> str:
+    if isinstance(column, tuple):
+        column_parts = [
+            str(part).strip()
+            for part in column
+            if str(part).strip()
+            and not str(part).strip().lower().startswith("unnamed:")
+        ]
+        column_name = column_parts[-1] if column_parts else str(column).strip()
+    else:
+        column_name = str(column).strip()
+
+    if column_name.rstrip("*").strip().lower() == "ipo gmp":
+        return "IPO GMP"
+
+    return column_name
+
+
+def combine_ipo_gmp_tables(tables: List[Any]):
+    matching_tables = []
+    discovered_columns = []
+    required_source_columns = {
+        "IPO Name",
+        "IPO GMP",
+        "Price Band",
+        "Date",
+        "Status",
+        "Last Updated"
+    }
 
     for df in tables:
-        cols = [str(column).strip() for column in df.columns]
+        normalized_table = df.copy()
+        normalized_table.columns = [
+            normalize_ipo_gmp_column_name(column)
+            for column in normalized_table.columns
+        ]
 
-        if "IPO Name" in cols and "IPO GMP" in cols:
-            df = df.copy()
-            df.columns = cols
-            return df
+        if not normalized_table.empty:
+            first_row_columns = [
+                normalize_ipo_gmp_column_name(normalize_ipo_gmp_value(value))
+                for value in normalized_table.iloc[0].tolist()
+            ]
 
-    raise ValueError("Target IPO GMP table was not found with pandas.read_html.")
+            if "IPO Name" in first_row_columns and "IPO GMP" in first_row_columns:
+                normalized_table = normalized_table.iloc[1:].copy()
+                normalized_table.columns = first_row_columns
+
+        discovered_columns.append(list(normalized_table.columns))
+
+        if not required_source_columns.issubset(set(normalized_table.columns)):
+            continue
+
+        if "Type" not in normalized_table.columns:
+            normalized_table["Type"] = (
+                "Mainboard" if not matching_tables else "SME"
+            )
+
+        matching_tables.append(normalized_table)
+
+    if not matching_tables:
+        raise ValueError(
+            "Target IPO GMP tables were not found. "
+            f"Discovered columns: {discovered_columns}"
+        )
+
+    return pd.concat(matching_tables, ignore_index=True)
+
+
+def find_ipo_gmp_table_from_html(url: str):
+    return combine_ipo_gmp_tables(pd.read_html(url))
 
 
 def first_existing_path(paths: List[str]) -> Optional[str]:
@@ -2178,7 +2236,7 @@ def find_ipo_gmp_table_with_selenium(url: str):
 
         tables = driver.find_elements(By.TAG_NAME, "table")
 
-        html_table = None
+        html_tables = []
 
         for table in tables:
             table_text = table.text.strip()
@@ -2189,19 +2247,20 @@ def find_ipo_gmp_table_with_selenium(url: str):
                 and "Price Band" in table_text
                 and "Last Updated" in table_text
             ):
-                html_table = table.get_attribute("outerHTML")
-                break
+                html_tables.append(table.get_attribute("outerHTML"))
 
-        if html_table is None:
+        if not html_tables:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Target IPO GMP table was not found with Selenium.",
+                detail="Target IPO GMP tables were not found with Selenium.",
             )
 
-        df = pd.read_html(StringIO(html_table))[0]
-        df.columns = [str(column).strip() for column in df.columns]
+        parsed_tables = [
+            pd.read_html(StringIO(html_table))[0]
+            for html_table in html_tables
+        ]
 
-        return df
+        return combine_ipo_gmp_tables(parsed_tables)
 
     except Exception as exc:
         raise HTTPException(
@@ -2234,7 +2293,10 @@ def get_ipo_gmp_dataframe(url: str = IPO_GMP_SCRAPER_URL):
 
 def normalize_ipo_gmp_dataframe(df):
     normalized_df = df.copy()
-    normalized_df.columns = [str(column).strip() for column in normalized_df.columns]
+    normalized_df.columns = [
+        normalize_ipo_gmp_column_name(column)
+        for column in normalized_df.columns
+    ]
 
     if (
         not set(IPO_GMP_SCRAPER_REQUIRED_COLUMNS).issubset(set(normalized_df.columns))
@@ -2249,7 +2311,10 @@ def normalize_ipo_gmp_dataframe(df):
             normalized_df = normalized_df.iloc[1:].copy()
             normalized_df.columns = first_row_values
 
-    normalized_df.columns = [str(column).strip() for column in normalized_df.columns]
+    normalized_df.columns = [
+        normalize_ipo_gmp_column_name(column)
+        for column in normalized_df.columns
+    ]
     return normalized_df.reset_index(drop=True)
 
 
