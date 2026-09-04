@@ -107,6 +107,9 @@ services:
   watchtower:
     image: containrrr/watchtower:latest
     container_name: watchtower
+    environment:
+      DOCKER_API_VERSION: "1.44"
+      WATCHTOWER_NOTIFICATIONS: shoutrrr
     command:
       - --label-enable
       - --interval
