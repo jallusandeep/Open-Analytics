@@ -16,18 +16,11 @@ services:
       IDLE_TIMEOUT_MINUTES: ${IDLE_TIMEOUT_MINUTES}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS}
-      QUANT_REFRESH_ON_STARTUP: ${QUANT_REFRESH_ON_STARTUP:-true}
-      QUANT_REFRESH_LIMIT: ${QUANT_REFRESH_LIMIT:-1000}
-      QUANT_REFRESH_INCLUDE_DEEP_LEARNING: ${QUANT_REFRESH_INCLUDE_DEEP_LEARNING:-true}
-      QUANT_REFRESH_TRAIN_MISSING_MODELS: ${QUANT_REFRESH_TRAIN_MISSING_MODELS:-false}
-      QUANT_REFRESH_REBUILD: ${QUANT_REFRESH_REBUILD:-false}
     volumes:
       - ${DATA_VOLUME}:/app/data
     restart: unless-stopped
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     networks:
-      - open-analytics-network
+      - rubik-network
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
@@ -61,7 +54,7 @@ services:
       - "5432:5432"
     restart: unless-stopped
     networks:
-      - open-analytics-network
+      - rubik-network
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
@@ -80,10 +73,8 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     networks:
-      - open-analytics-network
+      - rubik-network
     healthcheck:
       test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/" ]
       interval: 30s
@@ -105,29 +96,38 @@ services:
           memory: 256M
 
   watchtower:
-  image: containrrr/watchtower:latest
-  container_name: watchtower
-  command:
-    - --label-enable
-    - --interval
-    - ${WATCHTOWER_POLL_INTERVAL:-60}
-    - --cleanup
-    - --rolling-restart
-    - --notifications
-    - shoutrrr
-    - --notification-url
-    - ${WATCHTOWER_NOTIFICATION_URL}
-    - ${BACKEND_CONTAINER_NAME}
-    - ${FRONTEND_CONTAINER_NAME}
-
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-
-  restart: unless-stopped
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    # Mount the Docker socket so watchtower can interact with the Docker daemon
+    volumes:
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.docker/config.json:/config.json:ro
+    command:
+      - --interval
+      - "600"
+      - --cleanup
+      - --include-restarting
+      - --rolling-restart
+      - open-backend
+      - open-frontend
+    restart: unless-stopped      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_API_VERSION=1.44
+      # Optional: Poll for updates every 30 minutes (1800 seconds)
+      - WATCHTOWER_POLL_INTERVAL=600
+      # Optional: Remove old images after updating
+      - WATCHTOWER_CLEANUP=true
+    restart: unless-stopped
 
 networks:
-  open-analytics-network:
+  rubik-network:
     driver: bridge
 
 volumes:
-  postgres_data:
+  postgres_data
+
+
