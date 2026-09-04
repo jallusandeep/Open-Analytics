@@ -105,25 +105,25 @@ services:
           memory: 256M
 
   watchtower:
-  image: containrrr/watchtower:latest
-  container_name: watchtower
-  command:
-    - --label-enable
-    - --interval
-    - ${WATCHTOWER_POLL_INTERVAL:-60}
-    - --cleanup
-    - --rolling-restart
-    - --notifications
-    - shoutrrr
-    - --notification-url
-    - ${WATCHTOWER_NOTIFICATION_URL}
-    - ${BACKEND_CONTAINER_NAME}
-    - ${FRONTEND_CONTAINER_NAME}
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    command:
+      - --label-enable
+      - --interval
+      - ${WATCHTOWER_POLL_INTERVAL:-60}
+      - --cleanup
+      - --rolling-restart
+      - --notifications
+      - shoutrrr
+      - --notification-url
+      - ${WATCHTOWER_NOTIFICATION_URL}
+      - ${BACKEND_CONTAINER_NAME}
+      - ${FRONTEND_CONTAINER_NAME}
 
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
-  restart: unless-stopped
+    restart: unless-stopped
 
 networks:
   open-analytics-network:
