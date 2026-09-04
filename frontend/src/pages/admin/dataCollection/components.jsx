@@ -844,7 +844,7 @@ export function DbPreviewContent({
         <DataTable
           columns={previewColumns}
           rows={rows}
-          loading={false}
+          loading={loading}
           loadingMessage={`Loading ${title.toLowerCase()}`}
           emptyMessage="No records found."
           gridTemplateColumns={previewGridTemplateColumns}
@@ -1243,7 +1243,7 @@ export function MarketCalendarContent({
         <DataTable
           columns={marketHolidayPreviewColumns}
           rows={rows}
-          loading={false}
+          loading={loading}
           loadingMessage="Loading market calendar"
           emptyMessage="No market holidays found."
           gridTemplateColumns={marketHolidayPreviewGridTemplateColumns}
@@ -1352,7 +1352,7 @@ export function GenericPreviewContent({
         <DataTable
           columns={columns}
           rows={rows}
-          loading={false}
+          loading={loading}
           loadingMessage={`Loading ${title.toLowerCase()}`}
           emptyMessage={emptyMessage}
           gridTemplateColumns={gridTemplateColumns}
@@ -1459,7 +1459,7 @@ export function OhlcvTabContent({
         <DataTable
           columns={ohlcvPreviewColumns}
           rows={rows}
-          loading={false}
+          loading={loading}
           loadingMessage="Loading OHLCV"
           emptyMessage="No OHLCV records found."
           gridTemplateColumns={ohlcvPreviewGridTemplateColumns}
@@ -1654,7 +1654,7 @@ export function CompanyFundamentalsContent({
         <DataTable
           columns={columns}
           rows={rows}
-          loading={false}
+          loading={loading}
           loadingMessage="Loading company fundamentals"
           emptyMessage="No company fundamentals found."
           gridTemplateColumns={gridTemplateColumns}
