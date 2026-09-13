@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException, status
 
 from app.database import get_connection
-from app.services.data_collection_service import (
+from app.services.data_collection import (
     sync_ipo_gmp_scraper_service,
     sync_upstox_company_fundamentals_service,
     sync_upstox_current_instruments_service,

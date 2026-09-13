@@ -5,6 +5,9 @@ Upstox connections, and admin data collection.
 
 ## Run
 
+For local backend settings, copy `backend/.env.example` to `backend/.env` and
+set a unique `JWT_SECRET_KEY`. The local `.env` file is ignored by Git.
+
 Backend:
 
 ```bat
@@ -36,16 +39,20 @@ Frontend:     http://localhost:5173
 ```text
 open-analytics/
 ├── backend/
+│   ├── .env.example              # Local configuration template
 │   ├── app/
 │   │   ├── api/v1/                 # FastAPI routes
+│   │   ├── data/upstox/            # Downloaded provider data (generated)
 │   │   ├── services/
 │   │   │   ├── connections/        # Upstox connection and token logic
-│   │   │   └── data_collection/    # Collection, preview, and sync logic
-│   │   ├── db/                     # Database helpers and local DuckDB file
+│   │   │   ├── data_collection/    # News, IPO, fundamentals, and other collectors
+│   │   │   └── *_service.py        # Auth, admin, and scheduler services
+│   │   ├── db/                     # Schema modules, tools, local DuckDB file
 │   │   ├── schemas/                # Request and response models
 │   │   ├── telegram_alerts_msg/    # Telegram notification helpers
+│   │   ├── instrument_sync.py      # Instrument sync entry point
 │   │   ├── config.py               # Backend settings
-│   │   ├── database.py             # DuckDB schema and connection
+│   │   ├── database.py             # DuckDB connection and schema orchestration
 │   │   └── main.py                 # FastAPI app and router registration
 │   ├── requirements.txt
 │   └── run_backend.bat
@@ -56,6 +63,7 @@ open-analytics/
 │   │   ├── components/             # Shared UI components
 │   │   ├── pages/                  # Dashboard, admin, auth, settings
 │   │   ├── routes/                 # Route access guards
+│   │   ├── index.css               # Global and Tailwind styles
 │   │   ├── App.jsx                 # Application routes
 │   │   └── main.jsx                # React entry point
 │   ├── package.json

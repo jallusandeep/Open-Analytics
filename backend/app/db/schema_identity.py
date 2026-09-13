@@ -1,0 +1,348 @@
+"""Identity, audit, and connection tables."""
+
+import uuid
+
+from app.version import APP_VERSION, SCHEMA_VERSION
+
+
+def ensure_identity_schema(conn, safe_execute, pwd_context):
+    # -----------------------------
+    # App metadata / version table
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    conn.execute("""
+        INSERT OR REPLACE INTO app_metadata (key, value, updated_at)
+        VALUES
+        ('app_version', ?, CURRENT_TIMESTAMP),
+        ('schema_version', ?, CURRENT_TIMESTAMP);
+    """, [APP_VERSION, str(SCHEMA_VERSION)])
+
+    # -----------------------------
+    # Users table
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id VARCHAR PRIMARY KEY,
+            login_id VARCHAR,
+            full_name VARCHAR NOT NULL,
+            email VARCHAR UNIQUE NOT NULL,
+            mobile_number VARCHAR,
+            password_hash VARCHAR NOT NULL,
+            role VARCHAR DEFAULT 'user',
+            access_restrictions JSON,
+            is_active BOOLEAN DEFAULT TRUE,
+            record_status VARCHAR DEFAULT 'S',
+            version_no INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_by VARCHAR
+        );
+    """)
+
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN login_id VARCHAR;")
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN mobile_number VARCHAR;")
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN access_restrictions JSON;")
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN version_no INTEGER DEFAULT 1;")
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN created_by VARCHAR;")
+    safe_execute(conn, "ALTER TABLE users ADD COLUMN updated_by VARCHAR;")
+
+    conn.execute("""
+        UPDATE users
+        SET login_id = split_part(email, '@', 1)
+        WHERE login_id IS NULL;
+    """)
+
+    conn.execute("""
+        UPDATE users
+        SET record_status = 'S'
+        WHERE record_status IS NULL;
+    """)
+
+    conn.execute("""
+        UPDATE users
+        SET version_no = 1
+        WHERE version_no IS NULL;
+    """)
+
+    # -----------------------------
+    # Default super admin user
+    # -----------------------------
+    super_admin_email = "jallusandeep0902@gmail.com"
+    super_admin_password = "1234"
+    super_admin_mobile_number = "8686504620"
+
+    existing_super_admin = conn.execute("""
+        SELECT user_id
+        FROM users
+        WHERE email = ?;
+    """, [super_admin_email]).fetchone()
+
+    if not existing_super_admin:
+        super_admin_user_id = str(uuid.uuid4())
+        super_admin_password_hash = pwd_context.hash(super_admin_password)
+
+        conn.execute("""
+            INSERT INTO users (
+                user_id,
+                login_id,
+                full_name,
+                email,
+                mobile_number,
+                password_hash,
+                role,
+                access_restrictions,
+                is_active,
+                record_status,
+                version_no,
+                created_by,
+                updated_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, [
+            super_admin_user_id,
+            "jallusandeep0902",
+            "Sandeep Jallu",
+            super_admin_email,
+            super_admin_mobile_number,
+            super_admin_password_hash,
+            "super_admin",
+            None,
+            True,
+            "S",
+            1,
+            "system",
+            "system"
+        ])
+
+        pass
+    else:
+        conn.execute("""
+            UPDATE users
+            SET
+                login_id = CASE
+                    WHEN login_id IS NULL OR login_id = '' THEN 'jallusandeep0902'
+                    ELSE login_id
+                END,
+                full_name = CASE
+                    WHEN full_name IS NULL OR TRIM(full_name) = '' THEN 'Sandeep Jallu'
+                    ELSE full_name
+                END,
+                mobile_number = CASE
+                    WHEN mobile_number IS NULL OR TRIM(mobile_number) = '' THEN ?
+                    ELSE mobile_number
+                END,
+                role = 'super_admin',
+                is_active = TRUE,
+                record_status = 'S',
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = 'system'
+            WHERE email = ?;
+        """, [super_admin_mobile_number, super_admin_email])
+
+        pass
+
+    # -----------------------------
+    # Users history table
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users_history (
+            history_id VARCHAR PRIMARY KEY,
+            user_id VARCHAR,
+            login_id VARCHAR,
+            full_name VARCHAR,
+            email VARCHAR,
+            mobile_number VARCHAR,
+            role VARCHAR,
+            access_restrictions JSON,
+            is_active BOOLEAN,
+            record_status VARCHAR DEFAULT 'H',
+            action_type VARCHAR,
+            version_no INTEGER,
+            changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            changed_by VARCHAR
+        );
+    """)
+
+    # -----------------------------
+    # User sessions
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_id VARCHAR PRIMARY KEY,
+            user_id VARCHAR NOT NULL,
+            access_token VARCHAR NOT NULL,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP,
+            logged_out_at TIMESTAMP
+        );
+    """)
+
+    safe_execute(conn, "ALTER TABLE user_sessions ADD COLUMN is_active BOOLEAN DEFAULT TRUE;")
+    safe_execute(conn, "ALTER TABLE user_sessions ADD COLUMN last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+    safe_execute(conn, "ALTER TABLE user_sessions ADD COLUMN logged_out_at TIMESTAMP;")
+
+    conn.execute("""
+        UPDATE user_sessions
+        SET is_active = TRUE
+        WHERE is_active IS NULL;
+    """)
+
+    conn.execute("""
+        UPDATE user_sessions
+        SET last_seen_at = COALESCE(last_seen_at, created_at, CURRENT_TIMESTAMP)
+        WHERE last_seen_at IS NULL;
+    """)
+
+    # -----------------------------
+    # Password reset tokens
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            reset_id VARCHAR PRIMARY KEY,
+            user_id VARCHAR NOT NULL,
+            reset_token VARCHAR NOT NULL,
+            is_used BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        );
+    """)
+
+    # -----------------------------
+    # Audit logs
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            audit_id VARCHAR PRIMARY KEY,
+            user_id VARCHAR,
+            action VARCHAR NOT NULL,
+            table_name VARCHAR,
+            record_id VARCHAR,
+            old_value JSON,
+            new_value JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # -----------------------------
+    # External connections
+    # Global admin-level provider credentials.
+    # Telegram bot token is stored here globally.
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS external_connections (
+            connection_id VARCHAR PRIMARY KEY,
+            provider VARCHAR UNIQUE NOT NULL,
+            api_key VARCHAR,
+            api_secret VARCHAR,
+            redirect_url VARCHAR,
+            analytical_token VARCHAR,
+            analytical_token_updated_at TIMESTAMP,
+            access_token VARCHAR,
+            refresh_token VARCHAR,
+            token_type VARCHAR,
+            access_token_expires_at TIMESTAMP,
+            token_updated_at TIMESTAMP,
+            connection_status VARCHAR DEFAULT 'saved',
+            last_tested_at TIMESTAMP,
+            record_status VARCHAR DEFAULT 'S',
+            version_no INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_by VARCHAR
+        );
+    """)
+
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_key VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN api_secret VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN redirect_url VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN analytical_token VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN analytical_token_updated_at TIMESTAMP;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN refresh_token VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN token_type VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN access_token_expires_at TIMESTAMP;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN token_updated_at TIMESTAMP;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN connection_status VARCHAR DEFAULT 'saved';")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN last_tested_at TIMESTAMP;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN created_by VARCHAR;")
+    safe_execute(conn, "ALTER TABLE external_connections ADD COLUMN updated_by VARCHAR;")
+
+    conn.execute("""
+        UPDATE external_connections
+        SET analytical_token_updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+        WHERE analytical_token IS NOT NULL
+          AND TRIM(analytical_token) <> ''
+          AND analytical_token_updated_at IS NULL;
+    """)
+
+    # -----------------------------
+    # User Telegram connections
+    # User-level Telegram chat links.
+    # Admin configures the bot globally in external_connections.
+    # Each user connects their own Telegram account from Settings.
+    # -----------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_telegram_connections (
+            telegram_connection_id VARCHAR PRIMARY KEY,
+            user_id VARCHAR UNIQUE NOT NULL,
+            telegram_chat_id VARCHAR,
+            telegram_username VARCHAR,
+            telegram_first_name VARCHAR,
+            telegram_last_name VARCHAR,
+            link_token VARCHAR UNIQUE NOT NULL,
+            connection_status VARCHAR DEFAULT 'pending',
+            record_status VARCHAR DEFAULT 'S',
+            version_no INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_by VARCHAR
+        );
+    """)
+
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_chat_id VARCHAR;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_username VARCHAR;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_first_name VARCHAR;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN telegram_last_name VARCHAR;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN link_token VARCHAR;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN connection_status VARCHAR DEFAULT 'pending';")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN record_status VARCHAR DEFAULT 'S';")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN version_no INTEGER DEFAULT 1;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN created_by VARCHAR;")
+    safe_execute(conn, "ALTER TABLE user_telegram_connections ADD COLUMN updated_by VARCHAR;")
+
+    conn.execute("""
+        UPDATE user_telegram_connections
+        SET record_status = 'S'
+        WHERE record_status IS NULL;
+    """)
+
+    conn.execute("""
+        UPDATE user_telegram_connections
+        SET connection_status = CASE
+            WHEN telegram_chat_id IS NOT NULL AND telegram_chat_id <> '' THEN 'connected'
+            ELSE 'pending'
+        END
+        WHERE connection_status IS NULL;
+    """)
+
+    conn.execute("""
+        UPDATE user_telegram_connections
+        SET version_no = 1
+        WHERE version_no IS NULL;
+    """)
+

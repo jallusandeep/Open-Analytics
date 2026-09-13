@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import require_admin_or_super_admin
-from app.services.data_collection_service import (
+from app.services.data_collection import (
     get_data_collection_runs_service,
     get_data_collection_summary_service,
     get_ipo_gmp_scraper_preview_service,
