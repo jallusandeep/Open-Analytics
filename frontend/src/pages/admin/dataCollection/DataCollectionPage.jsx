@@ -105,6 +105,7 @@ import {
   getIpoCalendarColumnValue,
   getIpoScraperColumnValue,
   getCompanyFundamentalsColumnValue,
+  expandCorporateActionRows,
   getElapsedSecondsFromDate,
   isRequestCancelled,
   getApiErrorMessage,
@@ -951,11 +952,16 @@ function DataCollection() {
     );
   }, [companyFundamentalsEndpoint]);
 
+  const companyFundamentalsDisplayRows = useMemo(
+    () => expandCorporateActionRows(companyFundamentalsPreviewData.rows),
+    [companyFundamentalsPreviewData.rows]
+  );
+
   const companyFundamentalsHeaderValues = useMemo(() => {
     return activeCompanyFundamentalsColumnGroup.columns.reduce(
       (result, column) => {
         result[column.key] = getFilterValues(
-          companyFundamentalsPreviewData.rows,
+          companyFundamentalsDisplayRows,
           column.key,
           getCompanyFundamentalsColumnValue
         );
@@ -965,12 +971,12 @@ function DataCollection() {
     );
   }, [
     activeCompanyFundamentalsColumnGroup.columns,
-    companyFundamentalsPreviewData.rows
+    companyFundamentalsDisplayRows
   ]);
 
   const filteredCompanyFundamentalsRows = useMemo(() => {
     let result = applyColumnFilters(
-      companyFundamentalsPreviewData.rows,
+      companyFundamentalsDisplayRows,
       companyFundamentalsColumnFilters,
       getCompanyFundamentalsColumnValue
     );
@@ -981,7 +987,7 @@ function DataCollection() {
       getCompanyFundamentalsColumnValue
     );
   }, [
-    companyFundamentalsPreviewData.rows,
+    companyFundamentalsDisplayRows,
     companyFundamentalsColumnFilters,
     companyFundamentalsSortConfig
   ]);
@@ -3666,6 +3672,10 @@ function DataCollection() {
   }
 
   function renderCompanyFundamentalsCell(row, column) {
+    if (column.key === "action_event_details") {
+      return <span className="whitespace-normal text-oa-muted">{row.action_event_details || "--"}</span>;
+    }
+
     if (column.key === "isin" || column.key === "instrument_key") {
       return (
         <span className="truncate oa-code-font font-semibold text-white">
@@ -3756,7 +3766,7 @@ function DataCollection() {
 
     return (
       <span className="truncate oa-code-font text-oa-muted">
-        {getCompanyFundamentalsColumnValue(row, column.key) || "--"}
+        {getCompanyFundamentalsColumnValue(row, column.key) ?? "--"}
       </span>
     );
   }
@@ -3961,6 +3971,19 @@ function DataCollection() {
     return () => window.clearInterval(pollId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, ipoCalendarSubTab, isIpoScraperJobRunning, ipoScraperPage]);
+
+  useEffect(() => {
+    if (activeView !== "ipo_calendar" || ipoCalendarSubTab !== "ipo_scraper") {
+      return undefined;
+    }
+
+    const refreshId = window.setInterval(() => {
+      loadIpoScraperPreview(ipoScraperPage, { showLoading: false });
+    }, 60_000);
+
+    return () => window.clearInterval(refreshId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, ipoCalendarSubTab, ipoScraperPage]);
 
   useEffect(() => {
     if (

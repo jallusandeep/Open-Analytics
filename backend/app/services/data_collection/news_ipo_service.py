@@ -1941,14 +1941,22 @@ def normalize_ipo_gmp_value(value: Any) -> str:
     return clean_value
 
 
-def parse_ipo_gmp_date_range(value: Any) -> Optional[dict]:
+def parse_ipo_gmp_date_range(value: Any, reference_date: Optional[date] = None) -> Optional[dict]:
     clean_value = normalize_ipo_gmp_value(value)
 
     if not clean_value:
         return None
 
     normalized = re.sub(r"\s+", " ", clean_value.replace("–", "-").replace("—", "-")).strip()
-    current_year = date.today().year
+    reference_date = reference_date or date.today()
+    current_year = reference_date.year
+
+    def inferred_year(month: int) -> int:
+        if reference_date.month >= 11 and month <= 2:
+            return current_year + 1
+        if reference_date.month <= 2 and month >= 11:
+            return current_year - 1
+        return current_year
 
     match = re.search(
         r"(?P<start_day>\d{1,2})\s*-\s*(?P<end_day>\d{1,2})\s+"
@@ -1959,7 +1967,7 @@ def parse_ipo_gmp_date_range(value: Any) -> Optional[dict]:
     if match:
         try:
             month = datetime.strptime(match.group("month")[:3], "%b").month
-            year = int(match.group("year") or current_year)
+            year = int(match.group("year")) if match.group("year") else inferred_year(month)
             return {
                 "start_date": date(year, month, int(match.group("start_day"))),
                 "end_date": date(year, month, int(match.group("end_day")))
@@ -1979,7 +1987,7 @@ def parse_ipo_gmp_date_range(value: Any) -> Optional[dict]:
         try:
             start_month = datetime.strptime(match.group("start_month")[:3], "%b").month
             end_month = datetime.strptime(match.group("end_month")[:3], "%b").month
-            start_year = int(match.group("year") or current_year)
+            start_year = int(match.group("year")) if match.group("year") else inferred_year(start_month)
             end_year = start_year + 1 if end_month < start_month else start_year
             return {
                 "start_date": date(start_year, start_month, int(match.group("start_day"))),
@@ -1996,7 +2004,7 @@ def parse_ipo_gmp_date_range(value: Any) -> Optional[dict]:
     if match:
         try:
             month = datetime.strptime(match.group("month")[:3], "%b").month
-            year = int(match.group("year") or current_year)
+            year = int(match.group("year")) if match.group("year") else inferred_year(month)
             parsed_date = date(year, month, int(match.group("day")))
             return {
                 "start_date": parsed_date,
@@ -2008,9 +2016,9 @@ def parse_ipo_gmp_date_range(value: Any) -> Optional[dict]:
     return None
 
 
-def derive_ipo_gmp_status(ipo_date: Any, current_status: Any = None) -> str:
+def derive_ipo_gmp_status(ipo_date: Any, current_status: Any = None, reference_date: Optional[date] = None) -> str:
     status_value = normalize_ipo_gmp_value(current_status)
-    parsed_range = parse_ipo_gmp_date_range(ipo_date)
+    parsed_range = parse_ipo_gmp_date_range(ipo_date, reference_date)
 
     if not parsed_range:
         return status_value
@@ -2516,14 +2524,16 @@ def insert_ipo_gmp_scraper_records(
 
 def refresh_ipo_gmp_statuses(conn):
     rows = conn.execute("""
-        SELECT ipo_name, ipo_date, ipo_status
+        SELECT ipo_name, ipo_date, ipo_status, scraped_at
         FROM ipo_gmp_scraper;
     """).fetchall()
 
     updates = []
 
     for row in rows:
-        next_status = derive_ipo_gmp_status(row[1], row[2])
+        scraped_at = row[3]
+        reference_date = scraped_at.date() if isinstance(scraped_at, datetime) else None
+        next_status = derive_ipo_gmp_status(row[1], row[2], reference_date)
 
         if next_status and next_status.lower() != normalize_ipo_gmp_value(row[2]).lower():
             updates.append((next_status, row[0]))
