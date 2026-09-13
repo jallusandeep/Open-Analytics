@@ -47,17 +47,3 @@ ghcr.io/<repository-owner>/openanalytics-frontend2:latest
 ```
 
 Set `BACKEND_IMAGE` and `FRONTEND_IMAGE` in the server `.env` file to these image names.
-
-## Prediction refresh
-
-The backend container supports these startup settings:
-
-```text
-QUANT_REFRESH_ON_STARTUP=true
-QUANT_REFRESH_LIMIT=1000
-QUANT_REFRESH_INCLUDE_DEEP_LEARNING=true
-QUANT_REFRESH_TRAIN_MISSING_MODELS=false
-QUANT_REFRESH_REBUILD=false
-```
-
-When enabled, the backend queues the quant prediction refresh after the updated container starts.

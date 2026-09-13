@@ -1,7 +1,7 @@
 # Open Analytics
 
 FastAPI + React analytics application with JWT authentication, DuckDB storage,
-and admin user account management.
+Upstox connections, and admin data collection.
 
 ## Run
 
@@ -20,7 +20,7 @@ frontend\run_frontend.bat
 Full app:
 
 ```bat
-start_all.bat
+scripts\start_all.bat
 ```
 
 ## URLs
@@ -31,28 +31,41 @@ Swagger Docs: http://127.0.0.1:8000/docs
 Frontend:     http://localhost:5173
 ```
 
-## Admin Login
+## Project structure
 
-```txt
-Email: admin@openanalytics.com
-Password: admin123
+```text
+open-analytics/
+├── backend/
+│   ├── app/
+│   │   ├── api/v1/                 # FastAPI routes
+│   │   ├── services/
+│   │   │   ├── connections/        # Upstox connection and token logic
+│   │   │   └── data_collection/    # Collection, preview, and sync logic
+│   │   ├── db/                     # Database helpers and local DuckDB file
+│   │   ├── schemas/                # Request and response models
+│   │   ├── telegram_alerts_msg/    # Telegram notification helpers
+│   │   ├── config.py               # Backend settings
+│   │   ├── database.py             # DuckDB schema and connection
+│   │   └── main.py                 # FastAPI app and router registration
+│   ├── requirements.txt
+│   └── run_backend.bat
+├── frontend/
+│   ├── public/                     # Static browser assets
+│   ├── src/
+│   │   ├── api/                    # HTTP client and API calls
+│   │   ├── components/             # Shared UI components
+│   │   ├── pages/                  # Dashboard, admin, auth, settings
+│   │   ├── routes/                 # Route access guards
+│   │   ├── App.jsx                 # Application routes
+│   │   └── main.jsx                # React entry point
+│   ├── package.json
+│   └── run_frontend.bat
+├── docs/                          # Architecture and deployment notes
+├── Research/                      # Notes for future research work
+├── scripts/                       # Local startup script
+├── server/docker/                 # Container and compose files
+└── README.md
 ```
 
-The User Accounts screen is available at:
-
-```txt
-/admin/users
-```
-
-It is visible only for users with `admin` or `super_admin` role.
-
-## Version
-
-Current app version: `1.0.2`
-
-The `1.0.1` update fixes DuckDB path resolution so the backend always uses
-`backend/app/db/open_analytics.duckdb`, even when commands are launched from the
-project root.
-
-The `1.0.2` update fixes the sidebar admin menu visibility by storing the actual
-`/users/me` user object in frontend localStorage.
+Local environments (`venv/`, `node_modules/`), generated files (`dist/`, logs),
+and the DuckDB database are not source files and are excluded from this tree.

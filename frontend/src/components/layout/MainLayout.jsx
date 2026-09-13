@@ -1,6 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  Brain,
   ChevronRight,
   Database,
   Home,
@@ -58,14 +57,6 @@ function MainLayout({ children }) {
       show: true,
       color: "text-emerald-300",
       activeLine: "bg-emerald-300"
-    },
-    {
-      label: "Predictions",
-      icon: Brain,
-      path: "/predictions",
-      show: true,
-      color: "text-purple-300",
-      activeLine: "bg-purple-300"
     },
     {
       label: "Connections",
