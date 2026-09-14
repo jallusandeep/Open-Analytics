@@ -12,7 +12,7 @@ from app.schemas.connection_schema import (
     UpstoxConnectionRequest,
     UpstoxNotifierWebhookRequest
 )
-from app.services.connection_service import (
+from app.services.connections import (
     disconnect_telegram_connection_service,
     disconnect_upstox_connection_service,
     exchange_upstox_auth_code_service,

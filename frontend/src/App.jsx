@@ -6,7 +6,6 @@ import UserAccounts from "./pages/admin/UserAccounts";
 import Connections from "./pages/admin/Connections";
 import UpstoxCallback from "./pages/admin/UpstoxCallback";
 import DataCollection from "./pages/admin/DataCollection";
-import QuantResearch from "./pages/admin/QuantResearch";
 import Settings from "./pages/settings/Settings";
 
 import ProtectedRoute from "./routes/ProtectedRoute";
@@ -31,14 +30,6 @@ function App() {
             }
           />
 
-          <Route
-            path="/predictions"
-            element={
-              <ProtectedRoute>
-                <QuantResearch />
-              </ProtectedRoute>
-            }
-          />
           <Route
             path="/settings"
             element={

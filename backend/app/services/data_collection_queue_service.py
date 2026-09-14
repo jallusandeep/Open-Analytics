@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import HTTPException
 
 from app.database import get_connection
-from app.services.data_collection_service import mark_stale_sync_runs
+from app.services.data_collection import mark_stale_sync_runs
 
 
 DATA_COLLECTION_JOB_QUEUE_WAIT_SECONDS = 5
