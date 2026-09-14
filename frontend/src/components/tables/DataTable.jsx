@@ -80,6 +80,7 @@ function DataTable({
   minWidth = "min-w-full",
   fitToViewport = false,
   resizableColumns = false,
+  wrapHeaders = false,
   getRowKey,
   renderCell,
   renderActions,
@@ -241,7 +242,7 @@ function DataTable({
 
               return (
                 <div key={column.key} className={getHeaderCellClass(column)}>
-                  <span title={column.label} className={oaTableStyles.headerLabel}>
+                  <span title={column.label} className={`${oaTableStyles.headerLabel}${wrapHeaders ? " !whitespace-normal !overflow-visible !text-clip !leading-4" : ""}`}>
                     {column.label}
                   </span>
 

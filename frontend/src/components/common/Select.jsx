@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
+import { createPortal } from "react-dom";
 
 import { oaSelectStyles } from "./uiStyles";
 
@@ -18,13 +19,15 @@ function Select({
   const [menuMaxHeight, setMenuMaxHeight] = useState(240);
   const wrapperRef = useRef(null);
   const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0, width: 0 });
 
   const selectedOption =
     options.find((option) => option.value === value) || options[0];
 
   useEffect(() => {
     function handleClickOutside(event) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target) && !menuRef.current?.contains(event.target)) {
         setOpen(false);
       }
     }
@@ -68,7 +71,7 @@ function Select({
     const rect = buttonRef.current.getBoundingClientRect();
     const viewportHeight =
       window.innerHeight || document.documentElement.clientHeight;
-    const gap = 8;
+    const gap = 0;
     const safePadding = 12;
     const preferredHeight = Math.min(240, Math.max(120, options.length * 34 + 8));
 
@@ -77,11 +80,13 @@ function Select({
 
     if (spaceBelow >= preferredHeight || spaceBelow >= spaceAbove) {
       setMenuDirection("down");
+      setMenuPosition({ left: rect.left, top: rect.bottom, width: rect.width });
       setMenuMaxHeight(Math.max(96, Math.min(preferredHeight, spaceBelow - gap)));
       return;
     }
 
     setMenuDirection("up");
+    setMenuPosition({ left: rect.left, bottom: viewportHeight - rect.top, width: rect.width });
     setMenuMaxHeight(Math.max(96, Math.min(preferredHeight, spaceAbove - gap)));
   }
 
@@ -95,11 +100,6 @@ function Select({
 
     setOpen(false);
   }
-
-  const menuPositionClass =
-    menuDirection === "up"
-      ? "bottom-[calc(100%+6px)] top-auto"
-      : "top-[calc(100%+6px)] bottom-auto";
 
   return (
     <div
@@ -134,9 +134,11 @@ function Select({
         />
       </button>
 
-      {open ? (
+      {open ? createPortal(
         <div
-          className={`${oaSelectStyles.menu} ${menuPositionClass} !border-sky-500/50 ${menuDirection === "down" ? "origin-top animate-[oaSelectDown_0.2s_ease-out]" : "origin-bottom animate-[oaMenuIn_0.2s_ease-out]"}`}
+          ref={menuRef}
+          style={{ position: "fixed", left: menuPosition.left, top: menuPosition.top ?? "auto", bottom: menuPosition.bottom ?? "auto", width: menuPosition.width, zIndex: 1000 }}
+          className={`${oaSelectStyles.menu} !border-sky-500/50 ${menuDirection === "down" ? "origin-top animate-[oaSelectDown_0.1s_ease-out]" : "origin-bottom animate-[oaMenuIn_0.1s_ease-out]"}`}
         >
           <div
             className={oaSelectStyles.menuScroll}
@@ -166,7 +168,7 @@ function Select({
             })}
           </div>
         </div>
-      ) : null}
+      , document.body) : null}
     </div>
   );
 }

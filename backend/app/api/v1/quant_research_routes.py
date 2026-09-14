@@ -8,7 +8,8 @@ from uuid import uuid4
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Query
+from fastapi import APIRouter, BackgroundTasks, Query, Depends
+from app.dependencies import get_current_user
 
 from app.database import get_connection
 
@@ -46,7 +47,7 @@ from app.services.quant.quant_trade_plan_service import (
 )
 from app.services.quant.quant_walk_forward_service import run_quant_pattern_discovery_service
 
-router = APIRouter(prefix="/quant-research", tags=["Quant Research"])
+router = APIRouter(prefix="/quant-research", tags=["Quant Research"], dependencies=[Depends(get_current_user)])
 
 
 def action_response(data: dict[str, Any]) -> QuantActionResponse:

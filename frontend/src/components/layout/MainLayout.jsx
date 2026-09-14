@@ -13,6 +13,7 @@ import {
 
 import axiosClient from "../../api/axiosClient";
 import Tooltip from "../common/Tooltip";
+import { getAppAccess } from "../../utils/appAccess";
 
 function MainLayout({ children }) {
   const navigate = useNavigate();
@@ -24,6 +25,7 @@ function MainLayout({ children }) {
 
   const user = savedUser ? JSON.parse(savedUser) : null;
   const isAdminUser = ["admin", "super_admin"].includes(user?.role);
+  const appAccess = getAppAccess(user);
   const isAdminApp = isAdminUser &&
     sessionStorage.getItem("open_analytics_selected_app") === "admin";
 
@@ -49,7 +51,7 @@ function MainLayout({ children }) {
       label: "Dashboard",
       icon: Home,
       path: "/dashboard",
-      show: true,
+      show: !isAdminApp && appAccess.includes("trading"),
       color: "text-sky-300",
       activeLine: "bg-sky-300"
     },
@@ -57,7 +59,7 @@ function MainLayout({ children }) {
       label: "Stocks",
       icon: Search,
       path: "/stocks",
-      show: true,
+      show: !isAdminApp && appAccess.includes("trading"),
       color: "text-emerald-300",
       activeLine: "bg-emerald-300"
     },
@@ -65,7 +67,7 @@ function MainLayout({ children }) {
       label: "Predictions",
       icon: Brain,
       path: "/predictions",
-      show: true,
+      show: !isAdminApp && appAccess.includes("recom"),
       color: "text-purple-300",
       activeLine: "bg-purple-300"
     },
@@ -73,7 +75,7 @@ function MainLayout({ children }) {
       label: "Connections",
       icon: Link,
       path: "/connections",
-      show: isAdminUser,
+      show: isAdminApp,
       color: "text-teal-300",
       activeLine: "bg-teal-300"
     },
@@ -81,7 +83,7 @@ function MainLayout({ children }) {
       label: "Data",
       icon: Database,
       path: "/data",
-      show: isAdminUser,
+      show: isAdminApp,
       color: "text-amber-300",
       activeLine: "bg-amber-300"
     },
@@ -97,7 +99,7 @@ function MainLayout({ children }) {
       label: "Settings",
       icon: Settings,
       path: "/settings",
-      show: true,
+      show: !isAdminApp,
       color: "text-zinc-300",
       activeLine: "bg-zinc-300"
     }

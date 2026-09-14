@@ -1,4 +1,5 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
+from app.app_access import allowed_apps
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 
@@ -32,6 +33,7 @@ def safe_touch_session_last_seen(session_id: str):
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     token = credentials.credentials
@@ -128,6 +130,11 @@ def get_current_user(
             detail="User account is inactive"
         )
 
+    apps = allowed_apps(role, access_restrictions)
+    path = request.url.path
+    app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/connections/upstox")) else "recom" if path.startswith("/api/v1/quant-research/") else None
+    if app_name and app_name not in apps:
+        raise HTTPException(status_code=403, detail="App access denied")
     safe_touch_session_last_seen(session[0])
 
     return {
@@ -138,6 +145,7 @@ def get_current_user(
         "mobile_number": mobile_number,
         "role": role,
         "access_restrictions": access_restrictions,
+        "app_access": apps,
         "is_active": is_active,
         "created_at": str(created_at)
     }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
+import { getAppAccess } from "../utils/appAccess";
 
 import { getCurrentUser } from "../api/authApi";
 import Spinner from "../components/common/Spinner";
@@ -48,6 +49,7 @@ function isTokenExpired(token) {
 }
 
 function ProtectedRoute({ children }) {
+  const location = useLocation();
   const [checking, setChecking] = useState(true);
   const [allowed, setAllowed] = useState(false);
 
@@ -139,6 +141,10 @@ function ProtectedRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
 
+  const user = JSON.parse(localStorage.getItem("open_analytics_current_user") || "null");
+  const path = location.pathname;
+  const app = path === "/data" || path.startsWith("/admin/") || path.startsWith("/connections") ? "admin" : path === "/predictions" ? "recom" : path === "/dashboard" || path.startsWith("/stocks") ? "trading" : null;
+  if (app && !getAppAccess(user).includes(app)) return <Navigate to="/apps" replace />;
   return children;
 }
 
