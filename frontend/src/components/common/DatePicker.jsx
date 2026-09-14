@@ -1,9 +1,11 @@
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { oaIconButtonStyles, oaInputStyles } from "./uiStyles";
 
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const POPOVER_WIDTH = 280;
 const POPOVER_HEIGHT = 342;
 const SAFE_PADDING = 8;
@@ -101,6 +103,8 @@ function DatePicker({
   placeholder = "YYYY-MM-DD",
   className = "",
   ariaLabel = "Select date",
+  min,
+  max,
   disabled = false
 }) {
   const selectedDate = parseDate(value);
@@ -110,6 +114,9 @@ function DatePicker({
   const popoverRef = useRef(null);
 
   const [open, setOpen] = useState(false);
+  const [pickerView, setPickerView] = useState("day");
+  const [calendarTransition, setCalendarTransition] = useState("zoom-in");
+  const [yearPageStart, setYearPageStart] = useState(Math.floor((selectedDate || today).getFullYear() / 12) * 12);
   const [draftValue, setDraftValue] = useState(value || "");
   const [viewDate, setViewDate] = useState(selectedDate || today);
   const [popoverPosition, setPopoverPosition] = useState({
@@ -154,9 +161,20 @@ function DatePicker({
   }
 
   function changeMonth(offset) {
-    setViewDate(
-      new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1)
-    );
+    setCalendarTransition(offset > 0 ? "slide-left" : "slide-right");
+    if (pickerView === "year") {
+      setYearPageStart((current) => current + offset * 12);
+    } else if (pickerView === "month") {
+      setViewDate(new Date(viewDate.getFullYear() + offset, viewDate.getMonth(), 1));
+    } else {
+      setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + offset, 1));
+    }
+  }
+
+  function monthInRange(year, month) {
+    const first = toDateValue(new Date(year, month, 1));
+    const last = toDateValue(new Date(year, month + 1, 0));
+    return (!min || last >= min) && (!max || first <= max);
   }
 
   function placePopover() {
@@ -193,6 +211,7 @@ function DatePicker({
 
   function selectDate(date) {
     const nextValue = toDateValue(date);
+    if ((min && nextValue < min) || (max && nextValue > max)) return;
     setDraftValue(nextValue);
     emitChange(nextValue);
     setOpen(false);
@@ -212,6 +231,9 @@ function DatePicker({
     }
 
     setViewDate(selectedDate || today);
+    setYearPageStart(Math.floor((selectedDate || today).getFullYear() / 12) * 12);
+    setPickerView("day");
+    setCalendarTransition("zoom-in");
     setOpen(true);
   }
 
@@ -220,6 +242,7 @@ function DatePicker({
     setDraftValue(nextValue);
 
     const normalizedValue = normalizeTypedDate(nextValue);
+    if (parseDate(normalizedValue) && ((min && normalizedValue < min) || (max && normalizedValue > max))) return;
     emitChange(normalizedValue);
 
     const parsed = parseDate(normalizedValue);
@@ -230,6 +253,11 @@ function DatePicker({
 
   function handleInputBlur() {
     const normalizedValue = normalizeTypedDate(draftValue);
+
+    if (parseDate(normalizedValue) && ((min && normalizedValue < min) || (max && normalizedValue > max))) {
+      setDraftValue(value || "");
+      return;
+    }
 
     if (normalizedValue !== draftValue) {
       setDraftValue(normalizedValue);
@@ -246,6 +274,13 @@ function DatePicker({
     if (event.key === "Escape") {
       setOpen(false);
     }
+  }
+
+  function selectDateSegment(event) {
+    const input = event.currentTarget;
+    const cursor = input.selectionStart ?? 0;
+    const [start, end] = cursor <= 4 ? [0, 4] : cursor <= 7 ? [5, 7] : [8, 10];
+    input.setSelectionRange(start, end);
   }
 
   useEffect(() => {
@@ -277,13 +312,13 @@ function DatePicker({
       placePopover();
     }
 
-    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
 
     return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
@@ -300,6 +335,7 @@ function DatePicker({
         value={draftValue}
         disabled={disabled}
         onFocus={placePopover}
+        onClick={selectDateSegment}
         onChange={handleInputChange}
         onBlur={handleInputBlur}
         onKeyDown={handleInputKeyDown}
@@ -322,7 +358,7 @@ function DatePicker({
           openCalendar();
         }}
         disabled={disabled}
-        className="absolute right-7 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-sky-300 transition hover:bg-oa-card hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+        className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-sky-300 transition hover:bg-oa-card hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
         aria-label={`${ariaLabel} calendar`}
         aria-expanded={open}
       >
@@ -333,23 +369,23 @@ function DatePicker({
         <button
           type="button"
           onClick={clearDate}
-          className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
+          className="absolute right-7 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-oa-muted transition hover:bg-oa-card hover:text-white"
           aria-label={`Clear ${ariaLabel}`}
         >
           <X size={12} />
         </button>
       ) : null}
 
-      {open ? (
+      {open ? createPortal(
         <div
           ref={popoverRef}
-          className="fixed z-[9999] w-[280px] rounded border border-oa-border bg-black p-2 font-mono shadow-2xl animate-[oaMenuIn_0.14s_ease-out]"
+          className="fixed z-[20000] w-[280px] rounded border border-oa-border bg-black p-2 font-mono shadow-2xl animate-[oaMenuIn_0.14s_ease-out]"
           style={{
             top: `${popoverPosition.top}px`,
             left: `${popoverPosition.left}px`
           }}
         >
-          <div className="rounded border border-oa-border bg-[#070708] p-2">
+          <div>
             <div className="mb-2 flex items-center justify-between gap-2">
               <button
                 type="button"
@@ -360,12 +396,16 @@ function DatePicker({
                 <ChevronLeft size={14} />
               </button>
 
-              <span className="min-w-0 flex-1 text-center text-[12px] font-semibold tracking-[-0.01em] text-white">
-                {viewDate.toLocaleDateString("en-IN", {
+              <button type="button" onClick={() => {
+                setYearPageStart(Math.floor(viewDate.getFullYear() / 12) * 12);
+                setCalendarTransition("zoom-out");
+                setPickerView("year");
+              }} className="min-w-0 flex-1 rounded py-1 text-center text-[12px] font-semibold tracking-[-0.01em] text-white hover:bg-oa-card hover:text-sky-200 focus-visible:outline focus-visible:outline-sky-400" aria-label="Choose year and month">
+                {pickerView === "year" ? `${yearPageStart} – ${yearPageStart + 11}` : pickerView === "month" ? viewDate.getFullYear() : viewDate.toLocaleDateString("en-IN", {
                   month: "long",
                   year: "numeric"
                 })}
-              </span>
+              </button>
 
               <button
                 type="button"
@@ -377,7 +417,27 @@ function DatePicker({
               </button>
             </div>
 
-            <div className="grid grid-cols-7 gap-1 rounded bg-black p-1">
+            <div key={`${pickerView}-${pickerView === "year" ? yearPageStart : viewDate.getFullYear()}-${pickerView === "day" ? viewDate.getMonth() : ""}`} className={`min-h-[252px] motion-reduce:animate-none ${calendarTransition === "slide-left" ? "animate-[oaCalendarSlideLeft_0.18s_ease-out]" : calendarTransition === "slide-right" ? "animate-[oaCalendarSlideRight_0.18s_ease-out]" : calendarTransition === "zoom-out" ? "animate-[oaCalendarZoomOut_0.18s_ease-out]" : "animate-[oaCalendarZoom_0.18s_ease-out]"}`}>
+            {pickerView === "year" ? (
+              <div className="grid grid-cols-3 gap-2 p-1">
+                {Array.from({ length: 12 }, (_, index) => yearPageStart + index).map((year) => {
+                  const available = Array.from({ length: 12 }, (_, month) => monthInRange(year, month)).some(Boolean);
+                  return <button key={year} type="button" disabled={!available} onClick={() => {
+                    setViewDate(new Date(year, viewDate.getMonth(), 1));
+                    setCalendarTransition("zoom-in");
+                    setPickerView("month");
+                  }} className={`h-12 rounded border text-xs transition hover:border-sky-500/50 hover:bg-oa-card disabled:cursor-not-allowed disabled:opacity-25 ${year === viewDate.getFullYear() ? "border-sky-500/60 bg-sky-950/30 text-white" : "border-oa-border text-oa-muted"}`}>{year}</button>;
+                })}
+              </div>
+            ) : pickerView === "month" ? (
+              <div className="grid grid-cols-3 gap-2 p-1">
+                {MONTHS.map((month, index) => <button key={month} type="button" disabled={!monthInRange(viewDate.getFullYear(), index)} onClick={() => {
+                  setViewDate(new Date(viewDate.getFullYear(), index, 1));
+                  setCalendarTransition("zoom-in");
+                  setPickerView("day");
+                }} className={`h-12 rounded border text-xs transition hover:border-sky-500/50 hover:bg-oa-card disabled:cursor-not-allowed disabled:opacity-25 ${index === viewDate.getMonth() ? "border-sky-500/60 bg-sky-950/30 text-white" : "border-oa-border text-oa-muted"}`}>{month}</button>)}
+              </div>
+            ) : <div className="grid grid-cols-7 gap-1 rounded bg-black p-1">
               {WEEKDAYS.map((weekday) => (
                 <div
                   key={weekday}
@@ -390,32 +450,36 @@ function DatePicker({
               {calendarDays.map(({ date, value: dateValue, inMonth }) => {
                 const selected = sameDay(date, selectedDate);
                 const currentDay = sameDay(date, today);
+                const outOfRange = Boolean((min && dateValue < min) || (max && dateValue > max));
 
                 return (
                   <button
                     key={dateValue}
                     type="button"
                     onClick={() => selectDate(date)}
+                    disabled={outOfRange}
                     className={`flex h-8 items-center justify-center rounded border text-[11px] tracking-[-0.01em] outline-none transition ${
                       selected
                         ? "border-sky-400 bg-sky-500 text-black"
                         : currentDay
                           ? "border-emerald-500/50 bg-emerald-950/30 text-emerald-200"
                           : "border-transparent bg-transparent text-oa-muted hover:border-sky-500/30 hover:bg-oa-card hover:text-white"
-                    } ${inMonth ? "" : "opacity-35"}`}
+                    } ${inMonth ? "" : "opacity-35"} disabled:cursor-not-allowed disabled:opacity-20`}
                     aria-label={`Select ${formatDateLabel(dateValue)}`}
                   >
                     {date.getDate()}
                   </button>
                 );
               })}
+            </div>}
             </div>
 
             <div className="mt-2 flex items-center justify-between border-t border-oa-border pt-2">
               <button
                 type="button"
                 onClick={() => selectDate(today)}
-                className="h-7 rounded border border-oa-border bg-black px-2 text-[11px] tracking-[-0.01em] text-emerald-200 transition hover:border-emerald-500/50 hover:bg-emerald-950/30"
+                disabled={Boolean((min && toDateValue(today) < min) || (max && toDateValue(today) > max))}
+                className="h-7 rounded border border-oa-border bg-black px-2 text-[11px] tracking-[-0.01em] text-emerald-200 transition hover:border-emerald-500/50 hover:bg-emerald-950/30 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Today
               </button>
@@ -430,7 +494,7 @@ function DatePicker({
               </button>
             </div>
           </div>
-        </div>
+        </div>, document.body
       ) : null}
     </div>
   );

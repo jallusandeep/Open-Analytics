@@ -17,6 +17,7 @@ import {
 } from "../../api/authApi";
 import FloatingInput from "../../components/common/FloatingInput";
 import Spinner from "../../components/common/Spinner";
+import { recordSessionActivity } from "../../utils/sessionActivity";
 
 const LOGIN_VIEW = "login";
 const FORGOT_VIEW = "forgot";
@@ -107,6 +108,7 @@ function Login() {
         "open_analytics_user",
         JSON.stringify(response.data)
       );
+      recordSessionActivity();
 
       sessionStorage.removeItem("open_analytics_selected_app");
       navigate("/apps", { replace: true });
@@ -251,7 +253,7 @@ function Login() {
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <Spinner size="sm" color="dark" />
-                  Logging in
+                  Authenticating
                 </span>
               ) : (
                 "Login"

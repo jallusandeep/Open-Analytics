@@ -3,12 +3,14 @@ import { Navigate, useLocation } from "react-router-dom";
 import { getAppAccess } from "../utils/appAccess";
 
 import { getCurrentUser } from "../api/authApi";
-import Spinner from "../components/common/Spinner";
+import ScreenLoading from "../components/common/ScreenLoading";
+import { clearSessionActivity, getSessionIdleDeadline, isSessionIdle, recordSessionActivity } from "../utils/sessionActivity";
 
 function clearOpenAnalyticsSession() {
   localStorage.removeItem("open_analytics_token");
   localStorage.removeItem("open_analytics_user");
   localStorage.removeItem("open_analytics_current_user");
+  clearSessionActivity();
 }
 
 function decodeJwtPayload(token) {
@@ -55,6 +57,17 @@ function ProtectedRoute({ children }) {
 
   useEffect(() => {
     let logoutTimer = null;
+    let idleCheckTimer = null;
+    let heartbeatTimer = null;
+    let lastRecordedActivity = 0;
+    let disposed = false;
+
+    function handleActivity() {
+      const now = Date.now();
+      if (now - lastRecordedActivity < 30000 || isSessionIdle(now)) return;
+      lastRecordedActivity = now;
+      recordSessionActivity(now);
+    }
 
     function logoutUser() {
       clearOpenAnalyticsSession();
@@ -91,7 +104,7 @@ function ProtectedRoute({ children }) {
         return;
       }
 
-      if (isTokenExpired(token)) {
+      if (isTokenExpired(token) || isSessionIdle()) {
         clearOpenAnalyticsSession();
         setAllowed(false);
         setChecking(false);
@@ -100,6 +113,7 @@ function ProtectedRoute({ children }) {
 
       try {
         const response = await getCurrentUser();
+        if (disposed) return;
         const currentUser = response.data.user || response.data;
 
         localStorage.setItem(
@@ -109,32 +123,49 @@ function ProtectedRoute({ children }) {
 
         setAllowed(true);
         startAutoLogoutTimer(token);
+        for (const eventName of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) {
+          window.addEventListener(eventName, handleActivity, { passive: true });
+        }
+        idleCheckTimer = window.setInterval(() => {
+          if (Date.now() >= getSessionIdleDeadline() || isTokenExpired(token)) logoutUser();
+        }, 30000);
+        heartbeatTimer = window.setInterval(async () => {
+          if (isSessionIdle()) {
+            logoutUser();
+            return;
+          }
+          try {
+            await getCurrentUser();
+          } catch {
+            logoutUser();
+          }
+        }, 60 * 1000);
       } catch {
+        if (disposed) return;
         clearOpenAnalyticsSession();
         setAllowed(false);
       } finally {
-        setChecking(false);
+        if (!disposed) setChecking(false);
       }
     }
 
     verifyUserToken();
 
     return () => {
+      disposed = true;
       if (logoutTimer) {
         window.clearTimeout(logoutTimer);
+      }
+      if (idleCheckTimer) window.clearInterval(idleCheckTimer);
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      for (const eventName of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) {
+        window.removeEventListener(eventName, handleActivity);
       }
     };
   }, []);
 
   if (checking) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-oa-dark text-oa-text">
-        <div className="flex items-center gap-2 rounded-lg border border-oa-border bg-oa-card px-4 py-3 text-sm text-oa-muted">
-          <Spinner size="sm" color="light" />
-          Checking login
-        </div>
-      </div>
-    );
+    return <ScreenLoading message="Authenticating" />;
   }
 
   if (!allowed) {

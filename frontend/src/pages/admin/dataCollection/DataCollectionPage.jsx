@@ -150,7 +150,17 @@ import {
 } from "./components";
 
 function Data() {
-  const [activeView, setActiveView] = useState("monitor");
+  const [initialTarget] = useState(() => {
+    const saved = sessionStorage.getItem("open_analytics_data_target");
+    sessionStorage.removeItem("open_analytics_data_target");
+    try {
+      const target = JSON.parse(saved);
+      return viewOptions.some((view) => view.key === target?.view) ? target : {};
+    } catch {
+      return {};
+    }
+  });
+  const [activeView, setActiveView] = useState(initialTarget.view || "monitor");
   const [summary, setSummary] = useState(emptySummary);
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -264,7 +274,7 @@ function Data() {
   const [ipoCalendarPageSize] = useState(DATA_COLLECTION_PREVIEW_PAGE_SIZE);
   const [ipoCalendarLoading, setIpoCalendarLoading] = useState(false);
   const [ipoCalendarPreviewData, setIpoCalendarPreviewData] = useState(emptyPreviewData);
-  const [ipoCalendarSubTab, setIpoCalendarSubTab] = useState("ipo");
+  const [ipoCalendarSubTab, setIpoCalendarSubTab] = useState(initialTarget.view === "ipo_calendar" && ipoCalendarSubTabOptions.some((option) => option.value === initialTarget.subpage) ? initialTarget.subpage : "ipo");
 
   const [ipoScraperSearch, setIpoScraperSearch] = useState("");
   const [appliedIpoScraperSearch, setAppliedIpoScraperSearch] = useState("");
@@ -282,7 +292,7 @@ function Data() {
   const [ipoScraperLoading, setIpoScraperLoading] = useState(false);
   const [ipoScraperPreviewData, setIpoScraperPreviewData] = useState(emptyPreviewData);
 
-  const [companyFundamentalsEndpoint, setCompanyFundamentalsEndpoint] = useState("company_profile");
+  const [companyFundamentalsEndpoint, setCompanyFundamentalsEndpoint] = useState(initialTarget.view === "company_fundamentals" && companyFundamentalsEndpointOptions.some((option) => option.value === initialTarget.subpage) ? initialTarget.subpage : "company_profile");
   const [companyFundamentalsSearch, setCompanyFundamentalsSearch] = useState("");
   const [appliedCompanyFundamentalsSearch, setAppliedCompanyFundamentalsSearch] = useState("");
   const [companyFundamentalsStatementType, setCompanyFundamentalsStatementType] = useState("all");
@@ -3699,6 +3709,22 @@ function Data() {
               companyFundamentalsEndpoint={companyFundamentalsEndpoint}
               ipoCalendarSubTab={ipoCalendarSubTab}
               onViewChange={handleViewChange}
+              hasActiveJob={hasActiveJob}
+              isAdminControlAllowed={isAdminControlAllowed}
+              onIpoSubTabChange={(value) => {
+                setIpoCalendarSubTab(value);
+                if (value === "ipo") {
+                  setIpoCalendarPage(1);
+                  setIpoCalendarPreviewData(emptyPreviewData);
+                } else {
+                  setIpoScraperPage(1);
+                  setIpoScraperPreviewData(emptyPreviewData);
+                }
+              }}
+              onCompanyEndpointChange={(value) => {
+                setCompanyFundamentalsEndpoint(value);
+                setCompanyFundamentalsPage(1);
+              }}
               diskSpace={summary.disk_space}
               queuedJobCount={summary.queued_jobs?.count || 0}
               elapsedSeconds={elapsedSeconds}
@@ -3957,18 +3983,6 @@ function Data() {
 
               {activeView === "ipo_calendar" ? (
                 <IpoCalendarTabContent
-                  activeSubTab={ipoCalendarSubTab}
-                  onSubTabChange={(value) => {
-                    setIpoCalendarSubTab(value);
-
-                    if (value === "ipo") {
-                      setIpoCalendarPage(1);
-                      setIpoCalendarPreviewData(emptyPreviewData);
-                    } else {
-                      setIpoScraperPage(1);
-                      setIpoScraperPreviewData(emptyPreviewData);
-                    }
-                  }}
                 >
                   {ipoCalendarSubTab === "ipo" ? (
                     <GenericPreviewContent
@@ -4172,11 +4186,6 @@ function Data() {
 
               {activeView === "company_fundamentals" ? (
                 <CompanyFundamentalsContent
-                  activeEndpoint={companyFundamentalsEndpoint}
-                  onEndpointChange={(value) => {
-                    setCompanyFundamentalsEndpoint(value);
-                    setCompanyFundamentalsPage(1);
-                  }}
                   previewData={companyFundamentalsPreviewData}
                   rows={filteredCompanyFundamentalsRows}
                   loading={companyFundamentalsLoading}

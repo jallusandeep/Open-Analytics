@@ -69,13 +69,14 @@ def get_current_user(
             WHERE user_id = ?
               AND access_token = ?
               AND COALESCE(is_active, TRUE) = TRUE
+              AND last_seen_at >= CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')
               AND (
                 expires_at IS NULL
                 OR expires_at >= CURRENT_TIMESTAMP
               )
             LIMIT 1
             """,
-            [user_id, token]
+            [user_id, token, settings.SESSION_IDLE_MINUTES]
         ).fetchone()
 
         if not session:
