@@ -137,7 +137,7 @@ function Select({
       {open ? createPortal(
         <div
           ref={menuRef}
-          style={{ position: "fixed", left: menuPosition.left, top: menuPosition.top ?? "auto", bottom: menuPosition.bottom ?? "auto", width: menuPosition.width, zIndex: 1000 }}
+          style={{ position: "fixed", left: menuPosition.left, top: menuPosition.top ?? "auto", bottom: menuPosition.bottom ?? "auto", width: menuPosition.width, zIndex: 20000 }}
           className={`${oaSelectStyles.menu} !border-sky-500/50 ${menuDirection === "down" ? "origin-top animate-[oaSelectDown_0.1s_ease-out]" : "origin-bottom animate-[oaMenuIn_0.1s_ease-out]"}`}
         >
           <div

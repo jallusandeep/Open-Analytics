@@ -7,7 +7,6 @@ import UserAccounts from "./pages/admin/UserAccounts";
 import Connections from "./pages/admin/Connections";
 import UpstoxCallback from "./pages/admin/UpstoxCallback";
 import Data from "./pages/admin/DataCollection";
-import QuantResearch from "./pages/admin/QuantResearch";
 import Settings from "./pages/settings/Settings";
 
 import ProtectedRoute from "./routes/ProtectedRoute";

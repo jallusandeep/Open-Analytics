@@ -125,6 +125,25 @@ def test_data_route_contract(api):
     assert not any("/data-collection/" in path for path in paths)
 
 
+@pytest.mark.parametrize("format", ["csv", "xlsx"])
+def test_download_endpoint(api, admin_headers, format):
+    response = api.get("/api/v1/data/export/current_preview", params={"format": format}, headers=admin_headers)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-disposition"].endswith(f'current_preview.{format}"')
+    if format == "csv":
+        assert "instrument_key" in response.content.decode("utf-8-sig")
+    else:
+        from io import BytesIO
+        from openpyxl import load_workbook
+        workbook = load_workbook(BytesIO(response.content))
+        assert "instrument_key" in next(workbook.active.values)
+
+
+def test_download_requires_admin(api, account):
+    response = api.get("/api/v1/data/export/current_preview", headers={"Authorization": f"Bearer {account['access_token']}"})
+    assert response.status_code == 403
+
+
 def test_cors_preflight(api):
     response = api.options("/api/v1/auth/login", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"})
     assert response.status_code == 200

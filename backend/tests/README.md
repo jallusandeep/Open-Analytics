@@ -42,3 +42,10 @@ or errored test case, with the commit, run link, and failure details. Existing
 open issues for the same test prevent duplicates. Fork pull request runs do not create
 issues because their tokens have restricted permissions. Setup failures
 without JUnit test results do not create test-case issues.
+
+HTML test and coverage reports are also published to GitHub Pages after push
+and manual runs, even when tests fail. In repository Settings > Pages, set
+Source to **GitHub Actions** once. The landing page links to available reports
+and the originating run. Each deployment replaces the previous Pages reports;
+older reports remain in workflow artifacts. Pull requests do not deploy Pages.
+This workflow manages the repository's Pages site, replacing any existing site.
