@@ -25,7 +25,9 @@ function DataTableHeaderFilter({
   onCancel,
   onSortAsc,
   onSortDesc,
-  onClear
+  onClear,
+  conditionalFormatting,
+  onToggleConditionalFormatting
 }) {
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
@@ -145,6 +147,8 @@ function DataTableHeaderFilter({
               onSortAsc={onSortAsc}
               onSortDesc={onSortDesc}
               onClear={onClear}
+              conditionalFormatting={conditionalFormatting}
+              onToggleConditionalFormatting={onToggleConditionalFormatting}
             />
           </div>,
           document.body

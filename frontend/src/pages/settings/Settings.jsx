@@ -24,7 +24,6 @@ import IconButton from "../../components/common/IconButton";
 import FloatingInput from "../../components/common/FloatingInput";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
-import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
@@ -51,7 +50,6 @@ const settingsColumns = [
   { key: "group", label: "Group" }
 ];
 
-const settingsGridTemplateColumns = "220px minmax(360px,1fr) 160px";
 
 const groupFilterOptions = [
   { value: "all", label: "All Groups" },
@@ -1059,7 +1057,7 @@ function Settings() {
 
   return (
     <MainLayout>
-      <section className="min-h-screen bg-black p-3">
+      <section className="oa-app-font min-h-screen bg-black p-3">
         <div className="space-y-3">
           <div className={oaCardStyles.wrapper}>
             <div className={oaCardStyles.header}>
@@ -1131,6 +1129,30 @@ function Settings() {
               </div>
             )}
 
+            <div className="flex flex-col gap-4 bg-black p-3">
+              <section aria-labelledby="personal-details-heading" className="min-w-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-[#0b0b0b] p-4">
+                <h3 id="personal-details-heading" className="-mx-4 -mt-4 mb-4 border-b border-zinc-700/70 bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Personal Details</h3>
+                <dl className="mt-4 divide-y divide-oa-border">
+                  {filteredRows.filter((row) => row.id !== "telegram").map((row) => (
+                    <div key={row.id} className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-x-4 py-3 first:pt-0 sm:grid-cols-[180px_minmax(0,1fr)]">
+                      <dt className="text-xs text-oa-muted"><FieldLabel icon={row.icon} label={row.field} /></dt>
+                      <dd className="min-w-0 break-words text-left text-xs [&>span]:whitespace-normal">{renderCell(row, { key: "value" })}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {loading && !profile ? <div role="status" className="flex items-center gap-2 py-4 text-xs text-oa-muted"><Spinner color="light" />Loading user details</div> : null}
+              </section>
+              <section aria-labelledby="brokers-heading" className="min-h-28 min-w-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-[#0b0b0b] p-4">
+                <h3 id="brokers-heading" className="-mx-4 -mt-4 mb-4 border-b border-zinc-700/70 bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Brokers</h3>
+              </section>
+              <section aria-labelledby="communications-heading" className="min-w-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-[#0b0b0b] p-4">
+                <h3 id="communications-heading" className="-mx-4 -mt-4 mb-4 border-b border-zinc-700/70 bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Communications</h3>
+                {filteredRows.filter((row) => row.id === "telegram").map((row) => (
+                  <div key={row.id} className="mt-4 grid grid-cols-[140px_minmax(0,1fr)] items-start gap-x-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+                    <h4 className="flex items-center gap-2 text-xs font-semibold text-white"><Send size={14} />Telegram</h4>
+                    <div className="min-w-0 text-left">{renderCell(row, { key: "value" })}</div>
+                  </div>
+                ))}
             {telegramLink && !telegramConnected ? (
               <div className="border-b border-oa-border bg-black px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1170,36 +1192,8 @@ function Settings() {
               </div>
             ) : null}
 
-            <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-              <DataTable
-                columns={settingsColumns}
-                rows={filteredRows}
-                loading={loading && !profile}
-                loadingMessage="Loading user details"
-                emptyMessage="No settings found."
-                gridTemplateColumns={settingsGridTemplateColumns}
-                minWidth="min-w-[900px]"
-                getRowKey={(row) => row.id}
-                renderCell={renderCell}
-                filterConfig={{
-                  activeFilter,
-                  headerValues,
-                  columnFilters,
-                  draftColumnFilters,
-                  rightAlignedKeys: ["group"],
-                  isColumnFilterActive,
-                  onOpen: openColumnFilter,
-                  onClose: () => setActiveFilter(null),
-                  onChange: (key, values) =>
-                    setDraftColumnFilters((previous) => ({
-                      ...previous,
-                      [key]: values
-                    })),
-                  onApply: applyColumnFilter,
-                  onSort: handleSort,
-                  onClear: clearColumnFilter
-                }}
-              />
+
+              </section>
             </div>
           </div>
         </div>

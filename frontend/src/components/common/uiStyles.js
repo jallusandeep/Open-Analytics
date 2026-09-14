@@ -113,7 +113,7 @@ export const oaSelectStyles = {
   chevron: "shrink-0 text-oa-muted transition duration-150",
   chevronOpen: "rotate-180 text-sky-300",
   menu:
-    "absolute left-0 top-9 z-50 w-full min-w-[150px] overflow-hidden rounded border border-oa-border bg-black p-1 shadow-2xl animate-[oaMenuIn_0.14s_ease-out]",
+    "absolute left-0 top-9 z-50 w-full min-w-0 overflow-hidden rounded border border-oa-border bg-black p-1 shadow-2xl motion-reduce:animate-none",
   menuScroll: "max-h-64 overflow-y-auto",
   option:
     "relative flex h-8 w-full items-center justify-between rounded-sm border-l px-2 text-left font-mono text-xs tracking-[-0.01em] transition",

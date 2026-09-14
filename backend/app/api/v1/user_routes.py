@@ -1,4 +1,5 @@
 import json
+from app.app_access import allowed_apps
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.database import get_connection
@@ -42,6 +43,7 @@ def user_row_to_dict(row):
         "mobile_number": row[4],
         "role": row[5],
         "access_restrictions": parse_json_value(row[6]),
+        "app_access": allowed_apps(row[5], row[6]),
         "is_active": row[7],
         "record_status": row[8],
         "version_no": row[9],

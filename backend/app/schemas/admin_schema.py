@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -13,6 +13,7 @@ class AdminUserCreateRequest(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
+    app_access: Optional[List[Literal["trading", "admin", "recom"]]] = None
     full_name: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
     mobile_number: Optional[str] = None
@@ -23,6 +24,7 @@ class AdminUserUpdateRequest(BaseModel):
 
 
 class AdminUserResponse(BaseModel):
+    app_access: List[str] = Field(default_factory=list)
     user_id: str
     login_id: Optional[str]
     full_name: str

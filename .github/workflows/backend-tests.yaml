@@ -1,0 +1,89 @@
+name: Backend Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+      - name: Unit tests and coverage
+        run: python -m pytest tests/unit --cov=app --cov-report=xml --cov-report=html:reports/coverage --junitxml=unit-results.xml --html=reports/unit-tests.html
+      - name: Container-backed integration tests
+        if: ${{ !cancelled() }}
+        run: python -m pytest tests/integration --junitxml=integration-results.xml --html=reports/integration-tests.html
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: |
+            backend/*-results.xml
+            backend/coverage.xml
+            backend/reports/
+      - name: Extract failed test cases
+        if: ${{ failure() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: python tests/report_failures.py
+      - name: Create issues for failed tests
+        if: ${{ failure() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const crypto = require('crypto');
+            const path = 'backend/reports/failures.json';
+            if (!fs.existsSync(path)) return;
+            const failures = JSON.parse(fs.readFileSync(path, 'utf8'));
+            if (!failures.length) return;
+            const { owner, repo } = context.repo;
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100
+            });
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            for (const failure of failures) {
+              const hash = crypto.createHash('sha256').update(failure.test).digest('hex');
+              const marker = `<!-- backend-test-failure:${hash} -->`;
+              if (openIssues.some(issue => !issue.pull_request && (issue.body || '').includes(marker))) {
+                core.info(`An open issue already exists for ${failure.test}`);
+                continue;
+              }
+              const issue = await github.rest.issues.create({
+                owner, repo,
+                title: `Backend test failed: ${failure.test}`.slice(0, 240),
+                body: [
+                  marker,
+                  `Test: ${failure.test}`,
+                  `Suite: ${failure.suite}`,
+                  `Branch: ${context.ref}`,
+                  `Commit: ${context.sha}`,
+                  `Workflow run: ${runUrl}`,
+                  '',
+                  'Download the backend-test-reports artifact for HTML reports.',
+                  '',
+                  'Failure details:',
+                  '```text',
+                  `${failure.message}\n${failure.details}`.replace(/```/g, "'''"),
+                  '```'
+                ].join('\n')
+              });
+              openIssues.push(issue.data);
+            }

@@ -1,4 +1,5 @@
 import random
+from app.app_access import allowed_apps
 import string
 import uuid
 from datetime import datetime, timedelta
@@ -147,6 +148,7 @@ def get_user_profile_by_id(user_id: str):
         "mobile_number": mobile_number,
         "role": role,
         "access_restrictions": access_restrictions,
+        "app_access": allowed_apps(role, access_restrictions),
         "is_active": is_active,
         "created_at": str(created_at)
     }
