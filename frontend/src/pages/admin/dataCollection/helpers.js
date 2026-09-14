@@ -423,6 +423,36 @@ export function getCompanyFundamentalsColumnValue(row, key) {
   return row[key];
 }
 
+export function expandCorporateActionRows(rows) {
+  return rows.flatMap((row) => {
+    if (row.endpoint !== "corporate_actions") return [row];
+
+    let actions;
+    try {
+      actions = JSON.parse(row.raw_data_json || "[]");
+    } catch {
+      actions = [];
+    }
+
+    if (!Array.isArray(actions) || actions.length === 0) return [row];
+
+    return actions.filter((action) => action && typeof action === "object").map((action, index) => ({
+      ...row,
+      fundamental_id: `${row.fundamental_id}-${index}`,
+      action_name: action.name,
+      action_expiry_date: action.expiry_date,
+      action_amount: action.amount,
+      action_ratio: action.ratio,
+      action_event_details: Array.isArray(action.event_details)
+        ? action.event_details
+            .filter((detail) => detail && detail.name)
+            .map((detail) => `${detail.name}: ${detail.value ?? ""}`)
+            .join(" · ")
+        : ""
+    }));
+  });
+}
+
 export function getElapsedSecondsFromDate(value) {
   if (!value) {
     return 0;

@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException, status
 
 from app.database import get_connection
-from app.services.connection_service import (
+from app.services.connections import (
     get_app_metadata_value,
     get_ist_now,
     get_upstox_notifier_webhook_url,

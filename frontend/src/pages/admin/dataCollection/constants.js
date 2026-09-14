@@ -220,7 +220,6 @@ export const companyFundamentalsEndpointOptions = [
   { value: "income_statement", label: "Income Statement" },
   { value: "cash_flow", label: "Cash Flow" },
   { value: "share_holdings", label: "Share Holdings" },
-  { value: "key_ratios", label: "Key Ratios" },
   { value: "corporate_actions", label: "Corporate Actions" },
   { value: "competitors", label: "Competitors" }
 ];
@@ -544,18 +543,18 @@ export const companyFundamentalsColumnGroups = {
       { key: "isin", label: "ISIN" },
       { key: "trading_symbol", label: "Trading Symbol" },
       { key: "company_name", label: "Company" },
-      { key: "latest_period", label: "Latest Action" },
-      { key: "corporate_action_count", label: "Actions" },
-      { key: "item_count", label: "Items" },
+      { key: "action_name", label: "Action" },
+      { key: "action_expiry_date", label: "Ex / Effective Date" },
+      { key: "action_amount", label: "Amount" },
+      { key: "action_ratio", label: "Ratio" },
+      { key: "action_event_details", label: "Event Details" },
       { key: "api_status", label: "API Status" },
       { key: "synced_at", label: "Synced At" }
     ],
-    gridTemplateColumns: "170px 190px 320px 170px 130px 110px 140px 230px",
-    minWidth: "min-w-[1460px]",
+    gridTemplateColumns: "170px 190px 320px 150px 180px 110px 110px 480px 140px 230px",
+    minWidth: "min-w-[2080px]",
     rightAlignedKeys: [
-      "latest_period",
-      "corporate_action_count",
-      "item_count",
+      "action_amount",
       "api_status",
       "synced_at"
     ]

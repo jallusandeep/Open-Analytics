@@ -34,14 +34,6 @@ function App() {
           />
 
           <Route
-            path="/predictions"
-            element={
-              <ProtectedRoute>
-                <QuantResearch />
-              </ProtectedRoute>
-            }
-          />
-          <Route
             path="/settings"
             element={
               <ProtectedRoute>

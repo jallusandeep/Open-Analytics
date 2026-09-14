@@ -16,6 +16,8 @@ _MODULE_NAMES = [
     "market_holidays_service",
     "company_fundamentals_service",
     "news_ipo_service",
+    "ipo_calendar_service",
+    "ipo_gmp_service",
     "instrument_sync_service",
     "ohlcv_service",
     "preview_service",
