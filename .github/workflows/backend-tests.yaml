@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
   issues: write
+  pages: write
+  id-token: write
 
 jobs:
   tests:
@@ -87,3 +89,42 @@ jobs:
               });
               openIssues.push(issue.data);
             }
+
+  publish-reports:
+    name: Publish test reports to GitHub Pages
+    needs: tests
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: backend-test-report-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download test reports
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-test-reports
+          path: downloaded-reports
+      - name: Build reports landing page
+        env:
+          TEST_RESULT: ${{ needs.tests.result }}
+        run: python backend/tests/build_report_site.py downloaded-reports pages-site
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-site
+      - name: Deploy reports
+        id: deployment
+        uses: actions/deploy-pages@v4
