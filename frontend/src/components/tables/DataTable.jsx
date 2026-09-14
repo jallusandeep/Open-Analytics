@@ -41,11 +41,14 @@ function splitGridTemplateColumns(gridTemplateColumns) {
 function getResolvedGridTemplateColumns(gridTemplateColumns, columnCount, hasActions) {
   const gridColumns = splitGridTemplateColumns(gridTemplateColumns);
 
-  if (!hasActions || gridColumns.length !== columnCount) {
+  if (!hasActions) {
     return gridTemplateColumns;
   }
-
-  return `${gridTemplateColumns} ${DEFAULT_ACTION_COLUMN_WIDTH}`;
+  if (gridColumns.length === columnCount + 1) {
+    const actionWidth = gridColumns.pop();
+    return [actionWidth, ...gridColumns].join(" ");
+  }
+  return `${DEFAULT_ACTION_COLUMN_WIDTH} ${gridTemplateColumns}`;
 }
 
 function getFixedGridWidth(gridTemplateColumns) {
@@ -125,7 +128,7 @@ function DataTable({
   useEffect(() => () => dragCleanupRef.current?.(), []);
 
   function resizeColumn(index, delta) {
-    const widths = resizedWidths || Array.from(headerRef.current.children).map((cell) => cell.getBoundingClientRect().width);
+    const widths = resizedWidths || measureColumnWidths();
     setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(80, width + delta) : width) });
   }
 
@@ -134,7 +137,7 @@ function DataTable({
     event.preventDefault();
     event.stopPropagation();
     dragCleanupRef.current?.();
-    const widths = Array.from(headerRef.current.children).map((cell) => cell.getBoundingClientRect().width);
+    const widths = measureColumnWidths();
     const startX = event.clientX;
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
@@ -153,6 +156,11 @@ function DataTable({
     handle.addEventListener("pointercancel", cleanup);
     handle.addEventListener("lostpointercapture", cleanup);
     dragCleanupRef.current = cleanup;
+  }
+  function measureColumnWidths() {
+    const cells = Array.from(headerRef.current.children);
+    if (renderActions) cells.unshift(cells.pop());
+    return cells.map((cell) => cell.getBoundingClientRect().width);
   }
   const compactDataRowClass = `${oaTableStyles.dataRow} !py-1`;
   const resolvedGridTemplateColumns = getResolvedGridTemplateColumns(
@@ -285,12 +293,12 @@ function DataTable({
                       type="button"
                       aria-label={`Resize ${column.label} column`}
                       title="Drag to resize · Arrow keys to adjust · Double-click to reset widths"
-                      onPointerDown={(event) => startResize(event, columns.indexOf(column))}
+                      onPointerDown={(event) => startResize(event, columns.indexOf(column) + (renderActions ? 1 : 0))}
                       onDoubleClick={() => setColumnWidths(null)}
                       onKeyDown={(event) => {
                         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                           event.preventDefault();
-                          resizeColumn(columns.indexOf(column), event.key === "ArrowLeft" ? -16 : 16);
+                          resizeColumn(columns.indexOf(column) + (renderActions ? 1 : 0), event.key === "ArrowLeft" ? -16 : 16);
                         }
                       }}
                       className="absolute inset-y-0 right-0 z-20 w-2 touch-none cursor-col-resize border-r border-white/10 bg-transparent hover:border-white hover:bg-white/10 focus-visible:bg-white/20 focus-visible:outline-none"
@@ -301,7 +309,7 @@ function DataTable({
             })}
 
             {renderActions && (
-              <div className={oaTableStyles.actionHeader}>
+              <div className={`${oaTableStyles.actionHeader} -order-1 !justify-start`}>
                 <span className={oaTableStyles.actionHeaderLabel}>Action</span>
               </div>
             )}
@@ -321,7 +329,7 @@ function DataTable({
                 ))}
 
                 {renderActions && (
-                  <div className={oaTableStyles.actionCell}>
+                  <div className={`${oaTableStyles.actionCell} -order-1 !justify-start`}>
                     {renderActions(row)}
                   </div>
                 )}

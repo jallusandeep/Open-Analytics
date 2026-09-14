@@ -3,6 +3,8 @@
 # Keep this module imported through app.services.data_collection or the compatibility wrapper.
 
 from .common import *
+from app.services.instrument_expiry import archive_expired_instruments
+
 
 def print_current_file_sanity_check(file_path: Path):
     try:
@@ -162,6 +164,8 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
 
     duckdb_path = normalize_duckdb_file_path(local_file)
 
+    archive_expired_instruments(conn, in_transaction=True)
+
     insert_started_at = time.time()
 
     conn.execute("""
@@ -256,6 +260,8 @@ def import_current_instruments_from_local_file(conn, sync_id: str, local_file: P
     """, [duckdb_path])
 
     print(f"DuckDB insert time: {round(time.time() - insert_started_at, 2)} seconds")
+
+    archive_expired_instruments(conn, in_transaction=True)
 
     total_rows = conn.execute("""
         SELECT COUNT(*)
