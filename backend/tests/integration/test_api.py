@@ -107,10 +107,11 @@ def test_app_access_persists_and_denies_api_access(api, admin_headers, account):
     assert login.status_code == 200, login.text
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     assert api.get("/api/v1/users/me", headers=headers).json()["user"]["app_access"] == ["trading"]
-    # Test a registered endpoint so authentication executes.
-    routes = api.get("/openapi.json").json()["paths"]
-    path = next(path for path, methods in routes.items() if path.startswith("/api/v1/quant-research/") and "get" in methods)
-    assert api.get(path, headers=headers).status_code == 403
+    # Data is registered in every backend build. Verify the app-access guard
+    # rejects this request before the endpoint's role guard runs.
+    denied = api.get("/api/v1/data/upstox/summary", headers=headers)
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["detail"] == "App access denied"
 
 
 @pytest.mark.parametrize("params", [{"page": 0}, {"page_size": 1}, {"page_size": 2001}])
