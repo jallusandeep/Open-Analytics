@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
   packages: write
+  issues: write
 
 jobs:
+  backend-tests:
+    uses: ./.github/workflows/backend-tests.yaml
+
   build-and-push:
+    needs: backend-tests
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
 

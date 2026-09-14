@@ -149,7 +149,7 @@ import {
   PaginationFooter
 } from "./components";
 
-function DataCollection() {
+function Data() {
   const [activeView, setActiveView] = useState("monitor");
   const [summary, setSummary] = useState(emptySummary);
   const [runs, setRuns] = useState([]);
@@ -1433,7 +1433,7 @@ function DataCollection() {
         showToast(
           getApiErrorMessage(
             errors[0],
-            "Unable to fully load data collection status."
+            "Unable to fully load data status."
           ),
           "warning"
         );
@@ -1441,7 +1441,7 @@ function DataCollection() {
       }
 
       if (showRefreshToast) {
-        showToast("Data collection status refreshed.", "success");
+        showToast("Data status refreshed.", "success");
       }
     } catch (error) {
       if (showLoading) {
@@ -1452,7 +1452,7 @@ function DataCollection() {
       }
 
       showToast(
-        getApiErrorMessage(error, "Unable to load data collection status."),
+        getApiErrorMessage(error, "Unable to load data status."),
         "warning"
       );
     } finally {
@@ -1464,7 +1464,7 @@ function DataCollection() {
 
   async function handleCancelSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to cancel data collection.", "error");
+      showToast("Admin access required to cancel data.", "error");
       return;
     }
 
@@ -1476,13 +1476,13 @@ function DataCollection() {
     try {
       const response = await cancelUpstoxDataCollection();
       const message =
-        response.data?.message || "Cancel requested for data collection.";
+        response.data?.message || "Cancel requested for data.";
 
       showToast(message, "warning");
       await loadData(false, { showLoading: false });
     } catch (error) {
       showToast(
-        getApiErrorMessage(error, "Unable to cancel data collection."),
+        getApiErrorMessage(error, "Unable to cancel data."),
         "error"
       );
     } finally {
@@ -1492,7 +1492,7 @@ function DataCollection() {
 
   async function handleCurrentSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
@@ -1549,7 +1549,7 @@ function DataCollection() {
 
   async function handleExpiredSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
@@ -1800,12 +1800,12 @@ function DataCollection() {
 
   async function handleOhlcvSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
     if (hasActiveJob) {
-      showToast("Another data collection job is already running.", "warning");
+      showToast("Another data job is already running.", "warning");
       return;
     }
 
@@ -1858,12 +1858,12 @@ function DataCollection() {
 
   async function handleEquityNewsSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
     if (hasActiveJob) {
-      showToast("Another data collection job is already running.", "warning");
+      showToast("Another data job is already running.", "warning");
       return;
     }
 
@@ -1924,12 +1924,12 @@ function DataCollection() {
 
   async function handleIpoCalendarSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
     if (hasActiveJob) {
-      showToast("Another data collection job is already running.", "warning");
+      showToast("Another data job is already running.", "warning");
       return;
     }
 
@@ -1990,12 +1990,12 @@ function DataCollection() {
 
   async function handleIpoScraperSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
     if (hasActiveJob) {
-      showToast("Another data collection job is already running.", "warning");
+      showToast("Another data job is already running.", "warning");
       return;
     }
 
@@ -2056,12 +2056,12 @@ function DataCollection() {
 
   async function handleCompanyFundamentalsSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
     if (hasActiveJob) {
-      showToast("Another data collection job is already running.", "warning");
+      showToast("Another data job is already running.", "warning");
       return;
     }
 
@@ -2127,12 +2127,12 @@ function DataCollection() {
 
   async function handleMarketCalendarSync() {
     if (!isAdminControlAllowed) {
-      showToast("Admin access required to run data collection.", "error");
+      showToast("Admin access required to run data.", "error");
       return;
     }
 
     if (hasActiveJob) {
-      showToast("Another data collection job is already running.", "warning");
+      showToast("Another data job is already running.", "warning");
       return;
     }
 
@@ -3647,6 +3647,8 @@ function DataCollection() {
           <div className="min-h-0 flex-1">
             <DataCollectionShell
               activeView={activeView}
+              companyFundamentalsEndpoint={companyFundamentalsEndpoint}
+              ipoCalendarSubTab={ipoCalendarSubTab}
               onViewChange={handleViewChange}
               diskSpace={summary.disk_space}
               queuedJobCount={summary.queued_jobs?.count || 0}
@@ -4314,4 +4316,4 @@ function DataCollection() {
   );
 }
 
-export default DataCollection;
+export default Data;

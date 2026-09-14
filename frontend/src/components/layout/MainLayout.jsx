@@ -12,6 +12,7 @@ import {
 
 import axiosClient from "../../api/axiosClient";
 import Tooltip from "../common/Tooltip";
+import { getAppAccess } from "../../utils/appAccess";
 
 function MainLayout({ children }) {
   const navigate = useNavigate();
@@ -23,6 +24,9 @@ function MainLayout({ children }) {
 
   const user = savedUser ? JSON.parse(savedUser) : null;
   const isAdminUser = ["admin", "super_admin"].includes(user?.role);
+  const appAccess = getAppAccess(user);
+  const isAdminApp = isAdminUser &&
+    sessionStorage.getItem("open_analytics_selected_app") === "admin";
 
   function clearOpenAnalyticsSession() {
     localStorage.removeItem("open_analytics_token");
@@ -46,7 +50,7 @@ function MainLayout({ children }) {
       label: "Dashboard",
       icon: Home,
       path: "/dashboard",
-      show: true,
+      show: !isAdminApp && appAccess.includes("trading"),
       color: "text-sky-300",
       activeLine: "bg-sky-300"
     },
@@ -54,23 +58,31 @@ function MainLayout({ children }) {
       label: "Stocks",
       icon: Search,
       path: "/stocks",
-      show: true,
+      show: !isAdminApp && appAccess.includes("trading"),
       color: "text-emerald-300",
       activeLine: "bg-emerald-300"
+    },
+    {
+      label: "Predictions",
+      icon: Brain,
+      path: "/predictions",
+      show: !isAdminApp && appAccess.includes("recom"),
+      color: "text-purple-300",
+      activeLine: "bg-purple-300"
     },
     {
       label: "Connections",
       icon: Link,
       path: "/connections",
-      show: isAdminUser,
+      show: isAdminApp,
       color: "text-teal-300",
       activeLine: "bg-teal-300"
     },
     {
-      label: "Data Collection",
+      label: "Data",
       icon: Database,
-      path: "/admin/data-collection",
-      show: isAdminUser,
+      path: "/data",
+      show: isAdminApp,
       color: "text-amber-300",
       activeLine: "bg-amber-300"
     },
@@ -78,7 +90,7 @@ function MainLayout({ children }) {
       label: "User Accounts",
       icon: Users,
       path: "/admin/users",
-      show: isAdminUser,
+      show: isAdminApp,
       color: "text-indigo-300",
       activeLine: "bg-indigo-300"
     },
@@ -86,7 +98,7 @@ function MainLayout({ children }) {
       label: "Settings",
       icon: Settings,
       path: "/settings",
-      show: true,
+      show: !isAdminApp,
       color: "text-zinc-300",
       activeLine: "bg-zinc-300"
     }
@@ -96,10 +108,10 @@ function MainLayout({ children }) {
     <div className="min-h-screen bg-oa-dark text-oa-text">
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-14 flex-col border-r border-oa-border bg-black">
         <div className="flex h-9 items-center justify-center border-b border-oa-border">
-          <Tooltip text="Open Analytics" side="right">
-            <div className="flex h-8 w-8 items-center justify-center text-oa-text">
+          <Tooltip text="Switch app" side="right">
+            <button type="button" aria-label="Switch app" onClick={() => navigate("/apps")} className="flex h-8 w-8 items-center justify-center rounded text-oa-text transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
               <ChevronRight size={22} strokeWidth={2.5} />
-            </div>
+            </button>
           </Tooltip>
         </div>
 

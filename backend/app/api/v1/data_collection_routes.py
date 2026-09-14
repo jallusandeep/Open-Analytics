@@ -40,7 +40,7 @@ from app.services.data_collection_queue_service import (
 )
 
 
-router = APIRouter(prefix="/data-collection", tags=["Data Collection"])
+router = APIRouter(prefix="/data", tags=["Data"])
 PREVIEW_PAGE_SIZE_DEFAULT = 500
 
 

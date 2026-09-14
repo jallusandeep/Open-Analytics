@@ -95,6 +95,8 @@ export default function TableFilterDropdown({
   onApply,
   onCancel,
   onSortAsc,
+  conditionalFormatting = false,
+  onToggleConditionalFormatting,
   onSortDesc,
   onClear,
   align = "left",
@@ -198,7 +200,7 @@ export default function TableFilterDropdown({
               className={oaTableFilterDropdownStyles.actionButton}
             >
               <ArrowDownAZ size={13} />
-              <span>Sort A to Z</span>
+              <span>Ascending</span>
             </button>
           )}
 
@@ -209,10 +211,19 @@ export default function TableFilterDropdown({
               className={oaTableFilterDropdownStyles.actionButton}
             >
               <ArrowUpAZ size={13} />
-              <span>Sort Z to A</span>
+              <span>Descending</span>
             </button>
           )}
 
+          {onToggleConditionalFormatting && (
+            <button type="button" onClick={onToggleConditionalFormatting} aria-pressed={conditionalFormatting}
+              title="Highlight positive numbers green and negative numbers red"
+              className={oaTableFilterDropdownStyles.actionButton}>
+              <Palette size={13} />
+              <span>Conditional formatting</span>
+              {conditionalFormatting ? <Check size={13} /> : null}
+            </button>
+          )}
           <FlyoutSection
             label="Sort by Color"
             icon={Palette}

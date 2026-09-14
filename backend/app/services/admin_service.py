@@ -7,6 +7,7 @@ import uuid
 from fastapi import HTTPException, status
 
 from app.database import get_connection
+from app.app_access import allowed_apps, serialize_app_access
 from app.security import hash_password
 from app.telegram_alerts_msg.message_templates import build_user_account_updated_message
 from app.telegram_alerts_msg.telegram_sender import send_user_telegram_alert
@@ -61,6 +62,7 @@ def serialize_user_row(row):
         "mobile_number": row[4],
         "role": row[5],
         "access_restrictions": row[6],
+        "app_access": allowed_apps(row[5], row[6]),
         "is_active": row[7],
         "created_at": str(row[8]),
         "updated_at": str(row[9]),
@@ -303,7 +305,8 @@ def update_user_service(user_id: str, request, current_user: dict):
             user_id,
             login_id,
             role,
-            is_active
+            is_active,
+            access_restrictions
         FROM users
         WHERE user_id = ?
           AND COALESCE(record_status, 'S') != 'D'
@@ -389,6 +392,14 @@ def update_user_service(user_id: str, request, current_user: dict):
         )
 
     clean_password = request.password.strip() if request.password else ""
+    grants = request.app_access if request.app_access is not None else allowed_apps(target_role, target_user[4])
+    if is_self_update and "admin" not in grants:
+        conn.close()
+        raise HTTPException(status_code=400, detail="You cannot remove your own Admin app access")
+    # Retain app permission markers when older clients omit app_access.
+    access_restrictions = serialize_app_access(
+        request.access_restrictions if request.role == "user" else [], grants
+    )
 
     if clean_password:
         conn.execute(

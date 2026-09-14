@@ -1,0 +1,9 @@
+.env
+*.duckdb*
+venv
+.venv
+__pycache__
+.pytest_cache
+htmlcov
+app/data
+*.log

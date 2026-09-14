@@ -32,8 +32,10 @@ import {
 } from "../../components/common/uiStyles";
 import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
+import { getAppAccess } from "../../utils/appAccess";
 
 const tableColumns = [
+  { key: "actions", label: "Action", filterable: false },
   { key: "login_id", label: "Login ID" },
   { key: "email", label: "Email ID" },
   { key: "full_name", label: "Full Name" },
@@ -45,7 +47,7 @@ const tableColumns = [
 ];
 
 const gridTemplateColumns =
-  "120px minmax(180px,1.4fr) minmax(180px,1.4fr) 130px 120px 105px 125px 160px 86px";
+  "86px 150px minmax(220px,1.4fr) minmax(180px,1.4fr) 140px 130px 115px 155px 160px";
 
 const emptyFormData = {
   login_id: "",
@@ -254,6 +256,7 @@ function UserAccounts() {
   const [deleting, setDeleting] = useState(false);
 
   const [formData, setFormData] = useState(emptyFormData);
+  const [editTab, setEditTab] = useState("details");
   const [editFormData, setEditFormData] = useState(emptyFormData);
 
   const currentUser = useMemo(() => getStoredCurrentUser(), []);
@@ -611,6 +614,7 @@ function UserAccounts() {
     }
 
     setEditUser(user);
+    setEditTab("details");
     setEditFormData({
       login_id: user.login_id || "",
       full_name: user.full_name || "",
@@ -619,7 +623,8 @@ function UserAccounts() {
       password: "",
       role: user.role || "user",
       is_active: Boolean(user.is_active),
-      access_restrictions: parseAccessRestrictions(user.access_restrictions)
+      access_restrictions: parseAccessRestrictions(user.access_restrictions),
+      app_access: getAppAccess(user)
     });
   }
 
@@ -711,6 +716,7 @@ function UserAccounts() {
 
     const payload = {
       full_name: editFormData.full_name,
+      app_access: editFormData.app_access.filter((app) => app !== "admin" || ["admin", "super_admin"].includes(editFormData.role)),
       email: editFormData.email,
       mobile_number: editFormData.mobile_number,
       role: isCurrentUser(editUser) ? editUser.role : editFormData.role,
@@ -726,7 +732,11 @@ function UserAccounts() {
     }
 
     try {
-      await updateAdminUser(editUser.user_id, payload);
+      const response = await updateAdminUser(editUser.user_id, payload);
+      if (isCurrentUser(editUser)) {
+        const stored = JSON.parse(localStorage.getItem("open_analytics_current_user") || "{}");
+        localStorage.setItem("open_analytics_current_user", JSON.stringify({ ...stored, ...response.data }));
+      }
 
       setEditUser(null);
       setEditFormData(emptyFormData);
@@ -789,6 +799,9 @@ function UserAccounts() {
   }
 
   function renderUserCell(user, column) {
+    if (column.key === "actions") {
+      return <div className="flex items-center justify-start">{renderUserActions(user)}</div>;
+    }
     const accessText = accessTextForUser(user);
 
     if (column.key === "login_id") {
@@ -944,7 +957,7 @@ function UserAccounts() {
                 gridTemplateColumns={gridTemplateColumns}
                 getRowKey={(user) => user.user_id}
                 renderCell={renderUserCell}
-                renderActions={renderUserActions}
+                wrapHeaders
                 filterConfig={{
                   activeFilter,
                   headerValues,
@@ -1129,7 +1142,14 @@ function UserAccounts() {
           </>
         }
       >
-        <form id="edit-user-form" onSubmit={handleUpdateUser}>
+        <form id="edit-user-form" onSubmit={handleUpdateUser} className="oa-app-font">
+          <div className="mb-4 flex gap-2 border-b border-oa-border pb-3">
+            {[{ key: "details", label: "User Details" }, { key: "apps", label: "App Access" }].map((tab) => (
+              <button key={tab.key} type="button" aria-pressed={editTab === tab.key} onClick={() => setEditTab(tab.key)} className={`rounded border px-3 py-2 font-mono text-xs ${editTab === tab.key ? "border-white/50 bg-white/10 text-white" : "border-transparent text-oa-muted hover:text-white"}`}>{tab.label}</button>
+            ))}
+          </div>
+          <div className="grid">
+          <div aria-hidden={editTab !== "details"} inert={editTab !== "details"} className={`[grid-area:1/1] ${editTab !== "details" ? "invisible pointer-events-none" : ""}`}>
           <div className="grid gap-3 md:grid-cols-3">
             <FloatingInput
               name="login_id"
@@ -1225,6 +1245,26 @@ function UserAccounts() {
               Admin users cannot assign admin or super admin roles.
             </p>
           )}
+          </div>
+            <div aria-hidden={editTab !== "apps"} inert={editTab !== "apps"} className={`[grid-area:1/1] divide-y divide-oa-border ${editTab !== "apps" ? "invisible pointer-events-none" : ""}`}>
+              <p className="pb-3 text-xs text-oa-muted">Select the apps this user can open, then click Update user to save.</p>
+              {["trading", "admin", "recom"].map((app) => {
+                const eligible = app !== "admin" || ["admin", "super_admin"].includes(editFormData.role);
+                const enabled = eligible && (editFormData.app_access || []).includes(app);
+                const locked = updating || !eligible || (app === "admin" && isCurrentUser(editUser));
+                return (
+                  <div key={app} className="flex items-center justify-between gap-4 py-4">
+                    <div><span className="text-xs font-semibold capitalize text-white">{app}</span>{!eligible ? <p className="mt-1 text-xs text-oa-muted">Requires an admin role</p> : null}</div>
+                    <button type="button" role="switch" aria-label={`${app} app access`} aria-checked={enabled} disabled={locked}
+                      onClick={() => setEditFormData((previous) => ({ ...previous, app_access: enabled ? previous.app_access.filter((item) => item !== app) : [...previous.app_access, app] }))}
+                      className={`h-6 w-11 rounded-full border p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-40 ${enabled ? "border-white bg-white" : "border-zinc-600 bg-zinc-900"}`}>
+                      <span className={`block h-4 w-4 rounded-full transition-transform ${enabled ? "translate-x-5 bg-black" : "translate-x-0 bg-zinc-400"}`} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </form>
       </Modal>
 
