@@ -236,6 +236,8 @@ export function DumpJobActions({
 
 export function DataCollectionShell({
   activeView,
+  companyFundamentalsEndpoint,
+  ipoCalendarSubTab,
   onViewChange,
   diskSpace,
   activeJobLabel,
@@ -244,6 +246,13 @@ export function DataCollectionShell({
   queuedJobCount = 0,
   children
 }) {
+  const sectionLabel = viewOptions.find((option) => option.key === activeView)?.label;
+  const subpageLabel = activeView === "company_fundamentals"
+    ? companyFundamentalsEndpointOptions.find((option) => option.value === companyFundamentalsEndpoint)?.label
+    : activeView === "ipo_calendar"
+      ? ipoCalendarSubTabOptions.find((option) => option.value === ipoCalendarSubTab)?.label
+      : null;
+  const breadcrumbItems = ["Data", sectionLabel, subpageLabel].filter(Boolean);
   const diskUsedText = formatBytes(diskSpace?.used_bytes);
   const diskTotalText = formatBytes(diskSpace?.total_bytes);
   const diskPercent =
@@ -257,7 +266,23 @@ export function DataCollectionShell({
     >
       <div className="shrink-0">
         <div className={`${oaCardStyles.header} flex items-center justify-between gap-3`}>
-          <h2 className={oaCardStyles.headerTitle}>Data Collection</h2>
+          <div className="min-w-0">
+            <nav aria-label="Breadcrumb" className="font-mono text-xs text-oa-muted">
+              <ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {breadcrumbItems.map((label, index) => (
+                  <li key={label} className="flex items-center gap-2">
+                    {index > 0 ? <span aria-hidden="true">/</span> : null}
+                    <span
+                      aria-current={index === breadcrumbItems.length - 1 ? "page" : undefined}
+                      className={index === 0 ? oaCardStyles.headerTitle : index === breadcrumbItems.length - 1 ? "text-white" : undefined}
+                    >
+                      {label}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          </div>
           <div className="flex min-w-0 items-center gap-2">
             {activeJobLabel ? (
               <span className="inline-flex min-w-0 items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-950/40 px-2 py-1 font-mono text-[11px] leading-none text-cyan-100">
@@ -465,6 +490,8 @@ export function ScheduleManagerModal({
               }`}
             >
               <DataTable
+          fitToViewport
+          resizableColumns
                 columns={scheduleColumns}
                 rows={schedules}
                 loading={saving && schedules.length === 0}
@@ -670,11 +697,13 @@ export function MonitorContent({
 
       <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
         <DataTable
+          fitToViewport
+          resizableColumns
           columns={dumpJobColumns}
           rows={rows}
           loading={loading}
-          loadingMessage="Loading data collection status"
-          emptyMessage="No data collection jobs found."
+          loadingMessage="Loading data status"
+          emptyMessage="No data jobs found."
           gridTemplateColumns={dumpJobGridTemplateColumns}
           minWidth="min-w-[980px]"
           getRowKey={(row) => row.id}
@@ -830,18 +859,10 @@ export function DbPreviewContent({
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-        {loading && (
-          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
-            <div className="flex flex-col items-center gap-3 text-oa-muted">
-              <Spinner size="md" color="light" />
-              <span className="oa-code-font text-[12px]">
-                Loading {title.toLowerCase()}
-              </span>
-            </div>
-          </div>
-        )}
 
         <DataTable
+          fitToViewport
+          resizableColumns
           columns={previewColumns}
           rows={rows}
           loading={loading}
@@ -1229,18 +1250,10 @@ export function MarketCalendarContent({
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-        {loading && (
-          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
-            <div className="flex flex-col items-center gap-3 text-oa-muted">
-              <Spinner size="md" color="light" />
-              <span className="oa-code-font text-[12px]">
-                Loading market calendar
-              </span>
-            </div>
-          </div>
-        )}
 
         <DataTable
+          fitToViewport
+          resizableColumns
           columns={marketHolidayPreviewColumns}
           rows={rows}
           loading={loading}
@@ -1338,18 +1351,10 @@ export function GenericPreviewContent({
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-        {loading && (
-          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
-            <div className="flex flex-col items-center gap-3 text-oa-muted">
-              <Spinner size="md" color="light" />
-              <span className="oa-code-font text-[12px]">
-                Loading {title.toLowerCase()}
-              </span>
-            </div>
-          </div>
-        )}
 
         <DataTable
+          fitToViewport
+          resizableColumns
           columns={columns}
           rows={rows}
           loading={loading}
@@ -1447,16 +1452,10 @@ export function OhlcvTabContent({
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-        {loading && (
-          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
-            <div className="flex flex-col items-center gap-3 text-oa-muted">
-              <Spinner size="md" color="light" />
-              <span className="oa-code-font text-[12px]">Loading OHLCV</span>
-            </div>
-          </div>
-        )}
 
         <DataTable
+          fitToViewport
+          resizableColumns
           columns={ohlcvPreviewColumns}
           rows={rows}
           loading={loading}
@@ -1485,29 +1484,39 @@ export function OhlcvTabContent({
   );
 }
 
+function DataSubpageTabs({ label, options, value, onChange }) {
+  return (
+    <nav aria-label={label} className="shrink-0 border-b border-oa-border bg-black px-3 py-2">
+      <div className="overflow-x-auto">
+      <div className="flex w-max items-center rounded-md border border-white/[0.08] bg-[#111111] p-0.5">
+        {options.map((option) => {
+          const selected = value === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onChange(option.value)}
+              className={`relative inline-flex h-7 w-40 shrink-0 items-center justify-center whitespace-nowrap rounded px-3 text-center font-mono text-xs leading-none transition-[background-color,color,box-shadow] duration-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/70 motion-reduce:transition-none ${
+                selected
+                  ? "bg-[#eeeeee] text-black shadow-sm"
+                  : "text-oa-muted hover:bg-white/[0.06] hover:text-white after:absolute after:right-0 after:top-2 after:h-3 after:w-px after:bg-white/[0.07] last:after:hidden"
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+      </div>
+    </nav>
+  );
+}
+
 export function IpoCalendarTabContent({ activeSubTab, onSubTabChange, children }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
-        <div className={`${oaTabStyles.wrapper} overflow-x-auto`}>
-          {ipoCalendarSubTabOptions.map((option) => {
-            const isActive = activeSubTab === option.value;
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onSubTabChange(option.value)}
-                className={`${oaTabStyles.button} ${
-                  isActive ? oaTabStyles.active : oaTabStyles.inactive
-                } whitespace-nowrap`}
-              >
-                <span>{option.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <DataSubpageTabs label="IPO pages" options={ipoCalendarSubTabOptions} value={activeSubTab} onChange={onSubTabChange} />
 
       {children}
     </div>
@@ -1552,26 +1561,7 @@ export function CompanyFundamentalsContent({
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
-        <div className={`${oaTabStyles.wrapper} overflow-x-auto`}>
-          {companyFundamentalsEndpointOptions.map((option) => {
-            const isActive = activeEndpoint === option.value;
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onEndpointChange(option.value)}
-                className={`${oaTabStyles.button} ${
-                  isActive ? oaTabStyles.active : oaTabStyles.inactive
-                } whitespace-nowrap`}
-              >
-                <span>{option.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <DataSubpageTabs label="Company fundamentals pages" options={companyFundamentalsEndpointOptions} value={activeEndpoint} onChange={onEndpointChange} />
 
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
         <TableToolbar
@@ -1640,18 +1630,10 @@ export function CompanyFundamentalsContent({
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-        {loading && (
-          <div className="sticky left-0 top-0 z-20 flex h-full min-h-[320px] w-full items-center justify-center bg-black/80">
-            <div className="flex flex-col items-center gap-3 text-oa-muted">
-              <Spinner size="md" color="light" />
-              <span className="oa-code-font text-[12px]">
-                Loading company fundamentals
-              </span>
-            </div>
-          </div>
-        )}
 
         <DataTable
+          fitToViewport
+          resizableColumns
           columns={columns}
           rows={rows}
           loading={loading}

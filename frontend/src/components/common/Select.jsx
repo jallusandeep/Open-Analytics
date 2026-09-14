@@ -136,7 +136,7 @@ function Select({
 
       {open ? (
         <div
-          className={`${oaSelectStyles.menu} ${menuPositionClass} !border-sky-500/50`}
+          className={`${oaSelectStyles.menu} ${menuPositionClass} !border-sky-500/50 ${menuDirection === "down" ? "origin-top animate-[oaSelectDown_0.2s_ease-out]" : "origin-bottom animate-[oaMenuIn_0.2s_ease-out]"}`}
         >
           <div
             className={oaSelectStyles.menuScroll}

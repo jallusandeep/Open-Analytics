@@ -108,7 +108,8 @@ function Login() {
         JSON.stringify(response.data)
       );
 
-      navigate("/dashboard");
+      sessionStorage.removeItem("open_analytics_selected_app");
+      navigate("/apps", { replace: true });
     } catch (error) {
       showMessage(
         "error",

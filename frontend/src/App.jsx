@@ -1,11 +1,12 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import Login from "./pages/auth/Login";
+import AppSelector from "./pages/auth/AppSelector";
 import Dashboard from "./pages/dashboard/Dashboard";
 import UserAccounts from "./pages/admin/UserAccounts";
 import Connections from "./pages/admin/Connections";
 import UpstoxCallback from "./pages/admin/UpstoxCallback";
-import DataCollection from "./pages/admin/DataCollection";
+import Data from "./pages/admin/DataCollection";
 import QuantResearch from "./pages/admin/QuantResearch";
 import Settings from "./pages/settings/Settings";
 
@@ -18,7 +19,8 @@ function App() {
     <ToastProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Navigate to="/apps" replace />} />
+          <Route path="/apps" element={<ProtectedRoute><AppSelector /></ProtectedRoute>} />
 
           <Route path="/login" element={<Login />} />
 
@@ -71,11 +73,11 @@ function App() {
           />
 
           <Route
-            path="/admin/data-collection"
+            path="/data"
             element={
               <ProtectedRoute>
                 <AdminRoute>
-                  <DataCollection />
+                  <Data />
                 </AdminRoute>
               </ProtectedRoute>
             }
@@ -94,7 +96,15 @@ function App() {
 
           <Route
             path="/data-collection"
-            element={<Navigate to="/admin/data-collection" replace />}
+            element={<Navigate to="/data" replace />}
+          />
+          <Route
+            path="/admin/data-collection"
+            element={<Navigate to="/data" replace />}
+          />
+          <Route
+            path="/admin/data"
+            element={<Navigate to="/data" replace />}
           />
 
           <Route
