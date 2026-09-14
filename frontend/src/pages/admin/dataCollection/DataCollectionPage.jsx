@@ -1000,6 +1000,54 @@ function Data() {
     companyFundamentalsSortConfig
   ]);
 
+  async function getDownloadRows({ dateColumn, start, end }) {
+    const configurations = {
+      current_preview: [getUpstoxInstrumentsPreview, { search: appliedPreviewSearch, source_type: previewSourceType, segment: previewSegment, instrument_type: previewInstrumentType }, previewColumnFilters, getPreviewColumnValue, previewColumns, previewSortConfig],
+      expired_preview: [getUpstoxExpiredInstrumentsPreview, { search: appliedPreviewSearch, source_type: previewSourceType, segment: previewSegment, instrument_type: previewInstrumentType }, previewColumnFilters, getPreviewColumnValue, previewColumns, previewSortConfig],
+      ohlcv: [getUpstoxOhlcvPreview, { search: appliedOhlcvSearch }, ohlcvColumnFilters, getOhlcvColumnValue, ohlcvPreviewColumns, ohlcvSortConfig],
+      equity_news: [getUpstoxEquityNewsPreview, { search: appliedEquityNewsSearch, segment: equityNewsSegment, source: "all" }, equityNewsColumnFilters, getEquityNewsColumnValue, equityNewsPreviewColumns, equityNewsSortConfig],
+      ipo_calendar: [getUpstoxIpoCalendarPreview, { search: appliedIpoCalendarSearch, ipo_status: ipoCalendarStatus, issue_type: ipoCalendarIssueType, industry: ipoCalendarIndustry }, ipoCalendarColumnFilters, getIpoCalendarColumnValue, ipoCalendarPreviewColumns, ipoCalendarSortConfig],
+      ipo_scraper: [getIpoGmpScraperPreview, { search: appliedIpoScraperSearch, ipo_status: ipoScraperStatus, ipo_type: ipoScraperType }, ipoScraperColumnFilters, getIpoScraperColumnValue, ipoScraperPreviewColumns, ipoScraperSortConfig],
+      company_fundamentals: [getUpstoxCompanyFundamentalsPreview, { search: appliedCompanyFundamentalsSearch, endpoint: companyFundamentalsEndpoint, statement_type: companyFundamentalsStatementType, time_period: companyFundamentalsTimePeriod, segment: companyFundamentalsSegment }, companyFundamentalsColumnFilters, getCompanyFundamentalsColumnValue, activeCompanyFundamentalsColumnGroup.columns, companyFundamentalsSortConfig],
+      market_calendar: [getUpstoxMarketHolidaysPreview, { search: appliedMarketCalendarSearch, holiday_type: marketCalendarHolidayType, exchange: marketCalendarExchange, trading_status: marketCalendarTradingStatus }, marketCalendarColumnFilters, getMarketHolidayColumnValue, marketHolidayPreviewColumns, marketCalendarSortConfig]
+    };
+    const dataset = activeView === "ipo_calendar" && ipoCalendarSubTab === "ipo_scraper" ? "ipo_scraper" : activeView;
+    let rows = [];
+    let columns = dumpJobColumns;
+    let getValue = getDumpJobColumnValue;
+    if (dataset === "monitor") {
+      rows = filteredDumpJobRows;
+    } else {
+      const [fetchPage, params, columnFilters, valueGetter, tableColumns, sort] = configurations[dataset];
+      columns = tableColumns;
+      getValue = valueGetter;
+      for (let page = 1; ; page += 1) {
+        const response = await fetchPage({ ...params, page, page_size: 500 });
+        const data = response.data.data || response.data;
+        let pageRows = data.rows || [];
+        if (dataset === "company_fundamentals") pageRows = expandCorporateActionRows(pageRows);
+        pageRows = applyColumnFilters(pageRows, columnFilters, getValue);
+        rows.push(...pageRows.filter((row) => {
+          if (!start && !end) return true;
+          const date = String(row[dateColumn === "candle_date" ? "date" : dateColumn] ?? "").slice(0, 10);
+          return date && (!start || date >= start) && (!end || date <= end);
+        }));
+        if (rows.length > 100000) throw new Error("Export exceeds 100,000 rows. Select narrower filters or dates.");
+        if (!data.rows?.length || page >= data.total_pages) break;
+      }
+      rows = applySort(rows, sort, getValue);
+    }
+    if (dataset === "monitor" && (start || end)) rows = rows.filter((row) => {
+      const date = String(row[dateColumn] ?? "").slice(0, 10);
+      return date && (!start || date >= start) && (!end || date <= end);
+    });
+    columns = columns.filter((column) => !["action", "actions"].includes(column.key));
+    return { headers: columns.map((column) => column.label || column.key), rows: rows.map((row) => columns.map((column) => {
+      const value = getValue(row, column.key);
+      return value == null ? null : typeof value === "object" ? JSON.stringify(value) : value;
+    })) };
+  }
+
   async function loadPreview(customPage = previewPage, options = {}) {
     const { showLoading = true } = options;
     const previewMode = getPreviewMode(activeView);
@@ -3647,6 +3695,7 @@ function Data() {
           <div className="min-h-0 flex-1">
             <DataCollectionShell
               activeView={activeView}
+              getDownloadRows={getDownloadRows}
               companyFundamentalsEndpoint={companyFundamentalsEndpoint}
               ipoCalendarSubTab={ipoCalendarSubTab}
               onViewChange={handleViewChange}
