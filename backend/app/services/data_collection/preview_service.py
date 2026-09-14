@@ -1,3 +1,4 @@
+from app.services.instrument_expiry import archive_expired_instruments
 # backend\app\services\data_collection\preview_service.py
 # Split from backend\app\services\data_collection_service.py
 # Keep this module imported through app.services.data_collection or the compatibility wrapper.
@@ -440,6 +441,7 @@ def get_upstox_instruments_preview_service(
     conn = get_connection()
 
     try:
+        archive_expired_instruments(conn)
         current_page = normalize_page(page)
         current_page_size = normalize_page_size(page_size)
         offset = (current_page - 1) * current_page_size
@@ -507,6 +509,7 @@ def get_upstox_expired_instruments_preview_service(
     conn = get_connection()
 
     try:
+        archive_expired_instruments(conn)
         current_page = normalize_page(page)
         current_page_size = normalize_page_size(page_size)
         offset = (current_page - 1) * current_page_size

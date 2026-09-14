@@ -63,6 +63,8 @@ app.include_router(user_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(connection_router, prefix="/api/v1")
 app.include_router(data_collection_router, prefix="/api/v1")
+from app.api.v1.data_export_routes import router as data_export_router
+app.include_router(data_export_router, prefix="/api/v1")
 
 
 @app.get("/")

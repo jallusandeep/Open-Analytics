@@ -1,3 +1,4 @@
+import { createContext, useContext } from "react";
 import {
   Check,
   ChevronLeft,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 import Spinner from "../../../components/common/Spinner";
+import DownloadData from "./DownloadData";
 import IconButton from "../../../components/common/IconButton";
 import Input from "../../../components/common/Input";
 import Select from "../../../components/common/Select";
@@ -234,8 +236,16 @@ export function DumpJobActions({
   );
 }
 
+const DataDownloadContext = createContext(null);
+
+function DataTableToolbar(props) {
+  const downloadOptions = useContext(DataDownloadContext);
+  return <TableToolbar {...props} trailingContent={downloadOptions ? <DownloadData {...downloadOptions} /> : null} />;
+}
+
 export function DataCollectionShell({
   activeView,
+  getDownloadRows,
   companyFundamentalsEndpoint,
   ipoCalendarSubTab,
   onViewChange,
@@ -261,6 +271,7 @@ export function DataCollectionShell({
       : "--";
 
   return (
+    <DataDownloadContext.Provider value={{ activeView, companyFundamentalsEndpoint, ipoCalendarSubTab, getDownloadRows }}>
     <div
       className={`${oaCardStyles.wrapper} flex h-[calc(100vh-24px)] min-h-0 flex-col overflow-hidden`}
     >
@@ -320,6 +331,7 @@ export function DataCollectionShell({
         {children}
       </div>
     </div>
+    </DataDownloadContext.Provider>
   );
 }
 
@@ -672,7 +684,7 @@ export function MonitorContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <TableToolbar
+        <DataTableToolbar
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -800,7 +812,7 @@ export function DbPreviewContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <TableToolbar
+        <DataTableToolbar
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1184,7 +1196,7 @@ export function MarketCalendarContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <TableToolbar
+        <DataTableToolbar
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1311,7 +1323,7 @@ export function GenericPreviewContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <TableToolbar
+        <DataTableToolbar
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1406,7 +1418,7 @@ export function OhlcvTabContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <TableToolbar
+        <DataTableToolbar
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1564,7 +1576,7 @@ export function CompanyFundamentalsContent({
       <DataSubpageTabs label="Company fundamentals pages" options={companyFundamentalsEndpointOptions} value={activeEndpoint} onChange={onEndpointChange} />
 
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <TableToolbar
+        <DataTableToolbar
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}

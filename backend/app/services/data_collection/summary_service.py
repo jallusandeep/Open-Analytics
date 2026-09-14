@@ -1,3 +1,4 @@
+from app.services.instrument_expiry import archive_expired_instruments
 # backend\app\services\data_collection\summary_service.py
 # Split from backend\app\services\data_collection_service.py
 # Keep this module imported through app.services.data_collection or the compatibility wrapper.
@@ -117,6 +118,7 @@ def get_data_collection_summary_service():
     conn = get_connection()
 
     try:
+        archive_expired_instruments(conn)
         safe_mark_stale_sync_runs(conn)
         connection_status = get_upstox_connection_status(conn)
 

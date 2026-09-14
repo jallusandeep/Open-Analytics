@@ -16,7 +16,8 @@ function TableToolbar({
   hasActiveFilter = false,
   onClearAll,
   loading = false,
-  rightActions = []
+  rightActions = [],
+  trailingContent = null
 }) {
   return (
     <form
@@ -80,6 +81,7 @@ function TableToolbar({
           ))}
         </div>
       )}
+      {trailingContent}
     </form>
   );
 }

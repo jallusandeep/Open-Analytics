@@ -1,3 +1,4 @@
+from app.services.instrument_expiry import archive_expired_instruments
 import calendar
 import threading
 from datetime import datetime, timedelta, timezone
@@ -733,6 +734,7 @@ def execute_due_schedules_once():
     conn = get_connection()
 
     try:
+        archive_expired_instruments(conn)
         rows = get_due_schedules(conn)
 
         if not rows:
