@@ -44,7 +44,7 @@ function SearchBox({
         className={`${oaSearchBoxStyles.input} ${inputClassName}`}
       />
 
-      {value && (
+      {(value || active) && (
         <button
           type="button"
           onClick={handleClear}

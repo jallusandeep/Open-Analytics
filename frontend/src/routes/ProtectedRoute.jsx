@@ -174,7 +174,7 @@ function ProtectedRoute({ children }) {
 
   const user = JSON.parse(localStorage.getItem("open_analytics_current_user") || "null");
   const path = location.pathname;
-  const app = path === "/data" || path.startsWith("/admin/") || path.startsWith("/connections") ? "admin" : path === "/predictions" ? "recom" : path === "/dashboard" || path.startsWith("/stocks") ? "trading" : null;
+  const app = path === "/data" || path === "/reference-data" || path.startsWith("/admin/") || path.startsWith("/connections") ? "admin" : path === "/predictions" ? "recom" : path === "/dashboard" || path.startsWith("/stocks") ? "trading" : null;
   if (app && !getAppAccess(user).includes(app)) return <Navigate to="/apps" replace />;
   return children;
 }

@@ -338,14 +338,14 @@ export function DataCollectionShell({
       <div className="relative z-50 shrink-0">
         <div className={`${oaCardStyles.header} flex items-center justify-between gap-3`}>
           <div className="min-w-0">
-            <nav aria-label="Breadcrumb" className="font-mono text-[11px] text-oa-muted">
+            <nav aria-label="Breadcrumb" className="font-mono text-[13px] font-bold text-oa-muted">
               <ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {breadcrumbItems.map((label, index) => (
                   <li key={label} className="flex items-center gap-2">
                     {index > 0 ? <span aria-hidden="true">/</span> : null}
                     <button type="button" onClick={() => window.dispatchEvent(new Event("open-analytics:data-navigation-toggle"))}
                       aria-current={index === breadcrumbItems.length - 1 ? "page" : undefined}
-                      className={`text-left hover:text-sky-300 focus-visible:outline focus-visible:outline-sky-400 ${index === 0 ? "font-bold uppercase tracking-wider text-white" : index === breadcrumbItems.length - 1 ? "text-white" : ""}`}
+                      className={`text-left hover:text-sky-300 focus-visible:outline focus-visible:outline-sky-400 ${index === 0 ? "uppercase tracking-wider text-white" : index === breadcrumbItems.length - 1 ? "text-[11px] font-normal text-white" : ""}`}
                     >
                       {label}
                     </button>

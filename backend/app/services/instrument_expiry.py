@@ -46,3 +46,35 @@ def archive_expired_instruments(conn, *, today=None, in_transaction=False):
         if not in_transaction:
             conn.execute("ROLLBACK")
         raise
+
+
+def archive_missing_current_instruments(conn, *, today=None):
+    """Archive expiring master rows that disappeared in a successful refresh.
+
+    The caller keeps the previous master in _previous_current_instruments and
+    invokes this inside the same transaction after loading the new master.
+    """
+    today = today or datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    columns = ", ".join(ARCHIVE_COLUMNS)
+    selected = ", ".join(
+        "COALESCE(old.raw_json, to_json(old))" if column == "raw_json"
+        else f"old.{column}" for column in ARCHIVE_COLUMNS
+    )
+    conn.execute(f"""
+        INSERT INTO upstox_expired_instruments ({columns})
+        SELECT {selected}
+        FROM _previous_current_instruments old
+        WHERE old.expiry <= ?
+          AND NOT EXISTS (
+              SELECT 1 FROM upstox_instruments current_row
+              WHERE current_row.instrument_key IS NOT DISTINCT FROM old.instrument_key
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM upstox_expired_instruments archived
+              WHERE archived.instrument_key IS NOT DISTINCT FROM old.instrument_key
+                AND archived.expiry = old.expiry
+          )
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY old.instrument_key, old.expiry ORDER BY old.synced_at DESC
+        ) = 1
+    """, [today])

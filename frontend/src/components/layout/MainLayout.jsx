@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Brain,
+  BookOpen,
   ChevronRight,
   Database,
   Home,
@@ -136,6 +137,14 @@ function MainLayout({ children }) {
       show: isAdminApp,
       color: "text-amber-300",
       activeLine: "bg-amber-300"
+    },
+    {
+      label: "Reference Data",
+      icon: BookOpen,
+      path: "/reference-data",
+      show: isAdminApp,
+      color: "text-cyan-300",
+      activeLine: "bg-cyan-300"
     },
     {
       label: "User Accounts",
