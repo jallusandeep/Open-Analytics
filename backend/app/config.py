@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "change_this_secret_key_later"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
+    SESSION_IDLE_MINUTES: int = 480
     UPSTOX_NOTIFIER_WEBHOOK_URL: str = (
         "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
     )

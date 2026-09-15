@@ -3,7 +3,7 @@ import { CheckCircle2, RefreshCcw, XCircle } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import MainLayout from "../../components/layout/MainLayout";
-import Spinner from "../../components/common/Spinner";
+import ScreenLoading from "../../components/common/ScreenLoading";
 import IconButton from "../../components/common/IconButton";
 import { useToast } from "../../components/common/ToastProvider";
 import { oaFormTextStyles } from "../../components/common/uiStyles";
@@ -95,16 +95,16 @@ function UpstoxCallback() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (pageStatus === "processing") {
+    return <ScreenLoading message="Processing authorization" />;
+  }
+
   return (
     <MainLayout>
       <section className="relative min-h-screen bg-black p-3">
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-3">
           <div className="w-full max-w-sm rounded border border-oa-border bg-black p-6 text-center shadow-2xl">
             <div className="flex justify-center">
-              {pageStatus === "processing" ? (
-                <Spinner size="lg" color="light" />
-              ) : null}
-
               {pageStatus === "success" ? (
                 <CheckCircle2 size={46} className="text-emerald-300" />
               ) : null}

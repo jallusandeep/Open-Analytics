@@ -7,6 +7,7 @@ import UserAccounts from "./pages/admin/UserAccounts";
 import Connections from "./pages/admin/Connections";
 import UpstoxCallback from "./pages/admin/UpstoxCallback";
 import Data from "./pages/admin/DataCollection";
+import ReferenceData from "./pages/admin/ReferenceData";
 import Settings from "./pages/settings/Settings";
 
 import ProtectedRoute from "./routes/ProtectedRoute";
@@ -72,6 +73,11 @@ function App() {
                 </AdminRoute>
               </ProtectedRoute>
             }
+          />
+
+          <Route
+            path="/reference-data"
+            element={<ProtectedRoute><AdminRoute><ReferenceData /></AdminRoute></ProtectedRoute>}
           />
 
           <Route

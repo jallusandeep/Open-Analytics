@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearSessionActivity, isSessionIdle } from "../utils/sessionActivity";
 
 function getDefaultApiBaseUrl() {
   const protocol = window.location.protocol === "https:" ? "https:" : "http:";
@@ -28,6 +29,7 @@ function clearOpenAnalyticsSession() {
   localStorage.removeItem("open_analytics_token");
   localStorage.removeItem("open_analytics_user");
   localStorage.removeItem("open_analytics_current_user");
+  clearSessionActivity();
 }
 
 function redirectToLogin() {
@@ -90,6 +92,7 @@ function isOpenAnalyticsAuthError(error) {
       cleanDetail.includes("invalid authentication token") ||
       cleanDetail.includes("invalid or expired token") ||
       cleanDetail.includes("token has expired") ||
+      cleanDetail.includes("session expired or logged out") ||
       cleanDetail.includes("user not found")
     );
   }
@@ -100,7 +103,11 @@ function isOpenAnalyticsAuthError(error) {
 axiosClient.interceptors.request.use((config) => {
   const token = localStorage.getItem("open_analytics_token");
 
-  if (token && isTokenExpired(token)) {
+  if (config.url?.includes("/auth/login") || config.url?.includes("/auth/forgot-password/")) {
+    return config;
+  }
+
+  if (token && (isTokenExpired(token) || isSessionIdle())) {
     clearOpenAnalyticsSession();
     redirectToLogin();
 
@@ -117,7 +124,9 @@ axiosClient.interceptors.request.use((config) => {
 axiosClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (isOpenAnalyticsAuthError(error)) {
+    const authenticatedRequest = Boolean(error.config?.headers?.Authorization);
+    const serverUnavailable = authenticatedRequest && !error.response && error.code !== "ERR_CANCELED";
+    if (isOpenAnalyticsAuthError(error) || serverUnavailable) {
       clearOpenAnalyticsSession();
       redirectToLogin();
     }

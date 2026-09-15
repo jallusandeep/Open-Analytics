@@ -3,9 +3,11 @@ import { Download } from "lucide-react";
 import axiosClient from "../../../api/axiosClient";
 import Modal from "../../../components/common/Modal";
 import Select from "../../../components/common/Select";
+import DatePicker from "../../../components/common/DatePicker";
+import IconButton from "../../../components/common/IconButton";
 import { useToast } from "../../../components/common/ToastProvider";
 
-export default function DownloadData({ activeView, companyFundamentalsEndpoint, ipoCalendarSubTab, getDownloadRows }) {
+export default function DownloadData({ activeView, ipoCalendarSubTab, getDownloadRows, disabled = false }) {
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -16,6 +18,7 @@ export default function DownloadData({ activeView, companyFundamentalsEndpoint, 
   const [end, setEnd] = useState("");
   const dataset = activeView === "ipo_calendar" && ipoCalendarSubTab === "ipo_scraper" ? "ipo_scraper" : activeView;
   async function showDialog() {
+    if (disabled || busy) return;
     setBusy(true);
     setOptions(null);
     try {
@@ -38,6 +41,7 @@ export default function DownloadData({ activeView, companyFundamentalsEndpoint, 
   }
   async function download(event) {
     event.preventDefault();
+    if (disabled || busy) return;
     setBusy(true);
     try {
       const { headers, rows } = await getDownloadRows({ dateColumn, start, end });
@@ -56,7 +60,7 @@ export default function DownloadData({ activeView, companyFundamentalsEndpoint, 
     } finally { setBusy(false); }
   }
   return <>
-    <button type="button" onClick={showDialog} disabled={busy} title="Download data" aria-label="Download data" className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-oa-border text-oa-muted hover:border-white/50 hover:text-white disabled:opacity-50"><Download size={14} /></button>
+    <IconButton icon={Download} label="Download data" onClick={showDialog} disabled={disabled || busy} tooltipSide="top" />
     <Modal open={open} title="Download Data" onClose={() => !busy && setOpen(false)} closeOnOverlay={!busy} width="max-w-md">
       <form onSubmit={download} className="oa-app-font space-y-4 text-xs text-white">
         <p className="leading-5 text-oa-muted">Download records matching the current search and selected filters across all pages (up to 100,000 rows).</p>
@@ -64,11 +68,11 @@ export default function DownloadData({ activeView, companyFundamentalsEndpoint, 
         {options?.date_columns.length > 0 ? <>
           <label className="block space-y-2"><span>Date field</span><Select value={dateColumn} onChange={(event) => setDateColumn(event.target.value)} options={options.date_columns.map((value) => ({ value, label: value.replaceAll("_", " ") }))} minWidth="w-full" disabled={busy} /></label>
           <div className="grid grid-cols-2 gap-3">
-            <label className="space-y-2"><span className="block">From (optional)</span><input type="date" value={start} max={end || undefined} disabled={busy} onChange={(event) => setStart(event.target.value)} className="h-9 w-full rounded border border-oa-border bg-black px-2 [color-scheme:dark]" /></label>
-            <label className="space-y-2"><span className="block">To (optional)</span><input type="date" value={end} min={start || undefined} disabled={busy} onChange={(event) => setEnd(event.target.value)} className="h-9 w-full rounded border border-oa-border bg-black px-2 [color-scheme:dark]" /></label>
+            <label className="space-y-2"><span className="block">From (optional)</span><DatePicker value={start} max={end || undefined} disabled={busy} onChange={(event) => setStart(event.target.value)} ariaLabel="From date" /></label>
+            <label className="space-y-2"><span className="block">To (optional)</span><DatePicker value={end} min={start || undefined} disabled={busy} onChange={(event) => setEnd(event.target.value)} ariaLabel="To date" /></label>
           </div>
         </> : null}
-        <button type="submit" disabled={busy} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-white font-semibold text-black disabled:opacity-50"><Download size={14} />{busy ? "Downloading..." : "Download"}</button>
+        <button type="submit" disabled={disabled || busy} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-white font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download size={14} />{busy ? "Downloading..." : "Download"}</button>
       </form>
     </Modal>
   </>;

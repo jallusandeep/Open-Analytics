@@ -20,6 +20,7 @@ import {
 
 import MainLayout from "../../components/layout/MainLayout";
 import Spinner from "../../components/common/Spinner";
+import ScreenLoading from "../../components/common/ScreenLoading";
 import IconButton from "../../components/common/IconButton";
 import FloatingInput from "../../components/common/FloatingInput";
 import Modal from "../../components/common/Modal";
@@ -50,21 +51,6 @@ const settingsColumns = [
   { key: "group", label: "Group" }
 ];
 
-
-const groupFilterOptions = [
-  { value: "all", label: "All Groups" },
-  { value: "profile", label: "Profile" },
-  { value: "access", label: "Access" },
-  { value: "integrations", label: "Integrations" },
-  { value: "system", label: "System" }
-];
-
-const telegramFilterOptions = [
-  { value: "all", label: "All Telegram" },
-  { value: "connected", label: "Connected" },
-  { value: "pending", label: "Pending" },
-  { value: "not_connected", label: "Not Connected" }
-];
 
 function normalizeCellValue(value) {
   if (value === null || value === undefined || value === "") {
@@ -601,14 +587,6 @@ function Settings() {
     setAppliedSearchText("");
   }
 
-  function clearGroupFilter() {
-    setGroupFilter("all");
-  }
-
-  function clearTelegramFilter() {
-    setTelegramFilter("all");
-  }
-
   function openColumnFilter(key) {
     setDraftColumnFilters((previous) => ({
       ...previous,
@@ -1072,26 +1050,6 @@ function Settings() {
                 onSearchSubmit={handleSearchSubmit}
                 searchActive={appliedSearchText.trim() !== ""}
                 searchPlaceholder="Search settings"
-                filters={[
-                  {
-                    value: groupFilter,
-                    onChange: (event) => setGroupFilter(event.target.value),
-                    options: groupFilterOptions,
-                    onClear: clearGroupFilter,
-                    showClear: groupFilter !== "all",
-                    ariaLabel: "Group filter",
-                    minWidth: "w-40"
-                  },
-                  {
-                    value: telegramFilter,
-                    onChange: (event) => setTelegramFilter(event.target.value),
-                    options: telegramFilterOptions,
-                    onClear: clearTelegramFilter,
-                    showClear: telegramFilter !== "all",
-                    ariaLabel: "Telegram filter",
-                    minWidth: "w-40"
-                  }
-                ]}
                 hasActiveFilter={hasAnyActiveFilter()}
                 onClearAll={clearAllFilters}
                 loading={loading || loadingTelegram}
@@ -1129,9 +1087,9 @@ function Settings() {
               </div>
             )}
 
-            <div className="flex flex-col gap-4 bg-black p-3">
-              <section aria-labelledby="personal-details-heading" className="min-w-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-[#0b0b0b] p-4">
-                <h3 id="personal-details-heading" className="-mx-4 -mt-4 mb-4 border-b border-zinc-700/70 bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Personal Details</h3>
+            <div className="flex flex-col bg-black">
+              <section aria-labelledby="personal-details-heading" className="min-w-0 border-b border-oa-border px-4 py-3">
+                <h3 id="personal-details-heading" className="-mx-4 -mt-3 mb-4 border-b border-oa-border bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Personal Details</h3>
                 <dl className="mt-4 divide-y divide-oa-border">
                   {filteredRows.filter((row) => row.id !== "telegram").map((row) => (
                     <div key={row.id} className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-x-4 py-3 first:pt-0 sm:grid-cols-[180px_minmax(0,1fr)]">
@@ -1140,13 +1098,13 @@ function Settings() {
                     </div>
                   ))}
                 </dl>
-                {loading && !profile ? <div role="status" className="flex items-center gap-2 py-4 text-xs text-oa-muted"><Spinner color="light" />Loading user details</div> : null}
+                {loading && !profile ? <ScreenLoading message="Loading user details" /> : null}
               </section>
-              <section aria-labelledby="brokers-heading" className="min-h-28 min-w-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-[#0b0b0b] p-4">
-                <h3 id="brokers-heading" className="-mx-4 -mt-4 mb-4 border-b border-zinc-700/70 bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Brokers</h3>
+              <section aria-labelledby="brokers-heading" className="min-h-28 min-w-0 border-b border-oa-border px-4 py-3">
+                <h3 id="brokers-heading" className="-mx-4 -mt-3 mb-4 border-b border-oa-border bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Brokers</h3>
               </section>
-              <section aria-labelledby="communications-heading" className="min-w-0 overflow-hidden rounded-lg border border-zinc-700/70 bg-[#0b0b0b] p-4">
-                <h3 id="communications-heading" className="-mx-4 -mt-4 mb-4 border-b border-zinc-700/70 bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Communications</h3>
+              <section aria-labelledby="communications-heading" className="min-w-0 px-4 py-3">
+                <h3 id="communications-heading" className="-mx-4 -mt-3 mb-4 border-b border-oa-border bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Communications</h3>
                 {filteredRows.filter((row) => row.id === "telegram").map((row) => (
                   <div key={row.id} className="mt-4 grid grid-cols-[140px_minmax(0,1fr)] items-start gap-x-4 sm:grid-cols-[180px_minmax(0,1fr)]">
                     <h4 className="flex items-center gap-2 text-xs font-semibold text-white"><Send size={14} />Telegram</h4>

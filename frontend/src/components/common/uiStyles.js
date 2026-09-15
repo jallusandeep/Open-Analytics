@@ -9,7 +9,7 @@ export const oaTableStyles = {
     "relative flex min-w-0 items-center justify-between gap-2 pl-3 pr-8",
   headerCellNoFilter:
     "relative flex min-w-0 items-center gap-2 px-3",
-  headerLabel: "min-w-0 truncate leading-none",
+  headerLabel: "whitespace-nowrap leading-none",
   dataRow:
     "grid items-center border-b border-oa-border py-2 last:border-b-0 hover:bg-oa-panel/60",
   dataText:
@@ -19,7 +19,7 @@ export const oaTableStyles = {
   emptyText: "font-mono text-xs text-oa-muted",
   actionHeader: "relative flex min-w-0 items-center justify-end px-3",
   actionHeaderLabel:
-    "min-w-0 truncate font-mono text-[11px] font-bold uppercase leading-none tracking-[0.12em] text-oa-muted",
+    "whitespace-nowrap font-mono text-[11px] font-bold uppercase leading-none tracking-[0.12em] text-oa-muted",
   actionCell: "flex min-w-0 items-center justify-end px-3"
 };
 
@@ -108,7 +108,7 @@ export const oaFilterSelectStyles = {
 export const oaSelectStyles = {
   wrapper: "relative",
   button:
-    "flex h-8 w-full items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+    "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
   buttonOpen: "border-blue-500 bg-oa-card",
   chevron: "shrink-0 text-oa-muted transition duration-150",
   chevronOpen: "rotate-180 text-sky-300",
@@ -200,7 +200,7 @@ export const oaHeaderFilterStyles = {
 
 export const oaTableFilterDropdownStyles = {
   wrapper:
-    "w-[310px] max-w-[calc(100vw-32px)] overflow-visible rounded border border-oa-border bg-black font-mono text-oa-text shadow-2xl animate-[oaMenuIn_0.14s_ease-out]",
+    "w-[310px] max-w-[calc(100vw-24px)] overflow-visible rounded border border-oa-border bg-black font-mono text-oa-text shadow-2xl",
   topSection: "py-1",
 
   actionButton:
@@ -212,9 +212,9 @@ export const oaTableFilterDropdownStyles = {
   menuButtonActive: "bg-oa-card text-white",
   menuButtonLeft: "flex items-center gap-2",
 
-  flyoutWrapper: "group relative",
+  flyoutWrapper: "relative",
   flyoutMenu:
-    "absolute top-0 z-[70] hidden overflow-hidden rounded border border-oa-border bg-black shadow-2xl group-hover:block",
+    "absolute top-0 z-[70] overflow-hidden rounded border border-oa-border bg-black shadow-2xl",
   flyoutNormal: "w-44",
   flyoutWide: "w-48",
   flyoutOption:
