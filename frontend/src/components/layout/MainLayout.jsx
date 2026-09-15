@@ -1,3 +1,4 @@
+import { referenceViews, referencePageUrl } from "../../utils/referenceNavigation";
 import { dataPageUrl } from "../../utils/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -30,6 +31,9 @@ function MainLayout({ children }) {
   const [dataSubmenu, setDataSubmenu] = useState(null);
   const [dataMenuTop, setDataMenuTop] = useState(60);
   const [dataSubmenuTop, setDataSubmenuTop] = useState(60);
+  const [referenceMenuOpen, setReferenceMenuOpen] = useState(false);
+  const [referenceMenuTop, setReferenceMenuTop] = useState(60);
+  const referenceMenuRef = useRef(null);
   const dataMenuRef = useRef(null);
   const dataSubmenuRef = useRef(null);
 
@@ -63,6 +67,32 @@ function MainLayout({ children }) {
       document.removeEventListener("keydown", closeEscape);
     };
   }, [dataMenuOpen]);
+
+  useEffect(() => {
+    function toggleReferenceMenu() {
+      const top = document.querySelector('[aria-label="Reference Data"]')?.getBoundingClientRect().top ?? 60;
+      setReferenceMenuTop(Math.max(8, Math.min(top, window.innerHeight - referenceViews.length * 36 - 16)));
+      setReferenceMenuOpen((current) => !current);
+      setDataMenuOpen(false);
+      setDataSubmenu(null);
+      if (dataPageMenuOpen) window.dispatchEvent(new Event("open-analytics:data-navigation-toggle"));
+    }
+    window.addEventListener("open-analytics:reference-navigation-toggle", toggleReferenceMenu);
+    return () => window.removeEventListener("open-analytics:reference-navigation-toggle", toggleReferenceMenu);
+  }, [dataPageMenuOpen]);
+
+  useEffect(() => {
+    if (!referenceMenuOpen) return;
+    function closeOutside(event) {
+      if (document.querySelector('[aria-label="Reference Data"]')?.contains(event.target)) return;
+      if (event.target.closest('[aria-label="Reference Data breadcrumb"]')) return;
+      if (!referenceMenuRef.current?.contains(event.target)) setReferenceMenuOpen(false);
+    }
+    function closeEscape(event) { if (event.key === "Escape") setReferenceMenuOpen(false); }
+    document.addEventListener("pointerdown", closeOutside, true);
+    document.addEventListener("keydown", closeEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside, true); document.removeEventListener("keydown", closeEscape); };
+  }, [referenceMenuOpen]);
 
   function openDataPage(view, subpage) {
     sessionStorage.setItem("open_analytics_data_target", JSON.stringify({ view, subpage }));
@@ -168,9 +198,9 @@ function MainLayout({ children }) {
   return (
     <div className="min-h-screen bg-oa-dark text-oa-text">
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-14 flex-col border-r border-oa-border bg-black">
-        <div className="flex h-9 items-center justify-center border-b border-oa-border">
-          <Tooltip text="Switch app" side="right">
-            <NavigationLink to="/apps" aria-label="Switch app" onClick={() => navigate("/apps")} className="flex h-8 w-8 items-center justify-center rounded text-oa-text transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+        <div className="flex h-12 shrink-0 items-center justify-center border-b border-oa-border">
+          <Tooltip text="Switch app" side="right" fixedSide>
+            <NavigationLink to="/apps" aria-label="Switch app" onClick={() => navigate("/apps")} className="flex h-10 w-10 items-center justify-center rounded text-oa-text transition hover:bg-oa-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
               <ChevronRight size={22} strokeWidth={2.5} />
             </NavigationLink>
           </Tooltip>
@@ -182,13 +212,15 @@ function MainLayout({ children }) {
             .map((item) => {
               const Icon = item.icon;
               const dataListOpen = item.path === "/data" && (dataMenuOpen || dataPageMenuOpen);
-              const isActive = location.pathname === item.path || dataListOpen;
+              const listOpen = dataListOpen || (item.path === "/reference-data" && referenceMenuOpen);
+              const isActive = location.pathname === item.path || listOpen;
 
               return (
-                <Tooltip key={`${item.label}-${dataListOpen}`} text={dataListOpen ? "" : item.label} side="right">
+                <Tooltip key={`${item.label}-${listOpen}`} text={listOpen ? "" : item.label} side="right" fixedSide>
                   <NavigationLink to={item.path}
                     onClick={(event) => {
                       if (item.path === "/data") {
+                        setReferenceMenuOpen(false);
                         if (location.pathname === "/data") {
                           window.dispatchEvent(new Event("open-analytics:data-navigation-toggle"));
                         } else {
@@ -196,7 +228,13 @@ function MainLayout({ children }) {
                           setDataSubmenu(null);
                           setDataMenuOpen((current) => !current);
                         }
+                      } else if (item.path === "/reference-data") {
+                        setDataMenuOpen(false); setDataSubmenu(null);
+                        if (dataPageMenuOpen) window.dispatchEvent(new Event("open-analytics:data-navigation-toggle"));
+                        setReferenceMenuTop(Math.max(8, Math.min(event.currentTarget.getBoundingClientRect().top, window.innerHeight - referenceViews.length * 36 - 16)));
+                        setReferenceMenuOpen((current) => !current);
                       } else {
+                        setReferenceMenuOpen(false);
                         navigate(item.path);
                       }
                     }}
@@ -205,7 +243,7 @@ function MainLayout({ children }) {
                     }`}
                     aria-label={item.label}
                   >
-                    {isActive && (!dataListOpen || location.pathname === "/data") && (
+                    {isActive && (!listOpen || location.pathname === item.path) && (
                       <span
                         className={`absolute left-0 h-5 w-[2px] rounded-r ${item.activeLine}`}
                       />
@@ -224,7 +262,7 @@ function MainLayout({ children }) {
         </nav>
 
         <div className="flex items-center justify-center border-t border-oa-border px-2 py-2">
-          <Tooltip text="Logout" side="right">
+          <Tooltip text="Logout" side="right" fixedSide>
             <button
               onClick={handleLogout}
               className="flex h-10 w-10 items-center justify-center rounded text-red-300 transition hover:bg-oa-card hover:text-red-200"
@@ -236,6 +274,14 @@ function MainLayout({ children }) {
         </div>
       </aside>
 
+      {referenceMenuOpen && createPortal(<nav ref={referenceMenuRef} aria-label="Reference Data tables" style={{ top: referenceMenuTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
+        {referenceViews.map((view) => {
+          const selected = location.pathname === "/reference-data" && (new URLSearchParams(location.search).get("view") || "securities") === view.value;
+          return <NavigationLink key={view.value} to={referencePageUrl(view.value)} onClick={() => { setReferenceMenuOpen(false); navigate(referencePageUrl(view.value)); }} aria-current={selected ? "page" : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] hover:text-sky-300 ${selected ? "bg-[#2b2b2b] text-sky-300" : "text-oa-muted"}`}>
+            {view.label}
+          </NavigationLink>;
+        })}
+      </nav>, document.body)}
       {dataMenuOpen && createPortal(<nav ref={dataMenuRef} aria-label="Data pages" style={{ top: dataMenuTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
         {viewOptions.map((view) => {
           const subpages = view.key === "ipo_calendar" ? ipoCalendarSubTabOptions : view.key === "company_fundamentals" ? companyFundamentalsEndpointOptions : [];

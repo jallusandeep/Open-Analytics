@@ -3,6 +3,7 @@
 # Keep this module imported through app.services.data_collection or the compatibility wrapper.
 
 from .common import *
+from app.services.security_reference import enrich_reference_from_profiles
 
 def json_dumps_for_db(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
@@ -1757,6 +1758,7 @@ def sync_upstox_company_fundamentals_service(
             and metrics["api_calls_attempted"] > 0
             and metrics["records_inserted"] == 0
         )
+        enrich_reference_from_profiles(conn)
         status_text = (
             "failed"
             if all_api_calls_failed

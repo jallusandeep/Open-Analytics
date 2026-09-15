@@ -103,7 +103,7 @@ export default function TableFilterDropdown({
   columnName,
   values = [],
   selectedValues = [],
-  pendingValues = [],
+  pendingValues,
   onChange,
   onApply,
   onCancel,
@@ -123,9 +123,7 @@ export default function TableFilterDropdown({
   const [selectedTextFilter, setSelectedTextFilter] = useState("");
   const [selectedFilterColor, setSelectedFilterColor] = useState("");
 
-  const normalizedSelectedValues = pendingValues.length
-    ? pendingValues
-    : selectedValues;
+  const normalizedSelectedValues = pendingValues ?? selectedValues;
 
   const filteredValues = useMemo(() => {
     return values.filter((item) =>

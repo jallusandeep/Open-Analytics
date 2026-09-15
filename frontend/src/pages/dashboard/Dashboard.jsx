@@ -1,3 +1,4 @@
+import { oaCardStyles } from "../../components/common/uiStyles";
 import { BarChart3 } from "lucide-react";
 
 import MainLayout from "../../components/layout/MainLayout";
@@ -89,7 +90,7 @@ function Dashboard() {
           <div className="mb-3 flex items-center justify-between">
             <div>
               <p className="text-xs text-oa-muted">Workspace</p>
-              <h3 className="text-base font-semibold">Prediction Requests</h3>
+              <h3 className={oaCardStyles.headerTitle}>Prediction Requests</h3>
             </div>
 
             <button className="h-8 rounded-lg bg-white px-3 text-xs font-semibold text-black transition hover:bg-zinc-200">

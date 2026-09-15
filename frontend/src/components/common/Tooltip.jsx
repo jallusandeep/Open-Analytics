@@ -1,7 +1,7 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-function Tooltip({ text, children, side = "top" }) {
+function Tooltip({ text, children, side = "top", fixedSide = false }) {
   const triggerRef = useRef(null);
   const tooltipRef = useRef(null);
   const tooltipId = useId();
@@ -29,7 +29,7 @@ function Tooltip({ text, children, side = "top" }) {
     const fits = (direction) => spaces[direction] >= (direction === "left" || direction === "right" ? tooltipRect.width : tooltipRect.height);
     const opposite = { top: "bottom", bottom: "top", left: "right", right: "left" };
     const directions = ["top", side, opposite[side], "bottom", "right", "left"];
-    const direction = directions.find(fits) || Object.keys(spaces).reduce((best, next) => spaces[next] > spaces[best] ? next : best, side);
+    const direction = fixedSide ? side : directions.find(fits) || Object.keys(spaces).reduce((best, next) => spaces[next] > spaces[best] ? next : best, side);
     let top = triggerRect.top + (triggerRect.height - tooltipRect.height) / 2;
     let left = triggerRect.left + (triggerRect.width - tooltipRect.width) / 2;
     if (direction === "top") top = triggerRect.top - tooltipRect.height - gap;
@@ -41,7 +41,7 @@ function Tooltip({ text, children, side = "top" }) {
       top: Math.max(screenPadding, Math.min(top, window.innerHeight - tooltipRect.height - screenPadding)),
       left: Math.max(minimumLeft, Math.min(left, window.innerWidth - tooltipRect.width - screenPadding))
     };
-  }, [side]);
+  }, [side, fixedSide]);
 
   function showTooltip() {
     if (!text) return;
