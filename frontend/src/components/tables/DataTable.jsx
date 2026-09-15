@@ -232,7 +232,7 @@ function DataTable({
 
               return (
                 <div key={column.key} className={getHeaderCellClass(column)}>
-                  <span title={column.label} className={`${oaTableStyles.headerLabel}${wrapHeaders ? " !whitespace-normal !leading-4" : ""}`}>
+                  <span  className={`${oaTableStyles.headerLabel}${wrapHeaders ? " !whitespace-normal !leading-4" : ""}`}>
                     {column.label}
                   </span>
 
@@ -274,7 +274,7 @@ function DataTable({
                     <button
                       type="button"
                       aria-label={`Resize ${column.label} column`}
-                      title="Drag to resize · Arrow keys to adjust · Double-click to reset widths"
+
                       onPointerDown={(event) => startResize(event, columns.indexOf(column) + (renderActions ? 1 : 0))}
                       onDoubleClick={() => setColumnWidths(null)}
                       onKeyDown={(event) => {
@@ -305,7 +305,7 @@ function DataTable({
                 style={gridStyle}
               >
                 {columns.map((column) => (
-                  <div key={column.key} title={typeof row[column.key] === "string" || typeof row[column.key] === "number" ? String(row[column.key]) : undefined} className={`${oaTableStyles.dataCell}${cellFormatting(row, column)}${numericCellValue(row, column) !== null ? " text-right tabular-nums" : ""}`}>
+                  <div key={column.key}  className={`${oaTableStyles.dataCell}${cellFormatting(row, column)}${numericCellValue(row, column) !== null ? " text-right tabular-nums" : ""}`}>
                     {renderDisplayCell(row, column)}
                   </div>
                 ))}

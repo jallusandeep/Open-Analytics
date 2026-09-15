@@ -70,8 +70,8 @@ function MainLayout({ children }) {
   }
 
   const savedUser =
-    localStorage.getItem("open_analytics_current_user") ||
-    localStorage.getItem("open_analytics_user");
+    sessionStorage.getItem("open_analytics_current_user") ||
+    sessionStorage.getItem("open_analytics_user");
 
   const user = savedUser ? JSON.parse(savedUser) : null;
   const isAdminUser = ["admin", "super_admin"].includes(user?.role);
@@ -80,9 +80,9 @@ function MainLayout({ children }) {
     sessionStorage.getItem("open_analytics_selected_app") === "admin";
 
   function clearOpenAnalyticsSession() {
-    localStorage.removeItem("open_analytics_token");
-    localStorage.removeItem("open_analytics_user");
-    localStorage.removeItem("open_analytics_current_user");
+    sessionStorage.removeItem("open_analytics_token");
+    sessionStorage.removeItem("open_analytics_user");
+    sessionStorage.removeItem("open_analytics_current_user");
     clearSessionActivity();
   }
 

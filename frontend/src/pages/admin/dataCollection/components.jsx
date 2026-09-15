@@ -508,7 +508,7 @@ export function ScheduleManagerModal({
               : "border-emerald-500/30 bg-emerald-950/20 text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
           }`}
           aria-label={schedule.is_active ? "Disable schedule" : "Enable schedule"}
-          title={schedule.is_active ? "Disable schedule" : "Enable schedule"}
+
         >
           {isSaving ? <Spinner size="xs" color="light" /> : <Power size={15} />}
         </button>
@@ -528,7 +528,7 @@ export function ScheduleManagerModal({
           onClick={() => onDelete(schedule)}
           className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
           aria-label="Delete schedule"
-          title="Delete schedule"
+
         >
           {isDeleting ? (
             <Spinner size="xs" color="light" />

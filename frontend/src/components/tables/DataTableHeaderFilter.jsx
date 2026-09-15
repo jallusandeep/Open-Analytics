@@ -119,7 +119,7 @@ function DataTableHeaderFilter({
         onClick={onOpen}
         className={`${oaHeaderFilterStyles.button} ${buttonStateClass}`}
         aria-label={`Filter ${column.label}`}
-        title={`Filter ${column.label}`}
+
       >
         <Filter size={10} />
 

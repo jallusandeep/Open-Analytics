@@ -7,13 +7,13 @@ import ScreenLoading from "../../components/common/ScreenLoading";
 
 const apps = [
   { name: "Trading", icon: ChartCandlestick, path: "/dashboard", description: "Markets & trading" },
-  { name: "Admin", icon: ShieldCheck, path: "/data", description: "Data & administration", admin: true },
+  { name: "Admin", icon: ShieldCheck, path: "/connections", description: "Data & administration", admin: true },
   { name: "Recon", accessKey: "recom", icon: Sparkles, description: "Under development" }
 ];
 
 export default function AppSelector() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(() => JSON.parse(localStorage.getItem("open_analytics_current_user") || "null"));
+  const [user, setUser] = useState(() => JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "null"));
   const [refreshing, setRefreshing] = useState(true);
   const [notice, setNotice] = useState("");
   useEffect(() => {
@@ -25,7 +25,7 @@ export default function AppSelector() {
         const response = await getCurrentUser();
         const latestUser = response.data.user || response.data;
         if (!active) return;
-        localStorage.setItem("open_analytics_current_user", JSON.stringify(latestUser));
+        sessionStorage.setItem("open_analytics_current_user", JSON.stringify(latestUser));
         setUser(latestUser);
       } catch {
         if (active) setUser(null);

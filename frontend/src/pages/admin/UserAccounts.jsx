@@ -144,8 +144,8 @@ function getFilterValues(rows, key) {
 function getStoredCurrentUser() {
   try {
     const currentUser =
-      localStorage.getItem("open_analytics_current_user") ||
-      localStorage.getItem("open_analytics_user");
+      sessionStorage.getItem("open_analytics_current_user") ||
+      sessionStorage.getItem("open_analytics_user");
 
     if (!currentUser) {
       return null;
@@ -734,8 +734,8 @@ function UserAccounts() {
     try {
       const response = await updateAdminUser(editUser.user_id, payload);
       if (isCurrentUser(editUser)) {
-        const stored = JSON.parse(localStorage.getItem("open_analytics_current_user") || "{}");
-        localStorage.setItem("open_analytics_current_user", JSON.stringify({ ...stored, ...response.data }));
+        const stored = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "{}");
+        sessionStorage.setItem("open_analytics_current_user", JSON.stringify({ ...stored, ...response.data }));
       }
 
       setEditUser(null);

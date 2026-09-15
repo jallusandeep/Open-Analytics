@@ -61,18 +61,23 @@ export default function ReferenceData() {
   const [data, setData] = useState({ rows: [], page: 1, total_pages: 1, total_records: 0 });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [columnFilters, setColumnFilters] = useState({});
+  const [draftColumnFilters, setDraftColumnFilters] = useState({});
+  const [activeFilter, setActiveFilter] = useState(null);
+  const [sort, setSort] = useState({ key: "trading_symbol", direction: "asc" });
+  const filters = JSON.stringify(columnFilters);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await axiosClient.get("/reference-data/equities", { params: { search: appliedSearch, page, page_size: 50 } });
+      const response = await axiosClient.get("/reference-data/equities", { params: { search: appliedSearch, page, page_size: 50, filters, sort_by: sort.key, sort_direction: sort.direction } });
       setData(response.data);
     } catch {
       showToast("Unable to load reference equities.", "error");
     } finally {
       setLoading(false);
     }
-  }, [appliedSearch, page, showToast]);
+  }, [appliedSearch, page, showToast, filters, sort]);
 
   useEffect(() => {
     const timer = window.setTimeout(load, 0);
@@ -89,7 +94,7 @@ export default function ReferenceData() {
   async function download(template = false) {
     setBusy(true);
     try {
-      const response = await axiosClient.get("/reference-data/equities/download", { params: { search: appliedSearch, template }, responseType: "blob" });
+      const response = await axiosClient.get("/reference-data/equities/download", { params: { search: appliedSearch, template, filters, sort_by: sort.key, sort_direction: sort.direction }, responseType: "blob" });
       const url = URL.createObjectURL(response.data);
       const link = document.createElement("a");
       link.href = url;
@@ -126,14 +131,23 @@ export default function ReferenceData() {
       <div className={`${oaCardStyles.wrapper} flex h-full min-h-0 flex-col`}>
         <div className={oaCardStyles.header}><h1 className={oaCardStyles.headerTitle}>Reference Data</h1></div>
         <div className="relative z-20 shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
-          <TableToolbar searchValue={search} onSearchChange={setSearch} onSearchClear={() => { setSearch(""); setAppliedSearch(""); setPage(1); }} onSearchSubmit={submitSearch} searchActive={Boolean(appliedSearch)} searchPlaceholder="Search ISIN, symbol, name, exchange, segment" loading={loading || busy} rightActions={[
+          <TableToolbar hasActiveFilter={Object.values(columnFilters).some((values) => values.length)} onClearAll={() => { setColumnFilters({}); setPage(1); setActiveFilter(null); }} searchValue={search} onSearchChange={setSearch} onSearchClear={() => { setSearch(""); setAppliedSearch(""); setPage(1); }} onSearchSubmit={submitSearch} searchActive={Boolean(appliedSearch)} searchPlaceholder="Search ISIN, symbol, name, exchange, segment" loading={loading || busy} rightActions={[
             { icon: RefreshCcw, label: "Refresh", variant: "refresh", disabled: loading || busy, onClick: load },
             { icon: Upload, label: "Upload CSV", variant: "add", disabled: loading || busy, onClick: () => fileRef.current?.click() }
           ]} trailingContent={<IconButton icon={Download} label="Download data" disabled={loading || busy || !data.total_records} onClick={() => setDownloadOpen(true)} tooltipSide="top" />} />
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference equities CSV" />
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto [&>div]:border-0">
-          <DataTable columns={COLUMNS} rows={data.rows} loading={loading} loadingMessage="Loading reference equities" emptyMessage="No equity reference data found." gridTemplateColumns="220px 180px 320px 140px 160px" minWidth="min-w-full" getRowKey={(row) => `${row.isin}:${row.exchange}:${row.segment}`} renderCell={(row, column) => row[column.key] || "--"} />
+          <DataTable columns={COLUMNS} rows={data.rows} loading={loading} loadingMessage="Loading reference equities" emptyMessage="No equity reference data found." gridTemplateColumns="220px 180px 320px 140px 160px" minWidth="min-w-full" getRowKey={(row) => `${row.isin}:${row.exchange}:${row.segment}`} renderCell={(row, column) => row[column.key] || "--"} filterConfig={{
+            activeFilter, headerValues: data.header_values || {}, columnFilters, draftColumnFilters,
+            isColumnFilterActive: (key) => Boolean(columnFilters[key]?.length),
+            onOpen: (key) => { setDraftColumnFilters((previous) => ({ ...previous, [key]: columnFilters[key] || [] })); setActiveFilter(key); },
+            onClose: () => setActiveFilter(null),
+            onChange: (key, values) => setDraftColumnFilters((previous) => ({ ...previous, [key]: values })),
+            onApply: (key) => { setColumnFilters((previous) => ({ ...previous, [key]: draftColumnFilters[key] || [] })); setPage(1); setActiveFilter(null); },
+            onClear: (key) => { setColumnFilters((previous) => ({ ...previous, [key]: [] })); setPage(1); setActiveFilter(null); },
+            onSort: (key, direction) => { setSort({ key, direction }); setPage(1); setActiveFilter(null); }
+          }} />
         </div>
         <div className="flex shrink-0 items-center justify-between border-t border-oa-border px-3 py-2 font-mono text-xs text-oa-muted">
           <span>{data.total_records.toLocaleString()} equities</span>
@@ -147,7 +161,7 @@ export default function ReferenceData() {
     </section>
     <Modal open={downloadOpen} title="Download Data" onClose={() => !busy && setDownloadOpen(false)} closeOnOverlay={!busy} width="max-w-md">
       <form onSubmit={(event) => { event.preventDefault(); download(downloadType === "template"); }} className="oa-app-font space-y-4 text-xs text-white">
-        <p className="leading-5 text-oa-muted">Download records matching the current search across all pages. Template + Data can be edited and uploaded.</p>
+        <p className="leading-5 text-oa-muted">Download records matching the current search and filters across all pages. Template + Data can be edited and uploaded.</p>
         <label className="block space-y-2"><span>Download type</span><Select value={downloadType} onChange={(event) => setDownloadType(event.target.value)} options={[{ value: "data", label: "Data only" }, { value: "template", label: "Template + Data" }]} minWidth="w-full" disabled={busy} /></label>
         <button type="submit" disabled={busy} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-white font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download size={14} />{busy ? "Downloading..." : "Download"}</button>
       </form>

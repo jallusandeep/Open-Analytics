@@ -389,7 +389,7 @@ def login_user(login_identifier: str, password: str):
         conn.close()
 
 
-def logout_user_service(user_id: str):
+def logout_user_service(user_id: str, session_id: str):
     conn = get_connection()
 
     try:
@@ -401,9 +401,10 @@ def logout_user_service(user_id: str):
                 logged_out_at = CURRENT_TIMESTAMP,
                 last_seen_at = CURRENT_TIMESTAMP
             WHERE user_id = ?
+              AND session_id = ?
               AND COALESCE(is_active, TRUE) = TRUE
             """,
-            [user_id]
+            [user_id, session_id]
         )
 
         conn.commit()

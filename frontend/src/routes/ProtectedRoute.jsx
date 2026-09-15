@@ -7,9 +7,9 @@ import ScreenLoading from "../components/common/ScreenLoading";
 import { clearSessionActivity, getSessionIdleDeadline, isSessionIdle, recordSessionActivity } from "../utils/sessionActivity";
 
 function clearOpenAnalyticsSession() {
-  localStorage.removeItem("open_analytics_token");
-  localStorage.removeItem("open_analytics_user");
-  localStorage.removeItem("open_analytics_current_user");
+  sessionStorage.removeItem("open_analytics_token");
+  sessionStorage.removeItem("open_analytics_user");
+  sessionStorage.removeItem("open_analytics_current_user");
   clearSessionActivity();
 }
 
@@ -54,13 +54,22 @@ function ProtectedRoute({ children }) {
   const location = useLocation();
   const [checking, setChecking] = useState(true);
   const [allowed, setAllowed] = useState(false);
+  const [verifiedPath, setVerifiedPath] = useState(null);
 
   useEffect(() => {
-    let logoutTimer = null;
-    let idleCheckTimer = null;
-    let heartbeatTimer = null;
-    let lastRecordedActivity = 0;
     let disposed = false;
+    let verifying = false;
+    let lastRecordedActivity = 0;
+    let expiryTimer = null;
+    const token = sessionStorage.getItem("open_analytics_token");
+
+    function logoutUser() {
+      if (disposed) return;
+      clearOpenAnalyticsSession();
+      setAllowed(false);
+      setChecking(false);
+      setVerifiedPath(location.pathname);
+    }
 
     function handleActivity() {
       const now = Date.now();
@@ -69,110 +78,67 @@ function ProtectedRoute({ children }) {
       recordSessionActivity(now);
     }
 
-    function logoutUser() {
-      clearOpenAnalyticsSession();
-      setAllowed(false);
-      setChecking(false);
-    }
-
-    function startAutoLogoutTimer(token) {
-      const expiryTime = getTokenExpiryTime(token);
-
-      if (!expiryTime) {
-        return;
-      }
-
-      const timeUntilExpiry = expiryTime - Date.now();
-
-      if (timeUntilExpiry <= 0) {
+    async function verifyUserToken(showLoader = true) {
+      if (disposed || verifying) return;
+      if (!token || sessionStorage.getItem("open_analytics_token") !== token || isTokenExpired(token) || isSessionIdle()) {
         logoutUser();
         return;
       }
-
-      logoutTimer = window.setTimeout(() => {
-        logoutUser();
-      }, timeUntilExpiry);
-    }
-
-    async function verifyUserToken() {
-      const token = localStorage.getItem("open_analytics_token");
-
-      if (!token) {
-        clearOpenAnalyticsSession();
-        setAllowed(false);
-        setChecking(false);
-        return;
-      }
-
-      if (isTokenExpired(token) || isSessionIdle()) {
-        clearOpenAnalyticsSession();
-        setAllowed(false);
-        setChecking(false);
-        return;
-      }
-
+      verifying = true;
+      if (showLoader) setChecking(true);
       try {
         const response = await getCurrentUser();
         if (disposed) return;
-        const currentUser = response.data.user || response.data;
-
-        localStorage.setItem(
-          "open_analytics_current_user",
-          JSON.stringify(currentUser)
-        );
-
-        setAllowed(true);
-        startAutoLogoutTimer(token);
-        for (const eventName of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) {
-          window.addEventListener(eventName, handleActivity, { passive: true });
+        if (sessionStorage.getItem("open_analytics_token") !== token) {
+          logoutUser();
+          return;
         }
-        idleCheckTimer = window.setInterval(() => {
-          if (Date.now() >= getSessionIdleDeadline() || isTokenExpired(token)) logoutUser();
-        }, 30000);
-        heartbeatTimer = window.setInterval(async () => {
-          if (isSessionIdle()) {
-            logoutUser();
-            return;
-          }
-          try {
-            await getCurrentUser();
-          } catch {
-            logoutUser();
-          }
-        }, 60 * 1000);
+        const currentUser = response.data.user || response.data;
+        sessionStorage.setItem("open_analytics_current_user", JSON.stringify(currentUser));
+        setAllowed(true);
+        setVerifiedPath(location.pathname);
       } catch {
-        if (disposed) return;
-        clearOpenAnalyticsSession();
-        setAllowed(false);
+        logoutUser();
       } finally {
+        verifying = false;
         if (!disposed) setChecking(false);
       }
     }
 
-    verifyUserToken();
+    function handleReturn() {
+      if (document.visibilityState === "visible") verifyUserToken();
+    }
 
+    verifyUserToken();
+    const expiryTime = token && getTokenExpiryTime(token);
+    if (expiryTime) expiryTimer = window.setTimeout(logoutUser, Math.max(0, expiryTime - Date.now()));
+    const idleTimer = window.setInterval(() => {
+      if (Date.now() >= getSessionIdleDeadline() || token && isTokenExpired(token)) logoutUser();
+    }, 30000);
+    const heartbeatTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") verifyUserToken(false);
+    }, 60000);
+    const activityEvents = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"];
+    activityEvents.forEach((name) => window.addEventListener(name, handleActivity, { passive: true }));
+    window.addEventListener("focus", handleReturn);
+    document.addEventListener("visibilitychange", handleReturn);
     return () => {
       disposed = true;
-      if (logoutTimer) {
-        window.clearTimeout(logoutTimer);
-      }
-      if (idleCheckTimer) window.clearInterval(idleCheckTimer);
-      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
-      for (const eventName of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) {
-        window.removeEventListener(eventName, handleActivity);
-      }
+      window.clearTimeout(expiryTimer);
+      window.clearInterval(idleTimer);
+      window.clearInterval(heartbeatTimer);
+      activityEvents.forEach((name) => window.removeEventListener(name, handleActivity));
+      window.removeEventListener("focus", handleReturn);
+      document.removeEventListener("visibilitychange", handleReturn);
     };
-  }, []);
+  }, [location.pathname]);
 
-  if (checking) {
+  if (checking || verifiedPath !== location.pathname) {
     return <ScreenLoading message="Authenticating" />;
   }
+  if (!allowed) return <Navigate to="/login" replace />;
 
-  if (!allowed) {
-    return <Navigate to="/login" replace />;
-  }
-
-  const user = JSON.parse(localStorage.getItem("open_analytics_current_user") || "null");
+  const user = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "null");
   const path = location.pathname;
   const app = path === "/data" || path === "/reference-data" || path.startsWith("/admin/") || path.startsWith("/connections") ? "admin" : path === "/predictions" ? "recom" : path === "/dashboard" || path.startsWith("/stocks") ? "trading" : null;
   if (app && !getAppAccess(user).includes(app)) return <Navigate to="/apps" replace />;

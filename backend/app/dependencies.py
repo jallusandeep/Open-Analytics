@@ -133,10 +133,11 @@ def get_current_user(
 
     apps = allowed_apps(role, access_restrictions)
     path = request.url.path
-    app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/connections/upstox")) else "recom" if path.startswith("/api/v1/quant-research/") else None
+    app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/reference-data/", "/api/v1/connections/upstox")) else "recom" if path.startswith("/api/v1/quant-research/") else "trading" if path.startswith("/api/v1/trading/") else None
     if app_name and app_name not in apps:
         raise HTTPException(status_code=403, detail="App access denied")
     safe_touch_session_last_seen(session[0])
+    request.state.auth_session_id = session[0]
 
     return {
         "user_id": user_id,
@@ -158,6 +159,9 @@ def require_admin_or_super_admin(current_user: dict = Depends(get_current_user))
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
+
+    if "admin" not in allowed_apps(current_user["role"], current_user.get("access_restrictions")):
+        raise HTTPException(status_code=403, detail="App access denied")
 
     return current_user
 

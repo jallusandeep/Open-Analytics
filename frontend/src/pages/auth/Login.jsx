@@ -99,15 +99,16 @@ function Login() {
         password
       });
 
-      localStorage.setItem(
+      sessionStorage.setItem(
         "open_analytics_token",
         response.data.access_token
       );
 
-      localStorage.setItem(
+      sessionStorage.setItem(
         "open_analytics_user",
         JSON.stringify(response.data)
       );
+      sessionStorage.removeItem("open_analytics_current_user");
       recordSessionActivity();
 
       sessionStorage.removeItem("open_analytics_selected_app");

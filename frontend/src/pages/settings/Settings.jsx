@@ -87,8 +87,8 @@ function formatDateTime(value) {
 function getStoredCurrentUser() {
   try {
     const currentUser =
-      localStorage.getItem("open_analytics_current_user") ||
-      localStorage.getItem("open_analytics_user");
+      sessionStorage.getItem("open_analytics_current_user") ||
+      sessionStorage.getItem("open_analytics_user");
 
     if (!currentUser) {
       return null;
@@ -463,8 +463,8 @@ function Settings() {
       return;
     }
 
-    localStorage.setItem("open_analytics_current_user", JSON.stringify(user));
-    localStorage.setItem("open_analytics_user", JSON.stringify(user));
+    sessionStorage.setItem("open_analytics_current_user", JSON.stringify(user));
+    sessionStorage.setItem("open_analytics_user", JSON.stringify(user));
   }
 
   async function loadProfile({ silent = false } = {}) {
@@ -1137,7 +1137,7 @@ function Settings() {
                     rel="noreferrer"
                     className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted"
                     aria-label="Open Telegram Link"
-                    title="Open Telegram Link"
+
                   >
                     <ExternalLink size={15} />
                   </a>

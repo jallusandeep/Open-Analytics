@@ -165,8 +165,8 @@ function normalizeCellValue(value) {
 function getStoredCurrentUser() {
   try {
     const savedUser =
-      localStorage.getItem("open_analytics_current_user") ||
-      localStorage.getItem("open_analytics_user");
+      sessionStorage.getItem("open_analytics_current_user") ||
+      sessionStorage.getItem("open_analytics_user");
 
     if (!savedUser) {
       return null;

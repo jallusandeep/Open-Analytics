@@ -3317,13 +3317,7 @@ function Data() {
       return (
         <span
           className="inline-flex w-full min-w-[92px] items-center gap-1 overflow-visible whitespace-nowrap oa-code-font"
-          title={
-            recordsAdded > 0
-              ? `${formatNumber(row.records)} saved (+${formatNumber(
-                  recordsAdded
-                )})`
-              : `${formatNumber(row.records)} saved`
-          }
+
         >
           <span className="inline-block min-w-[42px] text-right text-white">
             {savedLabel}

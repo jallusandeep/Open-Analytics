@@ -9,7 +9,7 @@ export function registerUser(payload) {
 }
 
 export function getCurrentUser() {
-  return axiosClient.get("/users/me");
+  return axiosClient.get("/users/me", { headers: { "Cache-Control": "no-cache" } });
 }
 
 export function requestForgotPasswordOtp(payload) {

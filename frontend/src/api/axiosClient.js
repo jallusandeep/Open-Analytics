@@ -26,9 +26,9 @@ function isAuthEndpoint(config) {
 }
 
 function clearOpenAnalyticsSession() {
-  localStorage.removeItem("open_analytics_token");
-  localStorage.removeItem("open_analytics_user");
-  localStorage.removeItem("open_analytics_current_user");
+  sessionStorage.removeItem("open_analytics_token");
+  sessionStorage.removeItem("open_analytics_user");
+  sessionStorage.removeItem("open_analytics_current_user");
   clearSessionActivity();
 }
 
@@ -101,7 +101,7 @@ function isOpenAnalyticsAuthError(error) {
 }
 
 axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("open_analytics_token");
+  const token = sessionStorage.getItem("open_analytics_token");
 
   if (config.url?.includes("/auth/login") || config.url?.includes("/auth/forgot-password/")) {
     return config;
