@@ -205,6 +205,7 @@ def migrate_fii_dii_activity_table(conn):
 
 from app.db.schema_identity import ensure_identity_schema
 from app.db.schema_instruments import ensure_instrument_schema
+from app.db.schema_ai import ensure_ai_schema
 from app.db.schema_legacy_data import ensure_legacy_data_schema
 from app.db.schema_fundamentals import ensure_fundamentals_schema
 from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
@@ -218,6 +219,7 @@ def init_database():
         print("[DB] Schema check started.")
         ensure_identity_schema(conn, safe_execute, pwd_context)
         ensure_instrument_schema(conn, safe_execute)
+        ensure_ai_schema(conn)
         ensure_legacy_data_schema(conn, safe_execute)
         ensure_fundamentals_schema(conn, safe_execute, migrate_fii_dii_activity_table)
         conn.commit()

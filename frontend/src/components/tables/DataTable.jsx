@@ -1,5 +1,6 @@
 import { cloneElement, isValidElement, useEffect, useRef, useState } from "react";
 import ScreenLoading from "../common/ScreenLoading";
+import Spinner from "../common/Spinner";
 import { oaTableStyles } from "../common/uiStyles";
 import DataTableHeaderFilter from "./DataTableHeaderFilter";
 
@@ -56,6 +57,8 @@ function DataTable({
   rows,
   loading = false,
   loadingMessage = "Loading",
+  loadingPlacement = "screen",
+  stateMessageMinHeight = 260,
   emptyMessage = "No records found.",
   gridTemplateColumns,
   minWidth = "min-w-full",
@@ -200,16 +203,17 @@ function DataTable({
   function renderStateMessage(type) {
     const isLoading = type === "loading";
 
-    if (isLoading) return <ScreenLoading message={loadingMessage} />;
+    if (isLoading && loadingPlacement === "screen") return <ScreenLoading message={loadingMessage} />;
 
     return (
-      <div role="status" aria-live="polite" className="sticky left-0 flex min-h-[260px] w-full max-w-full items-center justify-center px-3">
+      <div role="status" aria-live="polite" className={`${isLoading && loadingPlacement === "table" ? "absolute inset-0 z-20 bg-black/70" : "sticky left-0"} flex w-full max-w-full items-center justify-center px-3`} style={isLoading && loadingPlacement === "table" ? undefined : { minHeight: stateMessageMinHeight }}>
         <div
           className={`flex items-center justify-center gap-2 text-center ${
             isLoading ? oaTableStyles.mutedText : oaTableStyles.emptyText
           }`}
         >
-          <span>{emptyMessage}</span>
+          {isLoading && <Spinner size="sm" color="light" />}
+          <span>{isLoading ? loadingMessage : emptyMessage}</span>
         </div>
       </div>
     );
@@ -297,11 +301,11 @@ function DataTable({
             )}
           </div>
 
-          {!loading && rows.length > 0 ? (
+          {(!loading || loadingPlacement === "table") && rows.length > 0 ? (
             rows.map((row, rowIndex) => (
               <div
                 key={getRowKey ? getRowKey(row, rowIndex) : rowIndex}
-                className={`${compactDataRowClass} ${oaTableStyles.dataText}`}
+                className={`${compactDataRowClass} ${oaTableStyles.dataText}${loading && loadingPlacement === "table" ? " invisible" : ""}`}
                 style={gridStyle}
               >
                 {columns.map((column) => (
@@ -319,6 +323,7 @@ function DataTable({
             ))
           ) : null}
         </div>
+        {loading && loadingPlacement === "table" && rows.length === 0 && <div aria-hidden="true" style={{ height: stateMessageMinHeight }} />}
         {loading ? renderStateMessage("loading") : rows.length === 0 ? renderStateMessage("empty") : null}
       </div>
     </div>

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
     SESSION_IDLE_MINUTES: int = 480
+    CONNECTION_ENCRYPTION_KEY: str = Field(default="", validation_alias=AliasChoices("CONNECTION_ENCRYPTION_KEY", "ENCRYPTION_KEY"))
     UPSTOX_NOTIFIER_WEBHOOK_URL: str = (
         "https://api.openanalytics.co.in/api/v1/connections/upstox/notifier"
     )

@@ -19,6 +19,9 @@ ENV/
 *.sqlite
 *.sqlite3
 *.duckdb
+.ai-credentials.key
+.env
+*.env
 
 # Data directories (contains databases, logs, temp files)
 data/

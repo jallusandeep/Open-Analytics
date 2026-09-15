@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import MainLayout from "../../components/layout/MainLayout";
+import AiConnections from "./AiConnections";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Tooltip from "../../components/common/Tooltip";
@@ -853,7 +854,8 @@ function Connections() {
   }
 
   useEffect(() => {
-    loadConnections(false);
+    const timer = window.setTimeout(() => loadConnections(false), 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1395,6 +1397,8 @@ function Connections() {
                 rows={filteredRows}
                 loading={loading}
                 loadingMessage="Loading connections"
+                loadingPlacement="table"
+                stateMessageMinHeight={64}
                 emptyMessage="No provider connections found."
                 gridTemplateColumns={connectionGridTemplateColumns}
                 minWidth="min-w-full"
@@ -1423,6 +1427,8 @@ function Connections() {
             </div>
           </div>
         </div>
+
+        <div className="mt-3"><AiConnections allowed={isAdminControlAllowed} /></div>
 
         <ConnectionFormModal
           open={formOpen}
