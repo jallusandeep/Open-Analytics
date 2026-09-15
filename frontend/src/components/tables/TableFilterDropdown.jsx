@@ -32,30 +32,43 @@ function FlyoutSection({
   onSelect,
   flyoutDirection
 }) {
+  const [flyoutOpen, setFlyoutOpen] = useState(false);
   if (!options.length) {
     return null;
   }
 
   return (
     <div className={oaTableFilterDropdownStyles.flyoutWrapper}>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={flyoutOpen}
+        onClick={() => {
+          if (window.getSelection()?.isCollapsed !== false) setFlyoutOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setFlyoutOpen((current) => !current);
+          }
+        }}
         className={`${oaTableFilterDropdownStyles.menuButton} ${
           selectedValue
             ? oaTableFilterDropdownStyles.menuButtonActive
             : oaTableFilterDropdownStyles.menuButtonDefault
         }`}
       >
-        <span className={oaTableFilterDropdownStyles.menuButtonLeft}>
+        <span className={`${oaTableFilterDropdownStyles.menuButtonLeft} select-text`}>
           <Icon size={13} />
           {label}
           {selectedValue && <SelectedDot />}
         </span>
 
         <ChevronRight size={13} />
-      </button>
+      </div>
 
-      <div
+      {flyoutOpen ? <div
+        onClick={(event) => event.stopPropagation()}
         className={`${oaTableFilterDropdownStyles.flyoutMenu} ${flyoutDirection} ${
           label === "Text Filters"
             ? oaTableFilterDropdownStyles.flyoutWide
@@ -69,7 +82,7 @@ function FlyoutSection({
             <button
               key={option}
               type="button"
-              onClick={() => onSelect(option)}
+              onClick={() => { onSelect(option); setFlyoutOpen(false); }}
               className={`${oaTableFilterDropdownStyles.flyoutOption} ${
                 active
                   ? oaTableFilterDropdownStyles.flyoutOptionActive
@@ -81,7 +94,7 @@ function FlyoutSection({
             </button>
           );
         })}
-      </div>
+      </div> : null}
     </div>
   );
 }

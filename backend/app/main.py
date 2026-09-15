@@ -19,6 +19,7 @@ from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.connection_routes import router as connection_router
 from app.api.v1.data_collection_routes import router as data_collection_router
 from app.engines.data_quality.data_quality_routes import router as data_quality_router
+from app.api.v1.reference_data_routes import router as reference_data_router
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
     version=APP_VERSION
@@ -65,6 +66,7 @@ app.include_router(admin_router, prefix="/api/v1")
 app.include_router(connection_router, prefix="/api/v1")
 app.include_router(data_collection_router, prefix="/api/v1")
 app.include_router(data_quality_router, prefix="/api/v1")
+app.include_router(reference_data_router, prefix="/api/v1")
 from app.api.v1.data_export_routes import router as data_export_router
 app.include_router(data_export_router, prefix="/api/v1")
 

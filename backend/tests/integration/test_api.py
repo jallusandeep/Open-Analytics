@@ -43,6 +43,20 @@ def test_logout_revokes_session(api, account):
     assert api.get("/api/v1/auth/me", headers=headers).status_code == 401
 
 
+def test_inactive_session_requires_login_again(api, api_container, account):
+    token = account["access_token"]
+    code = (
+        "from app.database import get_connection; "
+        "c=get_connection(); "
+        "c.execute(\"UPDATE user_sessions SET last_seen_at = CURRENT_TIMESTAMP - INTERVAL '9 hours' WHERE access_token = ?\", ["
+        + repr(token) + "]); c.close()"
+    )
+    result = api_container.exec(["python", "-c", code])
+    assert result.exit_code == 0, result.output
+    response = api.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
 @pytest.mark.parametrize("path", ["/api/v1/auth/me", "/api/v1/admin/users", "/api/v1/data/upstox/summary"])
 def test_missing_or_invalid_authentication(api, path):
     assert api.get(path).status_code in [401, 403]

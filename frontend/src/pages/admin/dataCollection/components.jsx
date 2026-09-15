@@ -1,4 +1,5 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   ChevronLeft,
@@ -240,7 +241,7 @@ const DataDownloadContext = createContext(null);
 
 function DataTableToolbar(props) {
   const downloadOptions = useContext(DataDownloadContext);
-  return <TableToolbar {...props} trailingContent={downloadOptions ? <DownloadData {...downloadOptions} /> : null} />;
+  return <TableToolbar {...props} trailingContent={downloadOptions ? <DownloadData {...downloadOptions} disabled={props.loading || downloadOptions.hasActiveJob || !downloadOptions.isAdminControlAllowed} /> : null} />;
 }
 
 export function DataCollectionShell({
@@ -249,6 +250,10 @@ export function DataCollectionShell({
   companyFundamentalsEndpoint,
   ipoCalendarSubTab,
   onViewChange,
+  onIpoSubTabChange,
+  onCompanyEndpointChange,
+  hasActiveJob,
+  isAdminControlAllowed,
   diskSpace,
   activeJobLabel,
   activeJobStatus,
@@ -256,6 +261,60 @@ export function DataCollectionShell({
   queuedJobCount = 0,
   children
 }) {
+  const [navigationOpen, setNavigationOpen] = useState(() => {
+    const shouldOpen = sessionStorage.getItem("open_analytics_open_data_navigation") === "1";
+    sessionStorage.removeItem("open_analytics_open_data_navigation");
+    return shouldOpen;
+  });
+  const [expandedView, setExpandedView] = useState(null);
+  const [submenuTop, setSubmenuTop] = useState(60);
+  const [navigationTop, setNavigationTop] = useState(60);
+  const navigationRef = useRef(null);
+  const submenuRef = useRef(null);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("open-analytics:data-navigation-state", { detail: navigationOpen }));
+    return () => window.dispatchEvent(new CustomEvent("open-analytics:data-navigation-state", { detail: false }));
+  }, [navigationOpen]);
+  useEffect(() => {
+    function toggleNavigation() {
+      const icon = document.querySelector('button[aria-label="Data"]');
+      if (icon) setNavigationTop(icon.getBoundingClientRect().top);
+      setExpandedView(null);
+      setNavigationOpen((current) => !current);
+    }
+    window.addEventListener("open-analytics:data-navigation-toggle", toggleNavigation);
+    return () => window.removeEventListener("open-analytics:data-navigation-toggle", toggleNavigation);
+  }, []);
+  useEffect(() => {
+    if (!navigationOpen) return undefined;
+    function closeOutside(event) {
+      if (document.querySelector('button[aria-label="Data"]')?.contains(event.target)) return;
+      if (event.target.closest('[aria-label="Breadcrumb"]')) return;
+      if (!navigationRef.current?.contains(event.target) && !submenuRef.current?.contains(event.target)) {
+        setNavigationOpen(false);
+        setExpandedView(null);
+      }
+    }
+    function closeOnEscape(event) {
+      if (event.key === "Escape") {
+        setNavigationOpen(false);
+        setExpandedView(null);
+      }
+    }
+    document.addEventListener("pointerdown", closeOutside, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [navigationOpen]);
+  function chooseView(view, subpage) {
+    if (view !== activeView) onViewChange(view);
+    if (view === "ipo_calendar" && subpage) onIpoSubTabChange(subpage);
+    if (view === "company_fundamentals" && subpage) onCompanyEndpointChange(subpage);
+    setNavigationOpen(false);
+    setExpandedView(null);
+  }
   const sectionLabel = viewOptions.find((option) => option.key === activeView)?.label;
   const subpageLabel = activeView === "company_fundamentals"
     ? companyFundamentalsEndpointOptions.find((option) => option.value === companyFundamentalsEndpoint)?.label
@@ -271,24 +330,24 @@ export function DataCollectionShell({
       : "--";
 
   return (
-    <DataDownloadContext.Provider value={{ activeView, companyFundamentalsEndpoint, ipoCalendarSubTab, getDownloadRows }}>
+    <DataDownloadContext.Provider value={{ activeView, companyFundamentalsEndpoint, ipoCalendarSubTab, getDownloadRows, hasActiveJob, isAdminControlAllowed }}>
     <div
       className={`${oaCardStyles.wrapper} flex h-[calc(100vh-24px)] min-h-0 flex-col overflow-hidden`}
     >
-      <div className="shrink-0">
+      <div className="relative z-50 shrink-0">
         <div className={`${oaCardStyles.header} flex items-center justify-between gap-3`}>
           <div className="min-w-0">
-            <nav aria-label="Breadcrumb" className="font-mono text-xs text-oa-muted">
+            <nav aria-label="Breadcrumb" className="font-mono text-[13px] font-bold text-oa-muted">
               <ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {breadcrumbItems.map((label, index) => (
                   <li key={label} className="flex items-center gap-2">
                     {index > 0 ? <span aria-hidden="true">/</span> : null}
-                    <span
+                    <button type="button" onClick={() => window.dispatchEvent(new Event("open-analytics:data-navigation-toggle"))}
                       aria-current={index === breadcrumbItems.length - 1 ? "page" : undefined}
-                      className={index === 0 ? oaCardStyles.headerTitle : index === breadcrumbItems.length - 1 ? "text-white" : undefined}
+                      className={`text-left hover:text-sky-300 focus-visible:outline focus-visible:outline-sky-400 ${index === 0 ? "uppercase tracking-wider text-white" : index === breadcrumbItems.length - 1 ? "text-[11px] font-normal text-white" : ""}`}
                     >
                       {label}
-                    </span>
+                    </button>
                   </li>
                 ))}
               </ol>
@@ -322,10 +381,33 @@ export function DataCollectionShell({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 border-b border-oa-border bg-black px-3 py-1.5 md:flex-row md:items-center md:justify-between">
-          <ViewToggle activeView={activeView} onChange={onViewChange} />
-        </div>
       </div>
+      {navigationOpen ? createPortal(<nav ref={navigationRef} aria-label="Data pages" style={{ top: navigationTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
+        {viewOptions.map((view) => {
+          const subpages = view.key === "ipo_calendar" ? ipoCalendarSubTabOptions : view.key === "company_fundamentals" ? companyFundamentalsEndpointOptions : [];
+          return <div key={view.key}>
+            <button type="button" onMouseEnter={(event) => {
+              if (!subpages.length) {
+                setExpandedView(null);
+                return;
+              }
+              const menuHeight = subpages.length * 30 + 8;
+              setSubmenuTop(Math.max(8, Math.min(event.currentTarget.getBoundingClientRect().top, window.innerHeight - menuHeight - 8)));
+              setExpandedView(view.key);
+            }} onClick={(event) => {
+              if (!subpages.length) return chooseView(view.key);
+              const menuHeight = subpages.length * 30 + 8;
+              setSubmenuTop(Math.max(8, Math.min(event.currentTarget.getBoundingClientRect().top, window.innerHeight - menuHeight - 8)));
+              setExpandedView(view.key);
+            }} aria-expanded={subpages.length ? expandedView === view.key : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] ${expandedView === view.key ? "bg-[#2b2b2b] text-sky-300" : activeView === view.key ? "text-sky-300" : "text-oa-muted hover:text-sky-300"}`}>
+              {view.label}{subpages.length ? <ChevronRight size={13} className={expandedView === view.key ? "text-sky-400" : ""} /> : null}
+            </button>
+          </div>;
+        })}
+      </nav>, document.body) : null}
+      {navigationOpen && expandedView ? createPortal(<nav ref={submenuRef} aria-label={`${viewOptions.find((view) => view.key === expandedView)?.label} pages`} style={{ top: submenuTop }} className="fixed left-[312px] z-[20001] max-h-[calc(100vh-16px)] w-56 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
+        {(expandedView === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => <button key={subpage.value} type="button" onClick={() => chooseView(expandedView, subpage.value)} className={`block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] hover:bg-[#2b2b2b] ${activeView === expandedView && (expandedView === "ipo_calendar" ? ipoCalendarSubTab : companyFundamentalsEndpoint) === subpage.value ? "text-sky-300" : "text-oa-muted"}`}>{subpage.label}</button>)}
+      </nav>, document.body) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-black">
         {children}
@@ -488,9 +570,9 @@ export function ScheduleManagerModal({
             <StatusBadge status="active" label={`${schedules.length} Total`} />
           </div>
 
-          {schedules.length === 0 ? (
-            <div className="-mx-4 flex items-center justify-center gap-2 border-y border-oa-border bg-black px-4 py-3 text-center text-[12px] text-oa-muted">
-              {saving ? <Spinner size="xs" color="light" /> : null}
+          {saving || schedules.length === 0 ? (
+            <div role="status" aria-live="polite" className="-mx-4 flex items-center justify-center gap-2 border-y border-oa-border bg-black px-4 py-3 text-center text-[12px] text-oa-muted">
+              {saving ? <Spinner size="sm" color="light" /> : null}
               <span>{saving ? "Loading schedules" : "No schedules added yet."}</span>
             </div>
           ) : (
@@ -506,7 +588,7 @@ export function ScheduleManagerModal({
           resizableColumns
                 columns={scheduleColumns}
                 rows={schedules}
-                loading={saving && schedules.length === 0}
+                loading={false}
                 loadingMessage="Loading schedules"
                 emptyMessage="No schedules added yet."
                 gridTemplateColumns={scheduleGridTemplateColumns}
@@ -1496,48 +1578,15 @@ export function OhlcvTabContent({
   );
 }
 
-function DataSubpageTabs({ label, options, value, onChange }) {
-  return (
-    <nav aria-label={label} className="shrink-0 border-b border-oa-border bg-black px-3 py-2">
-      <div className="overflow-x-auto">
-      <div className="flex w-max items-center rounded-md border border-white/[0.08] bg-[#111111] p-0.5">
-        {options.map((option) => {
-          const selected = value === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => onChange(option.value)}
-              className={`relative inline-flex h-7 w-40 shrink-0 items-center justify-center whitespace-nowrap rounded px-3 text-center font-mono text-xs leading-none transition-[background-color,color,box-shadow] duration-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/70 motion-reduce:transition-none ${
-                selected
-                  ? "bg-[#eeeeee] text-black shadow-sm"
-                  : "text-oa-muted hover:bg-white/[0.06] hover:text-white after:absolute after:right-0 after:top-2 after:h-3 after:w-px after:bg-white/[0.07] last:after:hidden"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-      </div>
-    </nav>
-  );
-}
-
-export function IpoCalendarTabContent({ activeSubTab, onSubTabChange, children }) {
+export function IpoCalendarTabContent({ children }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <DataSubpageTabs label="IPO pages" options={ipoCalendarSubTabOptions} value={activeSubTab} onChange={onSubTabChange} />
-
       {children}
     </div>
   );
 }
 
 export function CompanyFundamentalsContent({
-  activeEndpoint,
-  onEndpointChange,
   previewData,
   rows,
   loading,
@@ -1573,8 +1622,6 @@ export function CompanyFundamentalsContent({
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <DataSubpageTabs label="Company fundamentals pages" options={companyFundamentalsEndpointOptions} value={activeEndpoint} onChange={onEndpointChange} />
-
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
         <DataTableToolbar
           searchValue={searchValue}

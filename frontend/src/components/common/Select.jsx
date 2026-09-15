@@ -44,13 +44,13 @@ function Select({
       }
     }
 
-    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("pointerdown", handleClickOutside, true);
     document.addEventListener("keydown", handleEscape);
     window.addEventListener("resize", handleWindowChange);
     window.addEventListener("scroll", handleWindowChange, true);
 
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("pointerdown", handleClickOutside, true);
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("resize", handleWindowChange);
       window.removeEventListener("scroll", handleWindowChange, true);
@@ -106,22 +106,31 @@ function Select({
       ref={wrapperRef}
       className={`${oaSelectStyles.wrapper} ${minWidth} ${className}`}
     >
-      <button
+      <div
         ref={buttonRef}
-        type="button"
+        role="combobox"
+        tabIndex={disabled ? -1 : 0}
         aria-label={ariaLabel}
-        disabled={disabled}
-        onClick={() => setOpen((previous) => !previous)}
+        aria-expanded={open}
+        aria-disabled={disabled}
+        onClick={() => {
+          if (!disabled && window.getSelection()?.isCollapsed !== false) setOpen((previous) => !previous);
+        }}
+        onKeyDown={(event) => {
+          if (!disabled && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            setOpen((previous) => !previous);
+          }
+        }}
         className={`${oaSelectStyles.button} ${
           open
             ? `${oaSelectStyles.buttonOpen} !border-sky-500/70 shadow-[0_0_0_1px_rgba(14,165,233,0.25)]`
             : "hover:border-sky-500/40"
         } ${
-          disabled ? "cursor-not-allowed opacity-60 hover:border-oa-border" : ""
+          disabled ? "opacity-60 hover:border-oa-border" : ""
         }`}
       >
-        <span className="truncate">{selectedOption?.label || "Select"}</span>
-
+        <span className="min-w-0 flex-1 select-text truncate">{selectedOption?.label || "Select"}</span>
         <ChevronDown
           size={12}
           className={`${oaSelectStyles.chevron} ${
@@ -132,11 +141,12 @@ function Select({
               : ""
           }`}
         />
-      </button>
+      </div>
 
       {open ? createPortal(
         <div
           ref={menuRef}
+          onClick={(event) => event.stopPropagation()}
           style={{ position: "fixed", left: menuPosition.left, top: menuPosition.top ?? "auto", bottom: menuPosition.bottom ?? "auto", width: menuPosition.width, zIndex: 20000 }}
           className={`${oaSelectStyles.menu} !border-sky-500/50 ${menuDirection === "down" ? "origin-top animate-[oaSelectDown_0.1s_ease-out]" : "origin-bottom animate-[oaMenuIn_0.1s_ease-out]"}`}
         >

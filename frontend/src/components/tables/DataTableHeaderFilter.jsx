@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Filter } from "lucide-react";
 
@@ -35,7 +35,8 @@ function DataTableHeaderFilter({
   const [position, setPosition] = useState({
     top: 0,
     left: 0,
-    flyoutAlign: align
+    flyoutAlign: align,
+    direction: "down"
   });
 
   function calculatePosition() {
@@ -45,38 +46,40 @@ function DataTableHeaderFilter({
 
     const rect = buttonRef.current.getBoundingClientRect();
 
-    let left =
-      align === "right" ? rect.right - FILTER_DROPDOWN_WIDTH : rect.left;
-
     const minLeft = FILTER_DROPDOWN_SCREEN_GAP;
-    const maxLeft =
-      window.innerWidth - FILTER_DROPDOWN_WIDTH - FILTER_DROPDOWN_SCREEN_GAP;
-
-    if (left < minLeft) {
-      left = minLeft;
-    }
-
-    if (left > maxLeft) {
-      left = Math.max(minLeft, maxLeft);
-    }
-
-    const shouldOpenFlyoutsLeft =
-      left + FILTER_DROPDOWN_WIDTH + FILTER_DROPDOWN_FLYOUT_WIDTH >
-      window.innerWidth - FILTER_DROPDOWN_SCREEN_GAP;
+    const menuWidth = Math.min(FILTER_DROPDOWN_WIDTH, window.innerWidth - minLeft * 2);
+    const roomRight = window.innerWidth - rect.left - minLeft;
+    const roomLeft = rect.right - minLeft;
+    const openLeft = roomRight < menuWidth && roomLeft > roomRight;
+    const left = Math.max(minLeft, Math.min(openLeft ? rect.right - menuWidth : rect.left, window.innerWidth - menuWidth - minLeft));
+    const menuHeight = dropdownRef.current?.getBoundingClientRect().height || 420;
+    const roomBelow = window.innerHeight - rect.bottom - FILTER_DROPDOWN_GAP - minLeft;
+    const roomAbove = rect.top - FILTER_DROPDOWN_GAP - minLeft;
+    const direction = roomBelow < menuHeight && roomAbove > roomBelow ? "up" : "down";
+    const top = direction === "up"
+      ? Math.max(minLeft, rect.top - menuHeight - FILTER_DROPDOWN_GAP)
+      : Math.max(minLeft, Math.min(rect.bottom + FILTER_DROPDOWN_GAP, window.innerHeight - menuHeight - minLeft));
+    const flyoutRoomRight = window.innerWidth - (left + menuWidth) - minLeft;
+    const flyoutRoomLeft = left - minLeft;
+    const flyoutAlign = flyoutRoomRight >= FILTER_DROPDOWN_FLYOUT_WIDTH || flyoutRoomRight >= flyoutRoomLeft
+      ? "left" : "right";
 
     setPosition({
-      top: rect.bottom + FILTER_DROPDOWN_GAP,
+      top,
       left,
-      flyoutAlign: shouldOpenFlyoutsLeft ? "right" : "left"
+      flyoutAlign,
+      direction
     });
   }
+
+  useLayoutEffect(() => {
+    if (open) calculatePosition();
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) {
       return undefined;
     }
-
-    calculatePosition();
 
     function handlePositionRefresh() {
       calculatePosition();
@@ -91,12 +94,12 @@ function DataTableHeaderFilter({
       }
     }
 
-    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("pointerdown", handleClickOutside, true);
     window.addEventListener("resize", handlePositionRefresh);
     window.addEventListener("scroll", handlePositionRefresh, true);
 
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("pointerdown", handleClickOutside, true);
       window.removeEventListener("resize", handlePositionRefresh);
       window.removeEventListener("scroll", handlePositionRefresh, true);
     };
@@ -127,7 +130,7 @@ function DataTableHeaderFilter({
         createPortal(
           <div
             ref={dropdownRef}
-            className={oaHeaderFilterStyles.portal}
+            className={`${oaHeaderFilterStyles.portal} ${position.direction === "up" ? "origin-bottom animate-[oaMenuIn_0.1s_ease-out]" : "origin-top animate-[oaSelectDown_0.1s_ease-out]"}`}
             style={{
               top: `${position.top}px`,
               left: `${position.left}px`,

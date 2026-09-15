@@ -1,5 +1,5 @@
 import { cloneElement, isValidElement, useEffect, useRef, useState } from "react";
-import Spinner from "../common/Spinner";
+import ScreenLoading from "../common/ScreenLoading";
 import { oaTableStyles } from "../common/uiStyles";
 import DataTableHeaderFilter from "./DataTableHeaderFilter";
 
@@ -49,28 +49,6 @@ function getResolvedGridTemplateColumns(gridTemplateColumns, columnCount, hasAct
     return [actionWidth, ...gridColumns].join(" ");
   }
   return `${DEFAULT_ACTION_COLUMN_WIDTH} ${gridTemplateColumns}`;
-}
-
-function getFixedGridWidth(gridTemplateColumns) {
-  const gridColumns = splitGridTemplateColumns(gridTemplateColumns);
-
-  if (gridColumns.length === 0) {
-    return null;
-  }
-
-  let totalWidth = 0;
-
-  for (const column of gridColumns) {
-    const match = column.match(/^(\d+(?:\.\d+)?)px$/);
-
-    if (!match) {
-      return null;
-    }
-
-    totalWidth += Number(match[1]);
-  }
-
-  return totalWidth;
 }
 
 function DataTable({
@@ -168,22 +146,25 @@ function DataTable({
     columns.length,
     Boolean(renderActions)
   );
-  const responsiveGridTemplateColumns = fitToViewport
-    ? splitGridTemplateColumns(resolvedGridTemplateColumns).map((column) => {
+  const gridTracks = splitGridTemplateColumns(resolvedGridTemplateColumns);
+  const visualColumns = renderActions ? [{ label: "Action", filterable: false }, ...columns] : columns;
+  const minimumWidths = visualColumns.map((column, index) => {
+    const track = gridTracks[index] || "1fr";
+    const labelWidth = Math.ceil(String(column.label).length * 8.5 + (isFilterEnabled(column) ? 64 : 36));
+    const fixedWidth = !fitToViewport && /^(\d+(?:\.\d+)?)px$/.exec(track);
+    return Math.max(80, labelWidth, fixedWidth ? Number(fixedWidth[1]) : 0);
+  });
+  const responsiveGridTemplateColumns = gridTracks
+    .map((column, index) => {
         const pixels = column.match(/^(\d+(?:\.\d+)?)px$/);
         const fraction = column.match(/^(\d+(?:\.\d+)?)fr$/);
         const weight = pixels ? Number(pixels[1]) / 160 : fraction ? Number(fraction[1]) : 1;
-        return `minmax(0, ${weight}fr)`;
-      }).join(" ")
-    : resolvedGridTemplateColumns;
-  const fixedGridWidth = resizedWidths ? resizedWidths.reduce((total, width) => total + width, 0) : fitToViewport ? null : getFixedGridWidth(resolvedGridTemplateColumns);
-  const tableWidthClass = fixedGridWidth ? "w-max" : fitToViewport ? "w-full min-w-0" : `w-full ${minWidth}`;
-  const tableSurfaceStyle = fixedGridWidth
-    ? {
-        width: `${fixedGridWidth}px`,
-        maxWidth: "none"
-      }
-    : undefined;
+        return `minmax(${minimumWidths[index] || 80}px, ${weight}fr)`;
+      }).join(" ");
+  const tableWidthClass = resizedWidths ? "w-max" : minWidth;
+  const tableSurfaceStyle = resizedWidths
+    ? { width: `${resizedWidths.reduce((total, width) => total + width, 0)}px`, maxWidth: "none" }
+    : { width: `max(100%, ${minimumWidths.reduce((total, width) => total + width, 0)}px)` };
   const gridStyle = { gridTemplateColumns: resizedWidths ? resizedWidths.map((width) => `${width}px`).join(" ") : responsiveGridTemplateColumns };
 
   function isFilterEnabled(column) {
@@ -219,6 +200,8 @@ function DataTable({
   function renderStateMessage(type) {
     const isLoading = type === "loading";
 
+    if (isLoading) return <ScreenLoading message={loadingMessage} />;
+
     return (
       <div role="status" aria-live="polite" className="sticky left-0 flex min-h-[260px] w-full max-w-full items-center justify-center px-3">
         <div
@@ -226,8 +209,7 @@ function DataTable({
             isLoading ? oaTableStyles.mutedText : oaTableStyles.emptyText
           }`}
         >
-          {isLoading && <Spinner size="sm" color="light" />}
-          <span>{isLoading ? loadingMessage : emptyMessage}</span>
+          <span>{emptyMessage}</span>
         </div>
       </div>
     );
@@ -235,7 +217,7 @@ function DataTable({
 
   return (
     <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0 !rounded-none`}>
-      <div className="min-h-0 overflow-visible !rounded-none">
+      <div className={`min-h-0 !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}`}>
         <div className={tableWidthClass} style={tableSurfaceStyle}>
           <div
             ref={headerRef}
@@ -250,7 +232,7 @@ function DataTable({
 
               return (
                 <div key={column.key} className={getHeaderCellClass(column)}>
-                  <span title={column.label} className={`${oaTableStyles.headerLabel}${wrapHeaders ? " !whitespace-normal !overflow-visible !text-clip !leading-4" : ""}`}>
+                  <span title={column.label} className={`${oaTableStyles.headerLabel}${wrapHeaders ? " !whitespace-normal !leading-4" : ""}`}>
                     {column.label}
                   </span>
 

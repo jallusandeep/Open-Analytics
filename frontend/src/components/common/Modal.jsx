@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import IconButton from "./IconButton";
 import { oaCardStyles } from "./uiStyles";
+import { LoadingScope } from "./LoadingScope";
 
 function Modal({
   open = false,
@@ -16,27 +17,36 @@ function Modal({
   showCloseButton = true,
   footer = null
 }) {
+  const [panelElement, setPanelElement] = useState(null);
+  const [retained, setRetained] = useState(open);
+  const visible = open || retained;
   useEffect(() => {
-    if (!open) {
+    const timer = window.setTimeout(() => setRetained(open), open ? 0 : 160);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!visible) {
       return undefined;
     }
 
     function handleEscape(event) {
-      if (event.key === "Escape") {
+      if (open && event.key === "Escape") {
         onClose?.();
       }
     }
 
     document.addEventListener("keydown", handleEscape);
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     return () => {
       document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
     };
-  }, [open, onClose]);
+  }, [visible, open, onClose]);
 
-  if (!open) {
+  if (!visible) {
     return null;
   }
 
@@ -47,19 +57,20 @@ function Modal({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center px-4 py-6">
+    <div data-state={open ? "open" : "closing"} className={`oa-modal-scifi fixed inset-0 z-[10000] flex items-center justify-center px-4 py-6 ${open ? "" : "pointer-events-none"}`}>
       <button
         type="button"
         aria-label="Close modal overlay"
         onClick={handleOverlayClick}
-        className="absolute inset-0 cursor-default bg-black/70 backdrop-blur-[2px] animate-[oaMenuIn_0.14s_ease-out]"
+        className="oa-modal-backdrop absolute inset-0 cursor-default bg-black/70 backdrop-blur-[2px]"
       />
 
       <div
+        ref={setPanelElement}
         role="dialog"
         aria-modal="true"
         aria-label={title || "Modal"}
-        className={`relative z-[10001] w-full ${width} overflow-visible rounded border border-oa-border bg-black text-oa-text shadow-2xl animate-[oaMenuIn_0.16s_ease-out]`}
+        className={`oa-modal-panel relative z-[10001] w-full ${width} overflow-visible rounded border border-oa-border bg-black text-oa-text shadow-2xl`}
       >
         <div className="flex min-h-[48px] items-center justify-between gap-4 rounded-t border-b border-oa-border bg-oa-panel px-4 py-2.5">
           <div className="min-w-0">
@@ -81,9 +92,11 @@ function Modal({
           )}
         </div>
 
-        <div className={`overflow-visible px-4 py-4 ${oaCardStyles.modalBody}`}>
-          {children}
-        </div>
+        <LoadingScope.Provider value={{ element: panelElement }}>
+          <div className={`overflow-visible px-4 py-4 ${oaCardStyles.modalBody}`}>
+            {children}
+          </div>
+        </LoadingScope.Provider>
 
         {footer && (
           <div className="flex items-center justify-end gap-2 rounded-b border-t border-oa-border bg-black px-4 py-3">

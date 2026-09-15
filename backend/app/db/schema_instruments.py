@@ -2,6 +2,26 @@
 
 
 def ensure_instrument_schema(conn, safe_execute):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reference_equity_details (
+            isin VARCHAR NOT NULL,
+            trading_symbol VARCHAR NOT NULL,
+            name VARCHAR,
+            exchange VARCHAR NOT NULL,
+            segment VARCHAR NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (isin, exchange, segment)
+        );
+    """)
+    conn.execute("""
+        INSERT INTO reference_equity_details (isin, trading_symbol, name, exchange, segment)
+        SELECT old.isin, old.trading_symbol, old.name, old.exchange, old.segment
+        FROM reference_equities AS old
+        WHERE NOT EXISTS (
+            SELECT 1 FROM reference_equity_details AS newer
+            WHERE newer.isin = old.isin AND newer.exchange = old.exchange AND newer.segment = old.segment
+        )
+    """) if conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'reference_equities'").fetchone()[0] else None
     # -----------------------------
     # Upstox instruments
     # -----------------------------
