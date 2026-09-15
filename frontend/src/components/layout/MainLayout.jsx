@@ -1,3 +1,4 @@
+import { dataPageUrl } from "../../utils/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -16,6 +17,7 @@ import {
 
 import axiosClient from "../../api/axiosClient";
 import Tooltip from "../common/Tooltip";
+import NavigationLink from "../common/NavigationLink";
 import { getAppAccess } from "../../utils/appAccess";
 import { clearSessionActivity } from "../../utils/sessionActivity";
 import { viewOptions, ipoCalendarSubTabOptions, companyFundamentalsEndpointOptions } from "../../pages/admin/dataCollection/constants";
@@ -42,7 +44,7 @@ function MainLayout({ children }) {
   useEffect(() => {
     if (!dataMenuOpen) return undefined;
     function closeOutside(event) {
-      if (document.querySelector('button[aria-label="Data"]')?.contains(event.target)) return;
+      if (document.querySelector('[aria-label="Data"]')?.contains(event.target)) return;
       if (!dataMenuRef.current?.contains(event.target) && !dataSubmenuRef.current?.contains(event.target)) {
         setDataMenuOpen(false);
         setDataSubmenu(null);
@@ -66,7 +68,7 @@ function MainLayout({ children }) {
     sessionStorage.setItem("open_analytics_data_target", JSON.stringify({ view, subpage }));
     setDataMenuOpen(false);
     setDataSubmenu(null);
-    navigate("/data");
+    navigate(dataPageUrl(view, subpage));
   }
 
   const savedUser =
@@ -76,8 +78,7 @@ function MainLayout({ children }) {
   const user = savedUser ? JSON.parse(savedUser) : null;
   const isAdminUser = ["admin", "super_admin"].includes(user?.role);
   const appAccess = getAppAccess(user);
-  const isAdminApp = isAdminUser &&
-    sessionStorage.getItem("open_analytics_selected_app") === "admin";
+  const isAdminApp = isAdminUser && (location.pathname === "/data" || location.pathname === "/reference-data" || location.pathname.startsWith("/connections") || location.pathname.startsWith("/admin/"));
 
   function clearOpenAnalyticsSession() {
     sessionStorage.removeItem("open_analytics_token");
@@ -169,9 +170,9 @@ function MainLayout({ children }) {
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-14 flex-col border-r border-oa-border bg-black">
         <div className="flex h-9 items-center justify-center border-b border-oa-border">
           <Tooltip text="Switch app" side="right">
-            <button type="button" aria-label="Switch app" onClick={() => navigate("/apps")} className="flex h-8 w-8 items-center justify-center rounded text-oa-text transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+            <NavigationLink to="/apps" aria-label="Switch app" onClick={() => navigate("/apps")} className="flex h-8 w-8 items-center justify-center rounded text-oa-text transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
               <ChevronRight size={22} strokeWidth={2.5} />
-            </button>
+            </NavigationLink>
           </Tooltip>
         </div>
 
@@ -185,7 +186,7 @@ function MainLayout({ children }) {
 
               return (
                 <Tooltip key={`${item.label}-${dataListOpen}`} text={dataListOpen ? "" : item.label} side="right">
-                  <button
+                  <NavigationLink to={item.path}
                     onClick={(event) => {
                       if (item.path === "/data") {
                         if (location.pathname === "/data") {
@@ -216,7 +217,7 @@ function MainLayout({ children }) {
                         isActive ? "opacity-100" : "opacity-85"
                       }`}
                     />
-                  </button>
+                  </NavigationLink>
                 </Tooltip>
               );
             })}
@@ -238,7 +239,7 @@ function MainLayout({ children }) {
       {dataMenuOpen && createPortal(<nav ref={dataMenuRef} aria-label="Data pages" style={{ top: dataMenuTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
         {viewOptions.map((view) => {
           const subpages = view.key === "ipo_calendar" ? ipoCalendarSubTabOptions : view.key === "company_fundamentals" ? companyFundamentalsEndpointOptions : [];
-          return <button key={view.key} type="button" onMouseEnter={(event) => {
+          return <NavigationLink to={dataPageUrl(view.key)} key={view.key} onMouseEnter={(event) => {
             if (!subpages.length) {
               setDataSubmenu(null);
               return;
@@ -251,11 +252,11 @@ function MainLayout({ children }) {
             setDataSubmenu(view.key);
           }} aria-expanded={subpages.length ? dataSubmenu === view.key : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] hover:text-sky-300 ${dataSubmenu === view.key ? "bg-[#2b2b2b] text-sky-300" : "text-oa-muted"}`}>
             {view.label}{subpages.length ? <ChevronRight size={13} className={dataSubmenu === view.key ? "text-sky-400" : ""} /> : null}
-          </button>;
+          </NavigationLink>;
         })}
       </nav>, document.body)}
       {dataMenuOpen && dataSubmenu && createPortal(<nav ref={dataSubmenuRef} aria-label="Data subpages" style={{ top: dataSubmenuTop }} className="fixed left-[312px] z-[20001] max-h-[calc(100vh-16px)] w-56 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
-        {(dataSubmenu === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => <button key={subpage.value} type="button" onClick={() => openDataPage(dataSubmenu, subpage.value)} className="block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] text-oa-muted hover:bg-white/10 hover:text-white">{subpage.label}</button>)}
+        {(dataSubmenu === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => <NavigationLink to={dataPageUrl(dataSubmenu, subpage.value)} key={subpage.value} onClick={() => openDataPage(dataSubmenu, subpage.value)} className="block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] text-oa-muted hover:bg-white/10 hover:text-white">{subpage.label}</NavigationLink>)}
       </nav>, document.body)}
 
       <main className="min-h-screen pl-14">{children}</main>

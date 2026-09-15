@@ -151,7 +151,8 @@ import {
 
 function Data() {
   const [initialTarget] = useState(() => {
-    const saved = sessionStorage.getItem("open_analytics_data_target");
+    const params = new URLSearchParams(window.location.search);
+    const saved = params.has("view") ? JSON.stringify({ view: params.get("view"), subpage: params.get("subpage") }) : sessionStorage.getItem("open_analytics_data_target");
     sessionStorage.removeItem("open_analytics_data_target");
     try {
       const target = JSON.parse(saved);

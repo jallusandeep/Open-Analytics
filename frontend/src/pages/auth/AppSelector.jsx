@@ -1,9 +1,9 @@
 import { ChartCandlestick, ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getAppAccess } from "../../utils/appAccess";
-import { useEffect, useState } from "react";
-import { getCurrentUser } from "../../api/authApi";
-import ScreenLoading from "../../components/common/ScreenLoading";
+import { useState } from "react";
+import NavigationLink from "../../components/common/NavigationLink";
+
 
 const apps = [
   { name: "Trading", icon: ChartCandlestick, path: "/dashboard", description: "Markets & trading" },
@@ -13,30 +13,8 @@ const apps = [
 
 export default function AppSelector() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(() => JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "null"));
-  const [refreshing, setRefreshing] = useState(true);
+  const user = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "null");
   const [notice, setNotice] = useState("");
-  useEffect(() => {
-    let active = true;
-    async function refreshAccess() {
-      if (!active) return;
-      setRefreshing(true);
-      try {
-        const response = await getCurrentUser();
-        const latestUser = response.data.user || response.data;
-        if (!active) return;
-        sessionStorage.setItem("open_analytics_current_user", JSON.stringify(latestUser));
-        setUser(latestUser);
-      } catch {
-        if (active) setUser(null);
-      } finally {
-        if (active) setRefreshing(false);
-      }
-    }
-    refreshAccess();
-    window.addEventListener("focus", refreshAccess);
-    return () => { active = false; window.removeEventListener("focus", refreshAccess); };
-  }, []);
   const access = getAppAccess(user);
 
   return (
@@ -47,11 +25,11 @@ export default function AppSelector() {
       </header>
       <main className="flex flex-1 flex-col items-center justify-center px-6 pb-24 pt-8 sm:pb-48">
         <div aria-label="Choose your app" className="flex flex-wrap justify-center gap-7 sm:gap-10">
-          {apps.filter((app) => !refreshing && access.includes(app.accessKey || app.name.toLowerCase())).map(({ name, icon: Icon, path, description }) => {
+          {apps.filter((app) => access.includes(app.accessKey || app.name.toLowerCase())).map(({ name, icon: Icon, path, description }) => {
+            const AppControl = path ? NavigationLink : "button";
             return (
-              <button
+              <AppControl to={path}
                 key={name}
-                type="button"
                 onClick={() => {
                   if (name === "Recon") {
                     setNotice("Recon is still under development.");
@@ -69,12 +47,12 @@ export default function AppSelector() {
                   <h2 className="mt-4 text-sm font-semibold text-zinc-300 transition-colors group-hover:text-white">{name}</h2>
                   <p className="mt-2 text-[11px] leading-4 text-zinc-500">{description}</p>
                 </div>
-              </button>
+              </AppControl>
             );
           })}
         </div>
         {notice && <p role="status" className="mt-6 text-sm text-zinc-400">{notice}</p>}
-        {refreshing ? <ScreenLoading message="Loading apps" /> : !access.length ? <p className="text-sm text-zinc-400">No apps are enabled. Contact your administrator.</p> : null}
+        {!access.length ? <p className="text-sm text-zinc-400">No apps are enabled. Contact your administrator.</p> : null}
       </main>
     </div>
   );

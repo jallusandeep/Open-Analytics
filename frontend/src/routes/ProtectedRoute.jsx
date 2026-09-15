@@ -50,11 +50,12 @@ function isTokenExpired(token) {
   return Date.now() >= expiryTime;
 }
 
+let authenticatedToken = null;
+
 function ProtectedRoute({ children }) {
   const location = useLocation();
-  const [checking, setChecking] = useState(true);
-  const [allowed, setAllowed] = useState(false);
-  const [verifiedPath, setVerifiedPath] = useState(null);
+  const [checking, setChecking] = useState(() => !authenticatedToken || authenticatedToken !== sessionStorage.getItem("open_analytics_token"));
+  const [allowed, setAllowed] = useState(() => Boolean(authenticatedToken && authenticatedToken === sessionStorage.getItem("open_analytics_token")));
 
   useEffect(() => {
     let disposed = false;
@@ -65,10 +66,11 @@ function ProtectedRoute({ children }) {
 
     function logoutUser() {
       if (disposed) return;
+      authenticatedToken = null;
       clearOpenAnalyticsSession();
       setAllowed(false);
       setChecking(false);
-      setVerifiedPath(location.pathname);
+
     }
 
     function handleActivity() {
@@ -78,14 +80,19 @@ function ProtectedRoute({ children }) {
       recordSessionActivity(now);
     }
 
-    async function verifyUserToken(showLoader = true) {
+    async function verifyUserToken() {
       if (disposed || verifying) return;
       if (!token || sessionStorage.getItem("open_analytics_token") !== token || isTokenExpired(token) || isSessionIdle()) {
         logoutUser();
         return;
       }
+      if (authenticatedToken === token) {
+        setAllowed(true);
+        setChecking(false);
+        return;
+      }
       verifying = true;
-      if (showLoader) setChecking(true);
+      setChecking(true);
       try {
         const response = await getCurrentUser();
         if (disposed) return;
@@ -95,8 +102,9 @@ function ProtectedRoute({ children }) {
         }
         const currentUser = response.data.user || response.data;
         sessionStorage.setItem("open_analytics_current_user", JSON.stringify(currentUser));
+        authenticatedToken = token;
         setAllowed(true);
-        setVerifiedPath(location.pathname);
+
       } catch {
         logoutUser();
       } finally {
@@ -105,35 +113,23 @@ function ProtectedRoute({ children }) {
       }
     }
 
-    function handleReturn() {
-      if (document.visibilityState === "visible") verifyUserToken();
-    }
-
     verifyUserToken();
     const expiryTime = token && getTokenExpiryTime(token);
     if (expiryTime) expiryTimer = window.setTimeout(logoutUser, Math.max(0, expiryTime - Date.now()));
     const idleTimer = window.setInterval(() => {
       if (Date.now() >= getSessionIdleDeadline() || token && isTokenExpired(token)) logoutUser();
     }, 30000);
-    const heartbeatTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") verifyUserToken(false);
-    }, 60000);
     const activityEvents = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"];
     activityEvents.forEach((name) => window.addEventListener(name, handleActivity, { passive: true }));
-    window.addEventListener("focus", handleReturn);
-    document.addEventListener("visibilitychange", handleReturn);
     return () => {
       disposed = true;
       window.clearTimeout(expiryTimer);
       window.clearInterval(idleTimer);
-      window.clearInterval(heartbeatTimer);
       activityEvents.forEach((name) => window.removeEventListener(name, handleActivity));
-      window.removeEventListener("focus", handleReturn);
-      document.removeEventListener("visibilitychange", handleReturn);
     };
-  }, [location.pathname]);
+  }, []);
 
-  if (checking || verifiedPath !== location.pathname) {
+  if (checking) {
     return <ScreenLoading message="Authenticating" />;
   }
   if (!allowed) return <Navigate to="/login" replace />;
