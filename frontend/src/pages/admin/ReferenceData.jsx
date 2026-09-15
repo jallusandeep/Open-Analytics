@@ -5,8 +5,11 @@ import axiosClient from "../../api/axiosClient";
 import MainLayout from "../../components/layout/MainLayout";
 import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
+import Modal from "../../components/common/Modal";
+import Select from "../../components/common/Select";
+import IconButton from "../../components/common/IconButton";
 import { useToast } from "../../components/common/ToastProvider";
-import { oaCardStyles, oaIconButtonStyles, oaSelectStyles } from "../../components/common/uiStyles";
+import { oaCardStyles } from "../../components/common/uiStyles";
 
 const COLUMNS = [
   { key: "isin", label: "ISIN" },
@@ -50,8 +53,8 @@ function parseCsv(content) {
 export default function ReferenceData() {
   const { showToast } = useToast();
   const fileRef = useRef(null);
-  const downloadRef = useRef(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [downloadType, setDownloadType] = useState("data");
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -76,21 +79,6 @@ export default function ReferenceData() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  useEffect(() => {
-    if (!downloadOpen) return undefined;
-    function close(event) {
-      if (!downloadRef.current?.contains(event.target)) setDownloadOpen(false);
-    }
-    function closeOnEscape(event) {
-      if (event.key === "Escape") setDownloadOpen(false);
-    }
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [downloadOpen]);
 
   function submitSearch(event) {
     event.preventDefault();
@@ -110,6 +98,7 @@ export default function ReferenceData() {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setDownloadOpen(false);
     } catch {
       showToast("Unable to download reference equities.", "error");
     } finally { setBusy(false); }
@@ -133,22 +122,14 @@ export default function ReferenceData() {
   }
 
   return <MainLayout>
-    <section className="oa-app-font h-[calc(100vh-24px)] min-h-0 bg-black p-3">
+    <section className="oa-app-font h-screen min-h-0 overflow-hidden bg-black p-3">
       <div className={`${oaCardStyles.wrapper} flex h-full min-h-0 flex-col`}>
         <div className={oaCardStyles.header}><h1 className={oaCardStyles.headerTitle}>Reference Data</h1></div>
         <div className="relative z-20 shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
           <TableToolbar searchValue={search} onSearchChange={setSearch} onSearchClear={() => { setSearch(""); setAppliedSearch(""); setPage(1); }} onSearchSubmit={submitSearch} searchActive={Boolean(appliedSearch)} searchPlaceholder="Search ISIN, symbol, name, exchange, segment" loading={loading || busy} rightActions={[
             { icon: RefreshCcw, label: "Refresh", variant: "refresh", disabled: loading || busy, onClick: load },
             { icon: Upload, label: "Upload CSV", variant: "add", disabled: loading || busy, onClick: () => fileRef.current?.click() }
-          ]} trailingContent={<div ref={downloadRef} className="relative">
-            <button type="button" disabled={loading || busy || !data.total_records} onClick={() => setDownloadOpen((open) => !open)} aria-expanded={downloadOpen} aria-haspopup="menu" aria-label="Download options" title="Download options" className={`${oaIconButtonStyles.base} ${downloadOpen ? oaIconButtonStyles.variantActive.default : oaIconButtonStyles.variantButton.default}`}>
-              <Download size={14} className={oaIconButtonStyles.variantIcon.default} />
-            </button>
-            {downloadOpen && <div role="menu" aria-label="Download options" className={`${oaSelectStyles.menu} !absolute !left-auto !right-0 !top-8 z-50 !w-48 origin-top-right !border-sky-500/50 animate-[oaSelectDown_0.1s_ease-out]`}>
-              <button role="menuitem" type="button" onClick={() => { setDownloadOpen(false); download(false); }} className={`${oaSelectStyles.option} ${oaSelectStyles.optionDefault}`}>Data only</button>
-              <button role="menuitem" type="button" onClick={() => { setDownloadOpen(false); download(true); }} className={`${oaSelectStyles.option} ${oaSelectStyles.optionDefault}`}>Template + Data</button>
-            </div>}
-          </div>} />
+          ]} trailingContent={<IconButton icon={Download} label="Download data" disabled={loading || busy || !data.total_records} onClick={() => setDownloadOpen(true)} tooltipSide="top" />} />
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference equities CSV" />
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto [&>div]:border-0">
@@ -164,5 +145,12 @@ export default function ReferenceData() {
         </div>
       </div>
     </section>
+    <Modal open={downloadOpen} title="Download Data" onClose={() => !busy && setDownloadOpen(false)} closeOnOverlay={!busy} width="max-w-md">
+      <form onSubmit={(event) => { event.preventDefault(); download(downloadType === "template"); }} className="oa-app-font space-y-4 text-xs text-white">
+        <p className="leading-5 text-oa-muted">Download records matching the current search across all pages. Template + Data can be edited and uploaded.</p>
+        <label className="block space-y-2"><span>Download type</span><Select value={downloadType} onChange={(event) => setDownloadType(event.target.value)} options={[{ value: "data", label: "Data only" }, { value: "template", label: "Template + Data" }]} minWidth="w-full" disabled={busy} /></label>
+        <button type="submit" disabled={busy} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-white font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download size={14} />{busy ? "Downloading..." : "Download"}</button>
+      </form>
+    </Modal>
   </MainLayout>;
 }

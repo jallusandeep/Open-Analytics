@@ -55,6 +55,27 @@ textarea {
 }
 
 /* Global menu / popup animation */
+.oa-modal-panel { animation: oaModalReveal 220ms ease-in-out backwards; }
+.oa-modal-backdrop { animation: oaModalFade 220ms ease-out both; }
+.oa-modal-scifi[data-state="closing"] .oa-modal-panel { animation: oaModalCollapse 150ms ease-in both; }
+.oa-modal-scifi[data-state="closing"] .oa-modal-backdrop { animation: oaModalFade 150ms ease-in reverse both; }
+@keyframes oaModalReveal {
+  0% { opacity: 0; clip-path: inset(50% 50%); transform: scale(.98); }
+  12% { opacity: 1; clip-path: inset(calc(50% - 2px) calc(50% - 2px)); }
+  40% { opacity: 1; clip-path: inset(calc(50% - 2px) 0); }
+  100% { opacity: 1; clip-path: inset(-8px); transform: scale(1); }
+}
+@keyframes oaModalCollapse {
+  0% { opacity: 1; clip-path: inset(-8px); transform: scale(1); }
+  65% { opacity: 1; clip-path: inset(calc(50% - 2px) 0); }
+  90% { opacity: 1; clip-path: inset(calc(50% - 2px) calc(50% - 2px)); }
+  100% { opacity: 0; clip-path: inset(50%); transform: scale(.98); }
+}
+@keyframes oaModalFade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .oa-modal-panel, .oa-modal-backdrop { animation-duration: 1ms !important; }
+}
+
 @keyframes oaMenuIn {
   from {
     opacity: 0;
