@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 
 import Spinner from "../../../components/common/Spinner";
-import ScreenLoading from "../../../components/common/ScreenLoading";
 import DownloadData from "./DownloadData";
 import IconButton from "../../../components/common/IconButton";
 import Input from "../../../components/common/Input";
@@ -571,10 +570,10 @@ export function ScheduleManagerModal({
             <StatusBadge status="active" label={`${schedules.length} Total`} />
           </div>
 
-          {schedules.length === 0 ? (
-            <div className="-mx-4 flex items-center justify-center gap-2 border-y border-oa-border bg-black px-4 py-3 text-center text-[12px] text-oa-muted">
-              {saving ? <ScreenLoading message="Loading schedules" /> : null}
-              <span>{saving ? "" : "No schedules added yet."}</span>
+          {saving || schedules.length === 0 ? (
+            <div role="status" aria-live="polite" className="-mx-4 flex items-center justify-center gap-2 border-y border-oa-border bg-black px-4 py-3 text-center text-[12px] text-oa-muted">
+              {saving ? <Spinner size="sm" color="light" /> : null}
+              <span>{saving ? "Loading schedules" : "No schedules added yet."}</span>
             </div>
           ) : (
             <div
@@ -589,7 +588,7 @@ export function ScheduleManagerModal({
           resizableColumns
                 columns={scheduleColumns}
                 rows={schedules}
-                loading={saving && schedules.length === 0}
+                loading={false}
                 loadingMessage="Loading schedules"
                 emptyMessage="No schedules added yet."
                 gridTemplateColumns={scheduleGridTemplateColumns}

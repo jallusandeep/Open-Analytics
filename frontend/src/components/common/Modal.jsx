@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 
 import IconButton from "./IconButton";
 import { oaCardStyles } from "./uiStyles";
+import { LoadingScope } from "./LoadingScope";
 
 function Modal({
   open = false,
@@ -16,6 +17,7 @@ function Modal({
   showCloseButton = true,
   footer = null
 }) {
+  const [panelElement, setPanelElement] = useState(null);
   const [retained, setRetained] = useState(open);
   const visible = open || retained;
   useEffect(() => {
@@ -64,6 +66,7 @@ function Modal({
       />
 
       <div
+        ref={setPanelElement}
         role="dialog"
         aria-modal="true"
         aria-label={title || "Modal"}
@@ -89,9 +92,11 @@ function Modal({
           )}
         </div>
 
-        <div className={`overflow-visible px-4 py-4 ${oaCardStyles.modalBody}`}>
-          {children}
-        </div>
+        <LoadingScope.Provider value={{ element: panelElement }}>
+          <div className={`overflow-visible px-4 py-4 ${oaCardStyles.modalBody}`}>
+            {children}
+          </div>
+        </LoadingScope.Provider>
 
         {footer && (
           <div className="flex items-center justify-end gap-2 rounded-b border-t border-oa-border bg-black px-4 py-3">
