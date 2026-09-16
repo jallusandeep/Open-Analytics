@@ -49,9 +49,9 @@ def test_one_isin_two_listings_and_derivative_link(db):
     instrument(db, 'BSE', 'ETF', 'ETF', 'INE009A01021')
     db.execute("INSERT INTO upstox_instruments (instrument_key, instrument_type, underlying_key, expiry) VALUES ('NSE_FO|123', 'FUT', ?, DATE '2099-01-01')", [key])
     counts = sync_reference(db)
-    assert counts['securities'] == 1 and counts['listings'] == 2
-    assert db.execute('SELECT listing_count, primary_exchange, is_cross_listed, futures_available, options_available FROM security_reference').fetchone() == (2, 'NSE', True, True, False)
-    assert db.execute('SELECT COUNT(*) FROM security_listing_reference WHERE is_primary_listing').fetchone()[0] == 1
+    assert counts['securities'] == 2 and counts['listings'] == 3
+    assert db.execute('SELECT listing_count, primary_exchange, is_cross_listed, futures_available, options_available FROM security_reference WHERE isin=?', [ISIN]).fetchone() == (2, 'NSE', True, True, False)
+    assert db.execute('SELECT COUNT(*) FROM security_listing_reference WHERE is_primary_listing').fetchone()[0] == 2
     assert sync_reference(db)['updated'] == 0
 
 

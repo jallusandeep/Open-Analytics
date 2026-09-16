@@ -80,14 +80,6 @@ const providerOptions = [
   }))
 ];
 
-const providerFilterOptions = [
-  { value: "all", label: "All Providers" },
-  ...brokers.map((broker) => ({
-    value: broker.id,
-    label: broker.name
-  }))
-];
-
 const statusFilterOptions = [
   { value: "all", label: "All Status" },
   { value: "connected", label: "Connected" },
@@ -599,7 +591,6 @@ function Connections() {
 
   const [searchValue, setSearchValue] = useState("");
   const [appliedSearchValue, setAppliedSearchValue] = useState("");
-  const [providerFilter, setProviderFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
   const [columnFilters, setColumnFilters] = useState({});
@@ -684,10 +675,6 @@ function Connections() {
       });
     }
 
-    if (providerFilter !== "all") {
-      result = result.filter((row) => row.provider_id === providerFilter);
-    }
-
     if (statusFilter !== "all") {
       result = result.filter((row) => row.status === statusFilter);
     }
@@ -729,7 +716,6 @@ function Connections() {
   }, [
     rows,
     appliedSearchValue,
-    providerFilter,
     statusFilter,
     columnFilters,
     sortConfig
@@ -748,7 +734,6 @@ function Connections() {
   function hasAnyActiveFilter() {
     return (
       appliedSearchValue.trim() !== "" ||
-      providerFilter !== "all" ||
       statusFilter !== "all" ||
       sortConfig.key !== null ||
       Object.values(columnFilters).some(
@@ -760,7 +745,6 @@ function Connections() {
   function clearAllFilters() {
     setSearchValue("");
     setAppliedSearchValue("");
-    setProviderFilter("all");
     setStatusFilter("all");
     setColumnFilters({});
     setDraftColumnFilters({});
@@ -774,10 +758,6 @@ function Connections() {
   function clearSearchFilter() {
     setSearchValue("");
     setAppliedSearchValue("");
-  }
-
-  function clearProviderFilter() {
-    setProviderFilter("all");
   }
 
   function clearStatusFilter() {
@@ -859,9 +839,9 @@ function Connections() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function openAddForm() {
+  function openAddForm(provider = "") {
     setFormMode("add");
-    setFormData(emptyFormData);
+    setFormData({ ...emptyFormData, provider });
   }
 
   function openEditForm(provider) {
@@ -1314,6 +1294,73 @@ function Connections() {
     );
   }
 
+  function renderConnectionTable(title, providerId, emptyMessage) {
+    return (
+      <div className={oaCardStyles.wrapper}>
+        <div className={oaCardStyles.header}>
+          <h2 className={oaCardStyles.headerTitle}>{title}</h2>
+        </div>
+        <div className="relative z-20 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
+          <TableToolbar
+            searchValue={searchValue}
+            onSearchChange={setSearchValue}
+            onSearchClear={clearSearchFilter}
+            onSearchSubmit={handleSearchSubmit}
+            searchActive={appliedSearchValue.trim() !== ""}
+            searchPlaceholder={`Search ${title.toLowerCase()}`}
+            filters={[{
+              value: statusFilter,
+              onChange: (event) => setStatusFilter(event.target.value),
+              options: statusFilterOptions,
+              onClear: clearStatusFilter,
+              showClear: statusFilter !== "all",
+              ariaLabel: "Status filter",
+              minWidth: "w-40"
+            }]}
+            hasActiveFilter={hasAnyActiveFilter()}
+            onClearAll={clearAllFilters}
+            loading={loading}
+            rightActions={[
+              { icon: RefreshCcw, label: `Refresh ${title.toLowerCase()}`, variant: "refresh", disabled: loading, onClick: () => loadConnections(true) },
+              { icon: Plus, label: `Add ${providerId} connection`, variant: "add", disabled: !isAdminControlAllowed, onClick: () => openAddForm(providerId) }
+            ]}
+          />
+        </div>
+        <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+          <DataTable
+            columns={connectionColumns}
+            rows={filteredRows.filter((row) => row.provider_id === providerId)}
+            loading={loading}
+            loadingMessage={`Loading ${title.toLowerCase()}`}
+            loadingPlacement="table"
+            stateMessageMinHeight={64}
+            emptyMessage={emptyMessage}
+            gridTemplateColumns={connectionGridTemplateColumns}
+            minWidth="min-w-full"
+            getRowKey={(row) => row.id}
+            renderCell={renderCell}
+            renderActions={renderActions}
+            filterConfig={{
+              activeFilter,
+              headerValues,
+              columnFilters,
+              draftColumnFilters,
+              rightAlignedKeys: ["status", "updated_at", "token_expiry"],
+              isColumnFilterActive,
+              onOpen: openColumnFilter,
+              onClose: () => setActiveFilter(null),
+              onChange: (key, values) =>
+                setDraftColumnFilters((previous) => ({ ...previous, [key]: values })),
+              onApply: applyColumnFilter,
+              onSort: handleSort,
+              onClear: clearColumnFilter
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <MainLayout>
       <section className="min-h-screen bg-black p-3">
@@ -1336,96 +1383,8 @@ function Connections() {
             </div>
           )}
 
-          <div className={oaCardStyles.wrapper}>
-            <div className={oaCardStyles.header}>
-              <h2 className={oaCardStyles.headerTitle}>Connections</h2>
-            </div>
-
-            <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-              <TableToolbar
-                searchValue={searchValue}
-                onSearchChange={setSearchValue}
-                onSearchClear={clearSearchFilter}
-                onSearchSubmit={handleSearchSubmit}
-                searchActive={appliedSearchValue.trim() !== ""}
-                searchPlaceholder="Search connections"
-                filters={[
-                  {
-                    value: providerFilter,
-                    onChange: (event) => setProviderFilter(event.target.value),
-                    options: providerFilterOptions,
-                    onClear: clearProviderFilter,
-                    showClear: providerFilter !== "all",
-                    ariaLabel: "Provider filter",
-                    minWidth: "w-40"
-                  },
-                  {
-                    value: statusFilter,
-                    onChange: (event) => setStatusFilter(event.target.value),
-                    options: statusFilterOptions,
-                    onClear: clearStatusFilter,
-                    showClear: statusFilter !== "all",
-                    ariaLabel: "Status filter",
-                    minWidth: "w-40"
-                  }
-                ]}
-                hasActiveFilter={hasAnyActiveFilter()}
-                onClearAll={clearAllFilters}
-                loading={loading}
-                rightActions={[
-                  {
-                    icon: RefreshCcw,
-                    label: "Refresh",
-                    variant: "refresh",
-                    disabled: loading,
-                    onClick: () => loadConnections(true)
-                  },
-                  {
-                    icon: Plus,
-                    label: "Add connection",
-                    variant: "add",
-                    disabled: !isAdminControlAllowed,
-                    onClick: openAddForm
-                  }
-                ]}
-              />
-            </div>
-
-            <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-              <DataTable
-                columns={connectionColumns}
-                rows={filteredRows}
-                loading={loading}
-                loadingMessage="Loading connections"
-                loadingPlacement="table"
-                stateMessageMinHeight={64}
-                emptyMessage="No provider connections found."
-                gridTemplateColumns={connectionGridTemplateColumns}
-                minWidth="min-w-full"
-                getRowKey={(row) => row.id}
-                renderCell={renderCell}
-                renderActions={renderActions}
-                filterConfig={{
-                  activeFilter,
-                  headerValues,
-                  columnFilters,
-                  draftColumnFilters,
-                  rightAlignedKeys: ["status", "updated_at", "token_expiry"],
-                  isColumnFilterActive,
-                  onOpen: openColumnFilter,
-                  onClose: () => setActiveFilter(null),
-                  onChange: (key, values) =>
-                    setDraftColumnFilters((previous) => ({
-                      ...previous,
-                      [key]: values
-                    })),
-                  onApply: applyColumnFilter,
-                  onSort: handleSort,
-                  onClear: clearColumnFilter
-                }}
-              />
-            </div>
-          </div>
+          {renderConnectionTable("Broker Data Connections", "upstox", "No broker data connections found.")}
+          {renderConnectionTable("Communication Connections", "telegram", "No communication connections found.")}
         </div>
 
         <div className="mt-3"><AiConnections allowed={isAdminControlAllowed} /></div>

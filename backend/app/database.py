@@ -206,7 +206,7 @@ def migrate_fii_dii_activity_table(conn):
 from app.db.schema_identity import ensure_identity_schema
 from app.db.schema_instruments import ensure_instrument_schema
 from app.db.schema_ai import ensure_ai_schema
-from app.services.security_reference import ensure_reference_schema, sync_reference, migrate_legacy_reference
+from app.services.security_reference import ensure_reference_schema, migrate_legacy_reference
 from app.db.schema_legacy_data import ensure_legacy_data_schema
 from app.db.schema_fundamentals import ensure_fundamentals_schema
 from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
@@ -225,7 +225,6 @@ def init_database():
         ensure_fundamentals_schema(conn, safe_execute, migrate_fii_dii_activity_table)
         reference_exists = conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='security_reference'").fetchone()[0]
         ensure_reference_schema(conn)
-        sync_reference(conn)
         if not reference_exists:
             migrate_legacy_reference(conn)
         conn.commit()
