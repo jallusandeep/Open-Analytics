@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 from fastapi import HTTPException, status
 
+from app.config import settings
 from app.database import get_connection
 from app.security import hash_password, verify_password, create_access_token
 from app.telegram_alerts_msg.message_templates import (
@@ -318,6 +319,21 @@ def login_user(login_identifier: str, password: str):
     conn = get_connection()
 
     try:
+        # Retire only sessions whose token lifetime or inactivity window elapsed.
+        # Active sessions belonging to this or any other user remain untouched.
+        conn.execute(
+            """
+            UPDATE user_sessions
+            SET is_active = FALSE,
+                logged_out_at = COALESCE(logged_out_at, CURRENT_TIMESTAMP)
+            WHERE COALESCE(is_active, TRUE) = TRUE
+              AND (
+                (expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP)
+                OR last_seen_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')
+              )
+            """,
+            [settings.SESSION_IDLE_MINUTES]
+        )
         user = get_user_by_login_identifier(conn, login_identifier)
 
         if not user:

@@ -28,6 +28,10 @@ TABLES = {
 MASTER_EDITABLE = {"company_name", "short_name", "security_class", "macro_sector", "sector", "industry", "basic_industry", "market_cap_bucket", "listing_status", "is_active", "is_listed", "is_suspended", "is_delisted", "listing_date", "face_value", "classification_source"}
 LISTING_EDITABLE = {"series", "listing_status", "is_active"}
 
+def is_equity_instrument(segment, instrument_type):
+    segment = str(segment or "").strip().upper()
+    return segment in {"NSE_EQ", "BSE_EQ"}
+
 
 def ensure_reference_schema(conn):
     for table, columns, keys in TABLES.values():
@@ -77,7 +81,7 @@ def sync_reference(conn):
             if underlying:
                 contracts.setdefault(underlying, set()).add(kind)
         segment = str(row.get("segment") or "").strip().upper()
-        if segment not in {"NSE_EQ", "BSE_EQ"} or kind != "EQ":
+        if not is_equity_instrument(segment, kind):
             continue
         instrument_key = str(row.get("instrument_key") or "").strip()
         parts = instrument_key.split('|')

@@ -62,6 +62,22 @@ def get_current_user(
     conn = get_connection()
 
     try:
+        conn.execute(
+            """
+            UPDATE user_sessions
+            SET is_active = FALSE,
+                logged_out_at = COALESCE(logged_out_at, CURRENT_TIMESTAMP)
+            WHERE user_id = ?
+              AND access_token = ?
+              AND COALESCE(is_active, TRUE) = TRUE
+              AND (
+                (expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP)
+                OR last_seen_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')
+              )
+            """,
+            [user_id, token, settings.SESSION_IDLE_MINUTES]
+        )
+        conn.commit()
         session = conn.execute(
             """
             SELECT session_id
