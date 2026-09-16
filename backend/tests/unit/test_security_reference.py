@@ -5,7 +5,7 @@ import duckdb
 import pytest
 from fastapi import HTTPException
 from app.db.schema_instruments import ensure_instrument_schema
-from app.services.security_reference import ensure_reference_schema, sync_reference, valid_isin
+from app.services.security_reference import ensure_reference_schema, sync_reference, sync_type_mappings, valid_isin
 from app.api.v1 import security_reference_routes as api
 
 pytestmark = pytest.mark.unit
@@ -53,6 +53,36 @@ def test_one_isin_two_listings_and_derivative_link(db):
     assert db.execute('SELECT listing_count, primary_exchange, is_cross_listed, futures_available, options_available FROM security_reference WHERE isin=?', [ISIN]).fetchone() == (2, 'NSE', True, True, False)
     assert db.execute('SELECT COUNT(*) FROM security_listing_reference WHERE is_primary_listing').fetchone()[0] == 2
     assert sync_reference(db)['updated'] == 0
+
+
+def test_type_mapping_discovers_source_types_and_preserves_manual_gbo(db):
+    instrument(db, kind='EQ')
+    instrument(db, 'BSE', '500325', 'A')
+    assert sync_type_mappings(db) == 2
+    assert db.execute("SELECT source_type, instrument_type, gbo_type FROM security_type_mapping WHERE exchange='BSE'").fetchone() == ('A', 'EQUITY', 'COMMON_EQUITY')
+    result = api.upload('types', api.Upload(rows=[dict(exchange='BSE', segment='BSE_EQ', source_type='A', security_type='', instrument_type='EQUITY', gbo_type='COMMON_EQUITY', description='BSE equity group A', flag='U')]), {'full_name': 'Reference Admin'})
+    assert result['updated'] == 1
+    sync_type_mappings(db)
+    assert db.execute("SELECT instrument_type, gbo_type, description FROM security_type_mapping WHERE exchange='BSE'").fetchone() == ('EQUITY', 'COMMON_EQUITY', 'BSE equity group A')
+    source, history = db.execute("SELECT mapping_source, history_json FROM security_type_mapping WHERE exchange='BSE'").fetchone()
+    assert source == 'MANUAL_UPLOAD'
+    assert any(event['action'] == 'MANUAL_UPDATE' for event in json.loads(history))
+    summary = api.list_rows('types', page=1, page_size=50)['summary']
+    assert summary['total'] == 2 and summary['complete'] == 2 and summary['completion_percent'] == 100
+    assert 'history_json' not in {column['key'] for column in api.list_rows('types', page=1, page_size=50)['columns']}
+    audit = api.type_mapping_audit(500)
+    assert audit['total'] >= 3 and audit['events'][0]['changes']
+    assert any(event['actor'] == 'Reference Admin' and event['tab'] == 'Security Type Mapping' for event in audit['events'])
+
+
+def test_type_mapping_deactivation_keeps_json_history(db):
+    instrument(db)
+    sync_type_mappings(db)
+    db.execute('DELETE FROM upstox_instruments')
+    sync_type_mappings(db)
+    active, history = db.execute('SELECT is_active, history_json FROM security_type_mapping').fetchone()
+    assert active is False
+    assert [event['action'] for event in json.loads(history)] == ['DISCOVERED', 'DEACTIVATED']
 
 
 def test_upload_preserved_on_sync_and_source_identity_protected(db):

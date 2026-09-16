@@ -210,6 +210,9 @@ from app.services.security_reference import ensure_reference_schema, migrate_leg
 from app.db.schema_legacy_data import ensure_legacy_data_schema
 from app.db.schema_fundamentals import ensure_fundamentals_schema
 from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
+from app.engines.universe import ensure_universe_engine_schema
+from app.engines.data_quality import ensure_data_quality_schema
+from app.engines.corporate_actions import ensure_corporate_action_schema
 
 
 def init_database():
@@ -225,6 +228,9 @@ def init_database():
         ensure_fundamentals_schema(conn, safe_execute, migrate_fii_dii_activity_table)
         reference_exists = conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='security_reference'").fetchone()[0]
         ensure_reference_schema(conn)
+        ensure_universe_engine_schema(conn)
+        ensure_data_quality_schema(conn)
+        ensure_corporate_action_schema(conn)
         if not reference_exists:
             migrate_legacy_reference(conn)
         conn.commit()
