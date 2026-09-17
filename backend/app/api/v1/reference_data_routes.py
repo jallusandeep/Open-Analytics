@@ -1,4 +1,5 @@
 import csv
+import json
 from io import StringIO
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -58,40 +59,65 @@ class ReferenceUpload(BaseModel):
     rows: list[ReferenceEquity] = Field(min_length=1, max_length=2000)
 
 
-def equity_query(search: str):
+FILTER_COLUMNS = ["isin", "trading_symbol", "name", "exchange", "segment"]
+
+
+def equity_query(search: str, filters: str = "{}"):
     search = search.strip()
-    if not search:
-        return EQUITY_SQL, []
-    return (
-        f"SELECT * FROM ({EQUITY_SQL}) AS equities WHERE "
-        "isin ILIKE ? OR trading_symbol ILIKE ? OR name ILIKE ? OR exchange ILIKE ? OR segment ILIKE ?",
-        [f"%{search}%"] * 5,
-    )
+    clauses, params = [], []
+    if search:
+        clauses.append("(" + " OR ".join(f"{key} ILIKE ?" for key in FILTER_COLUMNS) + ")")
+        params.extend([f"%{search}%"] * 5)
+    try:
+        selected = json.loads(filters)
+        if not isinstance(selected, dict):
+            raise ValueError()
+        for key, values in selected.items():
+            if key not in FILTER_COLUMNS or not isinstance(values, list) or len(values) > 20000 or not all(isinstance(value, str) for value in values):
+                raise ValueError()
+            if values:
+                clauses.append(f"COALESCE({key}, '') IN ({','.join('?' for _ in values)})")
+                params.extend(values)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Invalid table filters.")
+    return (f"SELECT * FROM ({EQUITY_SQL}) AS equities WHERE " + " AND ".join(clauses), params) if clauses else (EQUITY_SQL, [])
+
+
+def sort_order(sort_by: str, sort_direction: str):
+    if sort_by not in FILTER_COLUMNS or sort_direction not in {"asc", "desc"}:
+        raise HTTPException(400, "Invalid table sort.")
+    return f"{sort_by} {sort_direction}, isin, exchange, segment"
 
 
 @router.get("/equities")
-def list_reference_equities(search: str = "", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=500)):
-    query, params = equity_query(search)
+def list_reference_equities(search: str = "", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=500), filters: str = "{}", sort_by: str = "trading_symbol", sort_direction: str = "asc"):
+    query, params = equity_query(search, filters)
+    order = sort_order(sort_by, sort_direction)
     conn = get_connection()
     try:
         total = conn.execute(f"SELECT COUNT(*) FROM ({query}) AS results", params).fetchone()[0]
         rows = conn.execute(
-            f"SELECT * FROM ({query}) AS results ORDER BY trading_symbol, exchange, segment LIMIT ? OFFSET ?",
+            f"SELECT * FROM ({query}) AS results ORDER BY {order} LIMIT ? OFFSET ?",
             params + [page_size, (page - 1) * page_size],
         ).fetchall()
+        base_query, base_params = equity_query(search)
+        header_values = {key: [row[0] for row in conn.execute(
+            f"SELECT DISTINCT COALESCE({key}, '') AS value FROM ({base_query}) ORDER BY value", base_params
+        ).fetchall()] for key in FILTER_COLUMNS}
     finally:
         conn.close()
     return {"rows": [dict(zip(["isin", "trading_symbol", "name", "exchange", "segment"], row)) for row in rows],
-            "page": page, "page_size": page_size, "total_records": total,
+            "header_values": header_values, "page": page, "page_size": page_size, "total_records": total,
             "total_pages": max(1, (total + page_size - 1) // page_size)}
 
 
 @router.get("/equities/download")
-def download_reference_equities(search: str = "", template: bool = False):
-    query, params = equity_query(search)
+def download_reference_equities(search: str = "", template: bool = False, filters: str = "{}", sort_by: str = "trading_symbol", sort_direction: str = "asc"):
+    query, params = equity_query(search, filters)
+    order = sort_order(sort_by, sort_direction)
     conn = get_connection()
     try:
-        rows = conn.execute(f"SELECT * FROM ({query}) AS results ORDER BY trading_symbol, exchange, segment LIMIT 100001", params).fetchall()
+        rows = conn.execute(f"SELECT * FROM ({query}) AS results ORDER BY {order} LIMIT 100001", params).fetchall()
     finally:
         conn.close()
     if len(rows) > 100000:

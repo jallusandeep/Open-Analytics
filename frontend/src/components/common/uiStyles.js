@@ -29,7 +29,9 @@ export const oaCardStyles = {
   body: "bg-black",
 
   headerTitle:
-    "font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-white",
+    "font-mono text-[13px] font-bold uppercase tracking-[0.08em] text-white",
+  breadcrumb: "font-mono text-[11px] font-normal capitalize text-white",
+  breadcrumbButton: "text-left hover:text-sky-300 focus-visible:outline focus-visible:outline-sky-400",
   headerSubtitle: "hidden",
 
   bodyText:

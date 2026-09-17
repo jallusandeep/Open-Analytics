@@ -1,3 +1,4 @@
+import { dataPageUrl } from "../../../utils/navigation";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -21,6 +22,7 @@ import IconButton from "../../../components/common/IconButton";
 import Input from "../../../components/common/Input";
 import Select from "../../../components/common/Select";
 import Tooltip from "../../../components/common/Tooltip";
+import NavigationLink from "../../../components/common/NavigationLink";
 import Modal from "../../../components/common/Modal";
 import DataTable from "../../../components/tables/DataTable";
 import TableToolbar from "../../../components/tables/TableToolbar";
@@ -277,7 +279,7 @@ export function DataCollectionShell({
   }, [navigationOpen]);
   useEffect(() => {
     function toggleNavigation() {
-      const icon = document.querySelector('button[aria-label="Data"]');
+      const icon = document.querySelector('[aria-label="Data"]');
       if (icon) setNavigationTop(icon.getBoundingClientRect().top);
       setExpandedView(null);
       setNavigationOpen((current) => !current);
@@ -288,7 +290,7 @@ export function DataCollectionShell({
   useEffect(() => {
     if (!navigationOpen) return undefined;
     function closeOutside(event) {
-      if (document.querySelector('button[aria-label="Data"]')?.contains(event.target)) return;
+      if (document.querySelector('[aria-label="Data"]')?.contains(event.target)) return;
       if (event.target.closest('[aria-label="Breadcrumb"]')) return;
       if (!navigationRef.current?.contains(event.target) && !submenuRef.current?.contains(event.target)) {
         setNavigationOpen(false);
@@ -337,14 +339,14 @@ export function DataCollectionShell({
       <div className="relative z-50 shrink-0">
         <div className={`${oaCardStyles.header} flex items-center justify-between gap-3`}>
           <div className="min-w-0">
-            <nav aria-label="Breadcrumb" className="font-mono text-[13px] font-bold text-oa-muted">
+            <nav aria-label="Breadcrumb" className={oaCardStyles.breadcrumb}>
               <ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {breadcrumbItems.map((label, index) => (
                   <li key={label} className="flex items-center gap-2">
                     {index > 0 ? <span aria-hidden="true">/</span> : null}
                     <button type="button" onClick={() => window.dispatchEvent(new Event("open-analytics:data-navigation-toggle"))}
                       aria-current={index === breadcrumbItems.length - 1 ? "page" : undefined}
-                      className={`text-left hover:text-sky-300 focus-visible:outline focus-visible:outline-sky-400 ${index === 0 ? "uppercase tracking-wider text-white" : index === breadcrumbItems.length - 1 ? "text-[11px] font-normal text-white" : ""}`}
+                      className={`${oaCardStyles.breadcrumbButton} ${index === 0 ? oaCardStyles.headerTitle : oaCardStyles.breadcrumb}`}
                     >
                       {label}
                     </button>
@@ -386,7 +388,7 @@ export function DataCollectionShell({
         {viewOptions.map((view) => {
           const subpages = view.key === "ipo_calendar" ? ipoCalendarSubTabOptions : view.key === "company_fundamentals" ? companyFundamentalsEndpointOptions : [];
           return <div key={view.key}>
-            <button type="button" onMouseEnter={(event) => {
+            <NavigationLink to={dataPageUrl(view.key)} onMouseEnter={(event) => {
               if (!subpages.length) {
                 setExpandedView(null);
                 return;
@@ -401,12 +403,12 @@ export function DataCollectionShell({
               setExpandedView(view.key);
             }} aria-expanded={subpages.length ? expandedView === view.key : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] ${expandedView === view.key ? "bg-[#2b2b2b] text-sky-300" : activeView === view.key ? "text-sky-300" : "text-oa-muted hover:text-sky-300"}`}>
               {view.label}{subpages.length ? <ChevronRight size={13} className={expandedView === view.key ? "text-sky-400" : ""} /> : null}
-            </button>
+            </NavigationLink>
           </div>;
         })}
       </nav>, document.body) : null}
       {navigationOpen && expandedView ? createPortal(<nav ref={submenuRef} aria-label={`${viewOptions.find((view) => view.key === expandedView)?.label} pages`} style={{ top: submenuTop }} className="fixed left-[312px] z-[20001] max-h-[calc(100vh-16px)] w-56 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
-        {(expandedView === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => <button key={subpage.value} type="button" onClick={() => chooseView(expandedView, subpage.value)} className={`block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] hover:bg-[#2b2b2b] ${activeView === expandedView && (expandedView === "ipo_calendar" ? ipoCalendarSubTab : companyFundamentalsEndpoint) === subpage.value ? "text-sky-300" : "text-oa-muted"}`}>{subpage.label}</button>)}
+        {(expandedView === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => <NavigationLink to={dataPageUrl(expandedView, subpage.value)} key={subpage.value} onClick={() => chooseView(expandedView, subpage.value)} className={`block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] hover:bg-[#2b2b2b] ${activeView === expandedView && (expandedView === "ipo_calendar" ? ipoCalendarSubTab : companyFundamentalsEndpoint) === subpage.value ? "text-sky-300" : "text-oa-muted"}`}>{subpage.label}</NavigationLink>)}
       </nav>, document.body) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-black">
@@ -508,7 +510,7 @@ export function ScheduleManagerModal({
               : "border-emerald-500/30 bg-emerald-950/20 text-emerald-300 hover:border-emerald-500/60 hover:bg-emerald-950/40 hover:text-emerald-200 focus:border-emerald-500"
           }`}
           aria-label={schedule.is_active ? "Disable schedule" : "Enable schedule"}
-          title={schedule.is_active ? "Disable schedule" : "Enable schedule"}
+
         >
           {isSaving ? <Spinner size="xs" color="light" /> : <Power size={15} />}
         </button>
@@ -528,7 +530,7 @@ export function ScheduleManagerModal({
           onClick={() => onDelete(schedule)}
           className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
           aria-label="Delete schedule"
-          title="Delete schedule"
+
         >
           {isDeleting ? (
             <Spinner size="xs" color="light" />
@@ -563,7 +565,7 @@ export function ScheduleManagerModal({
       <div className="space-y-4 oa-table-font">
         <div className="w-full bg-black">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-[12px] font-semibold uppercase tracking-wider text-white">
+            <p className={oaCardStyles.headerTitle}>
               Scheduled
             </p>
 

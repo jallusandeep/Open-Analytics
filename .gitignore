@@ -23,6 +23,7 @@ backend/reports/
 
 *.duckdb
 *.duckdb.wal
+.ai-credentials.key
 backend/app/data/upstox/*.json
 backend/app/data/upstox/*.download
 

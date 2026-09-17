@@ -99,15 +99,16 @@ function Login() {
         password
       });
 
-      localStorage.setItem(
+      sessionStorage.setItem(
         "open_analytics_token",
         response.data.access_token
       );
 
-      localStorage.setItem(
+      sessionStorage.setItem(
         "open_analytics_user",
         JSON.stringify(response.data)
       );
+      sessionStorage.removeItem("open_analytics_current_user");
       recordSessionActivity();
 
       sessionStorage.removeItem("open_analytics_selected_app");
@@ -192,7 +193,7 @@ function Login() {
 
   return (
     <div className="oa-app-font flex min-h-screen items-center justify-center bg-oa-dark px-3 text-oa-text">
-      <div className="w-full max-w-sm rounded-xl border border-oa-border bg-oa-card p-5 shadow-2xl">
+      <div className="w-full max-w-sm rounded border border-oa-border bg-oa-card p-5 shadow-2xl">
         <div className="mb-6 flex h-7 items-center justify-center gap-1.5">
           <ChevronRight
             size={23}
@@ -248,7 +249,7 @@ function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="flex h-10 w-full items-center justify-center rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-10 w-full items-center justify-center rounded bg-white text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -293,7 +294,7 @@ function Login() {
                 type="button"
                 onClick={backToLogin}
                 disabled={loading}
-                className="flex h-10 items-center justify-center gap-2 rounded-lg border border-oa-border bg-black text-sm font-semibold text-oa-muted transition hover:bg-oa-panel hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-10 items-center justify-center gap-2 rounded border border-oa-border bg-black text-sm font-semibold text-oa-muted transition hover:bg-oa-panel hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <X size={15} />
                 Cancel
@@ -302,7 +303,7 @@ function Login() {
               <button
                 type="submit"
                 disabled={loading}
-                className="flex h-10 items-center justify-center rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-10 items-center justify-center rounded bg-white text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
@@ -386,7 +387,7 @@ function Login() {
                 type="button"
                 onClick={backToLogin}
                 disabled={loading}
-                className="flex h-10 items-center justify-center gap-2 rounded-lg border border-oa-border bg-black text-sm font-semibold text-oa-muted transition hover:bg-oa-panel hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-10 items-center justify-center gap-2 rounded border border-oa-border bg-black text-sm font-semibold text-oa-muted transition hover:bg-oa-panel hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <X size={15} />
                 Cancel
@@ -395,7 +396,7 @@ function Login() {
               <button
                 type="submit"
                 disabled={loading}
-                className="flex h-10 items-center justify-center rounded-lg bg-white text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-10 items-center justify-center rounded bg-white text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
@@ -421,7 +422,7 @@ function Login() {
 
         {message && (
           <div
-            className={`mt-3 rounded-lg border px-3 py-2 text-xs ${messageClassName}`}
+            className={`mt-3 rounded border px-3 py-2 text-xs ${messageClassName}`}
           >
             {message}
           </div>

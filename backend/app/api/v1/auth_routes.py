@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, Response
 
 from app.dependencies import get_current_user
 from app.schemas.auth_schema import (
@@ -45,7 +45,8 @@ def login(request: LoginRequest):
 
 
 @router.get("/me", response_model=CurrentUserResponse)
-def get_my_profile(current_user: dict = Depends(get_current_user)):
+def get_my_profile(response: Response, current_user: dict = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "no-store, private"
     return {
         "status": "success",
         "user": current_user
@@ -53,9 +54,9 @@ def get_my_profile(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/logout", response_model=MessageResponse)
-def logout(current_user: dict = Depends(get_current_user)):
+def logout(request: Request, current_user: dict = Depends(get_current_user)):
     return logout_user_service(
-        user_id=current_user["user_id"]
+        user_id=current_user["user_id"], session_id=request.state.auth_session_id
     )
 
 

@@ -144,8 +144,8 @@ function getFilterValues(rows, key) {
 function getStoredCurrentUser() {
   try {
     const currentUser =
-      localStorage.getItem("open_analytics_current_user") ||
-      localStorage.getItem("open_analytics_user");
+      sessionStorage.getItem("open_analytics_current_user") ||
+      sessionStorage.getItem("open_analytics_user");
 
     if (!currentUser) {
       return null;
@@ -734,8 +734,8 @@ function UserAccounts() {
     try {
       const response = await updateAdminUser(editUser.user_id, payload);
       if (isCurrentUser(editUser)) {
-        const stored = JSON.parse(localStorage.getItem("open_analytics_current_user") || "{}");
-        localStorage.setItem("open_analytics_current_user", JSON.stringify({ ...stored, ...response.data }));
+        const stored = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "{}");
+        sessionStorage.setItem("open_analytics_current_user", JSON.stringify({ ...stored, ...response.data }));
       }
 
       setEditUser(null);
@@ -843,7 +843,7 @@ function UserAccounts() {
     if (column.key === "session_status") {
       return (
         <Tooltip
-          text={`Last seen: ${formatDateTime(user.last_seen_at)}`}
+          text={String(user.session_status || "offline").toLowerCase() === "online" ? "" : `Last seen: ${formatDateTime(user.last_seen_at)}`}
           side="left"
         >
           <span
@@ -1247,11 +1247,11 @@ function UserAccounts() {
           )}
           </div>
             <div aria-hidden={editTab !== "apps"} inert={editTab !== "apps"} className={`[grid-area:1/1] divide-y divide-oa-border ${editTab !== "apps" ? "invisible pointer-events-none" : ""}`}>
-              <p className="pb-3 text-xs text-oa-muted">Select the apps this user can open, then click Update user to save.</p>
+              <p className="pb-3 text-xs text-oa-muted">{["admin", "super_admin"].includes(editUser?.role) || ["admin", "super_admin"].includes(editFormData.role) ? "App access is read-only for Admin and Super Admin accounts." : "Select the apps this user can open, then click Update user to save."}</p>
               {["trading", "admin", "recom"].map((app) => {
                 const eligible = app !== "admin" || ["admin", "super_admin"].includes(editFormData.role);
                 const enabled = eligible && (editFormData.app_access || []).includes(app);
-                const locked = updating || !eligible || (app === "admin" && isCurrentUser(editUser));
+                const locked = updating || !eligible || ["admin", "super_admin"].includes(editUser?.role) || ["admin", "super_admin"].includes(editFormData.role);
                 return (
                   <div key={app} className="flex items-center justify-between gap-4 py-4">
                     <div><span className="text-xs font-semibold capitalize text-white">{app}</span>{!eligible ? <p className="mt-1 text-xs text-oa-muted">Requires an admin role</p> : null}</div>

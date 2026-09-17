@@ -3,6 +3,7 @@
 # Keep this module imported through app.services.data_collection or the compatibility wrapper.
 
 from .common import *
+from app.services.security_reference import sync_reference
 
 def sync_upstox_current_instruments_service(
     current_user: dict,
@@ -40,6 +41,7 @@ def sync_upstox_current_instruments_service(
             local_file=local_file
         )
 
+        reference_counts = sync_reference(conn)
         conn.execute("COMMIT")
 
         finish_sync_run(
@@ -57,6 +59,7 @@ def sync_upstox_current_instruments_service(
         return {
             "status": "success",
             "message": "Current instruments downloaded and imported successfully.",
+            "reference_data": reference_counts,
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at)
         }

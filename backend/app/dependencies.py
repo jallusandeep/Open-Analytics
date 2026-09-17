@@ -62,6 +62,22 @@ def get_current_user(
     conn = get_connection()
 
     try:
+        conn.execute(
+            """
+            UPDATE user_sessions
+            SET is_active = FALSE,
+                logged_out_at = COALESCE(logged_out_at, CURRENT_TIMESTAMP)
+            WHERE user_id = ?
+              AND access_token = ?
+              AND COALESCE(is_active, TRUE) = TRUE
+              AND (
+                (expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP)
+                OR last_seen_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')
+              )
+            """,
+            [user_id, token, settings.SESSION_IDLE_MINUTES]
+        )
+        conn.commit()
         session = conn.execute(
             """
             SELECT session_id
@@ -133,10 +149,15 @@ def get_current_user(
 
     apps = allowed_apps(role, access_restrictions)
     path = request.url.path
+<<<<<<< HEAD
     app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/connections/upstox")) else "recom" if path.startswith(("/api/v1/quant-research/", "/api/v1/data-quality/", "/api/v1/returns/", "/api/v1/risk/")) else None
+=======
+    app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/reference-data/", "/api/v1/connections/upstox")) else "recom" if path.startswith("/api/v1/quant-research/") else "trading" if path.startswith("/api/v1/trading/") else None
+>>>>>>> 48545553ed55a13ecd9551ad9d8049aa9c7e53df
     if app_name and app_name not in apps:
         raise HTTPException(status_code=403, detail="App access denied")
     safe_touch_session_last_seen(session[0])
+    request.state.auth_session_id = session[0]
 
     return {
         "user_id": user_id,
@@ -158,6 +179,9 @@ def require_admin_or_super_admin(current_user: dict = Depends(get_current_user))
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
+
+    if "admin" not in allowed_apps(current_user["role"], current_user.get("access_restrictions")):
+        raise HTTPException(status_code=403, detail="App access denied")
 
     return current_user
 

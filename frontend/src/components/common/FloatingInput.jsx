@@ -40,7 +40,7 @@ function FloatingInput({
   const isUserModal = variant === "userModal";
 
   const wrapperClass = isAuth
-    ? "h-12 rounded-lg px-3"
+    ? "h-12 rounded px-3"
     : isUserModal
       ? "h-8 rounded px-3"
       : "h-8 rounded px-3";

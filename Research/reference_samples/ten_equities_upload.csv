@@ -1,0 +1,11 @@
+﻿isin,company_name,short_name,security_class,macro_sector,sector,industry,basic_industry,listing_date,face_value,classification_source,flag
+INE002A01018,Reliance Industries Limited,Reliance Industries,COMMON_EQUITY,Energy,"Oil, Gas & Consumable Fuels",Petroleum Products,Refineries & Marketing,1995-11-29,10.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE467B01029,Tata Consultancy Services Limited,TCS,COMMON_EQUITY,Information Technology,Information Technology,IT - Software,Computers - Software & Consulting,2004-08-25,1.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE040A01034,HDFC Bank Limited,HDFC Bank,COMMON_EQUITY,Financial Services,Financial Services,Banks,Private Sector Bank,1995-11-08,1.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE009A01021,Infosys Limited,Infosys,COMMON_EQUITY,Information Technology,Information Technology,IT - Software,Computers - Software & Consulting,1995-02-08,5.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE090A01021,ICICI Bank Limited,ICICI Bank,COMMON_EQUITY,Financial Services,Financial Services,Banks,Private Sector Bank,1997-09-17,2.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE062A01020,State Bank of India,State Bank of India,COMMON_EQUITY,Financial Services,Financial Services,Banks,Public Sector Bank,1995-03-01,1.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE154A01025,ITC Limited,ITC,COMMON_EQUITY,Fast Moving Consumer Goods,Fast Moving Consumer Goods,Diversified FMCG,Diversified FMCG,1995-08-23,1.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE030A01027,Hindustan Unilever Limited,Hindustan Unilever,COMMON_EQUITY,Fast Moving Consumer Goods,Fast Moving Consumer Goods,Diversified FMCG,Diversified FMCG,1995-07-06,1.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE018A01030,Larsen & Toubro Limited,Larsen & Toubro,COMMON_EQUITY,Industrials,Construction,Construction,Civil Construction,2004-06-23,2.0,NSE equity master + NSE indices taxonomy (March 2022),U
+INE397D01024,Bharti Airtel Limited,Bharti Airtel,COMMON_EQUITY,Telecommunication,Telecommunication,Telecom - Services,Telecom - Cellular & Fixed line services,2002-02-15,5.0,NSE equity master + NSE indices taxonomy (March 2022),U

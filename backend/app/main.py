@@ -17,11 +17,13 @@ from app.api.v1.auth_routes import router as auth_router
 from app.api.v1.user_routes import router as user_router
 from app.api.v1.admin_routes import router as admin_router
 from app.api.v1.connection_routes import router as connection_router
+from app.api.v1.ai_connection_routes import router as ai_connection_router
 from app.api.v1.data_collection_routes import router as data_collection_router
 from app.engines.data_quality.data_quality_routes import router as data_quality_router
 from app.engines.returns.returns_routes import router as returns_router
 from app.engines.risk.risk_routes import router as risk_router
 from app.api.v1.reference_data_routes import router as reference_data_router
+from app.api.v1.security_reference_routes import router as security_reference_router
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
     version=APP_VERSION
@@ -66,11 +68,13 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(connection_router, prefix="/api/v1")
+app.include_router(ai_connection_router, prefix="/api/v1")
 app.include_router(data_collection_router, prefix="/api/v1")
 app.include_router(data_quality_router, prefix="/api/v1")
 app.include_router(returns_router, prefix="/api/v1")
 app.include_router(risk_router, prefix="/api/v1")
 app.include_router(reference_data_router, prefix="/api/v1")
+app.include_router(security_reference_router, prefix="/api/v1")
 from app.api.v1.data_export_routes import router as data_export_router
 app.include_router(data_export_router, prefix="/api/v1")
 
@@ -130,4 +134,3 @@ def get_db_version():
 
     finally:
         conn.close()
-

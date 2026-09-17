@@ -151,7 +151,8 @@ import {
 
 function Data() {
   const [initialTarget] = useState(() => {
-    const saved = sessionStorage.getItem("open_analytics_data_target");
+    const params = new URLSearchParams(window.location.search);
+    const saved = params.has("view") ? JSON.stringify({ view: params.get("view"), subpage: params.get("subpage") }) : sessionStorage.getItem("open_analytics_data_target");
     sessionStorage.removeItem("open_analytics_data_target");
     try {
       const target = JSON.parse(saved);
@@ -3317,13 +3318,7 @@ function Data() {
       return (
         <span
           className="inline-flex w-full min-w-[92px] items-center gap-1 overflow-visible whitespace-nowrap oa-code-font"
-          title={
-            recordsAdded > 0
-              ? `${formatNumber(row.records)} saved (+${formatNumber(
-                  recordsAdded
-                )})`
-              : `${formatNumber(row.records)} saved`
-          }
+
         >
           <span className="inline-block min-w-[42px] text-right text-white">
             {savedLabel}

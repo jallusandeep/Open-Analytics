@@ -23,7 +23,7 @@ function FilterSelect({
         <span
           className={oaFilterSelectStyles.activeDot}
           aria-hidden="true"
-          title={`${ariaLabel} active`}
+
         />
       )}
     </div>

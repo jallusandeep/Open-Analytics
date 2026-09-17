@@ -103,7 +103,7 @@ export default function TableFilterDropdown({
   columnName,
   values = [],
   selectedValues = [],
-  pendingValues = [],
+  pendingValues,
   onChange,
   onApply,
   onCancel,
@@ -123,9 +123,7 @@ export default function TableFilterDropdown({
   const [selectedTextFilter, setSelectedTextFilter] = useState("");
   const [selectedFilterColor, setSelectedFilterColor] = useState("");
 
-  const normalizedSelectedValues = pendingValues.length
-    ? pendingValues
-    : selectedValues;
+  const normalizedSelectedValues = pendingValues ?? selectedValues;
 
   const filteredValues = useMemo(() => {
     return values.filter((item) =>
@@ -230,7 +228,7 @@ export default function TableFilterDropdown({
 
           {onToggleConditionalFormatting && (
             <button type="button" onClick={onToggleConditionalFormatting} aria-pressed={conditionalFormatting}
-              title="Highlight positive numbers green and negative numbers red"
+
               className={oaTableFilterDropdownStyles.actionButton}>
               <Palette size={13} />
               <span>Conditional formatting</span>
@@ -356,7 +354,7 @@ export default function TableFilterDropdown({
           onClick={onCancel}
           className={oaTableFilterDropdownStyles.cancelButton}
           aria-label="Cancel filter"
-          title="Cancel"
+
         >
           <X size={14} />
         </button>
@@ -366,7 +364,7 @@ export default function TableFilterDropdown({
           onClick={handleApply}
           className={oaTableFilterDropdownStyles.applyButton}
           aria-label="Apply filter"
-          title="Apply"
+
         >
           <Check size={14} />
         </button>

@@ -7,9 +7,9 @@ import ScreenLoading from "../components/common/ScreenLoading";
 import { clearSessionActivity, getSessionIdleDeadline, isSessionIdle, recordSessionActivity } from "../utils/sessionActivity";
 
 function clearOpenAnalyticsSession() {
-  localStorage.removeItem("open_analytics_token");
-  localStorage.removeItem("open_analytics_user");
-  localStorage.removeItem("open_analytics_current_user");
+  sessionStorage.removeItem("open_analytics_token");
+  sessionStorage.removeItem("open_analytics_user");
+  sessionStorage.removeItem("open_analytics_current_user");
   clearSessionActivity();
 }
 
@@ -50,17 +50,28 @@ function isTokenExpired(token) {
   return Date.now() >= expiryTime;
 }
 
+let authenticatedToken = null;
+
 function ProtectedRoute({ children }) {
   const location = useLocation();
-  const [checking, setChecking] = useState(true);
-  const [allowed, setAllowed] = useState(false);
+  const [checking, setChecking] = useState(() => !authenticatedToken || authenticatedToken !== sessionStorage.getItem("open_analytics_token"));
+  const [allowed, setAllowed] = useState(() => Boolean(authenticatedToken && authenticatedToken === sessionStorage.getItem("open_analytics_token")));
 
   useEffect(() => {
-    let logoutTimer = null;
-    let idleCheckTimer = null;
-    let heartbeatTimer = null;
-    let lastRecordedActivity = 0;
     let disposed = false;
+    let verifying = false;
+    let lastRecordedActivity = 0;
+    let expiryTimer = null;
+    const token = sessionStorage.getItem("open_analytics_token");
+
+    function logoutUser() {
+      if (disposed) return;
+      authenticatedToken = null;
+      clearOpenAnalyticsSession();
+      setAllowed(false);
+      setChecking(false);
+
+    }
 
     function handleActivity() {
       const now = Date.now();
@@ -69,110 +80,61 @@ function ProtectedRoute({ children }) {
       recordSessionActivity(now);
     }
 
-    function logoutUser() {
-      clearOpenAnalyticsSession();
-      setAllowed(false);
-      setChecking(false);
-    }
-
-    function startAutoLogoutTimer(token) {
-      const expiryTime = getTokenExpiryTime(token);
-
-      if (!expiryTime) {
-        return;
-      }
-
-      const timeUntilExpiry = expiryTime - Date.now();
-
-      if (timeUntilExpiry <= 0) {
-        logoutUser();
-        return;
-      }
-
-      logoutTimer = window.setTimeout(() => {
-        logoutUser();
-      }, timeUntilExpiry);
-    }
-
     async function verifyUserToken() {
-      const token = localStorage.getItem("open_analytics_token");
-
-      if (!token) {
-        clearOpenAnalyticsSession();
-        setAllowed(false);
+      if (disposed || verifying) return;
+      if (!token || sessionStorage.getItem("open_analytics_token") !== token || isTokenExpired(token) || isSessionIdle()) {
+        logoutUser();
+        return;
+      }
+      if (authenticatedToken === token) {
+        setAllowed(true);
         setChecking(false);
         return;
       }
-
-      if (isTokenExpired(token) || isSessionIdle()) {
-        clearOpenAnalyticsSession();
-        setAllowed(false);
-        setChecking(false);
-        return;
-      }
-
+      verifying = true;
+      setChecking(true);
       try {
         const response = await getCurrentUser();
         if (disposed) return;
-        const currentUser = response.data.user || response.data;
-
-        localStorage.setItem(
-          "open_analytics_current_user",
-          JSON.stringify(currentUser)
-        );
-
-        setAllowed(true);
-        startAutoLogoutTimer(token);
-        for (const eventName of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) {
-          window.addEventListener(eventName, handleActivity, { passive: true });
+        if (sessionStorage.getItem("open_analytics_token") !== token) {
+          logoutUser();
+          return;
         }
-        idleCheckTimer = window.setInterval(() => {
-          if (Date.now() >= getSessionIdleDeadline() || isTokenExpired(token)) logoutUser();
-        }, 30000);
-        heartbeatTimer = window.setInterval(async () => {
-          if (isSessionIdle()) {
-            logoutUser();
-            return;
-          }
-          try {
-            await getCurrentUser();
-          } catch {
-            logoutUser();
-          }
-        }, 60 * 1000);
+        const currentUser = response.data.user || response.data;
+        sessionStorage.setItem("open_analytics_current_user", JSON.stringify(currentUser));
+        authenticatedToken = token;
+        setAllowed(true);
+
       } catch {
-        if (disposed) return;
-        clearOpenAnalyticsSession();
-        setAllowed(false);
+        logoutUser();
       } finally {
+        verifying = false;
         if (!disposed) setChecking(false);
       }
     }
 
     verifyUserToken();
-
+    const expiryTime = token && getTokenExpiryTime(token);
+    if (expiryTime) expiryTimer = window.setTimeout(logoutUser, Math.max(0, expiryTime - Date.now()));
+    const idleTimer = window.setInterval(() => {
+      if (Date.now() >= getSessionIdleDeadline() || token && isTokenExpired(token)) logoutUser();
+    }, 30000);
+    const activityEvents = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"];
+    activityEvents.forEach((name) => window.addEventListener(name, handleActivity, { passive: true }));
     return () => {
       disposed = true;
-      if (logoutTimer) {
-        window.clearTimeout(logoutTimer);
-      }
-      if (idleCheckTimer) window.clearInterval(idleCheckTimer);
-      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
-      for (const eventName of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) {
-        window.removeEventListener(eventName, handleActivity);
-      }
+      window.clearTimeout(expiryTimer);
+      window.clearInterval(idleTimer);
+      activityEvents.forEach((name) => window.removeEventListener(name, handleActivity));
     };
   }, []);
 
   if (checking) {
     return <ScreenLoading message="Authenticating" />;
   }
+  if (!allowed) return <Navigate to="/login" replace />;
 
-  if (!allowed) {
-    return <Navigate to="/login" replace />;
-  }
-
-  const user = JSON.parse(localStorage.getItem("open_analytics_current_user") || "null");
+  const user = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "null");
   const path = location.pathname;
   const app = path === "/data" || path === "/reference-data" || path.startsWith("/admin/") || path.startsWith("/connections") ? "admin" : path === "/predictions" ? "recom" : path === "/dashboard" || path.startsWith("/stocks") ? "trading" : null;
   if (app && !getAppAccess(user).includes(app)) return <Navigate to="/apps" replace />;

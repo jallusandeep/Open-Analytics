@@ -25,7 +25,6 @@ import IconButton from "../../components/common/IconButton";
 import FloatingInput from "../../components/common/FloatingInput";
 import Modal from "../../components/common/Modal";
 import Tooltip from "../../components/common/Tooltip";
-import TableToolbar from "../../components/tables/TableToolbar";
 import { useToast } from "../../components/common/ToastProvider";
 import {
   oaCardStyles,
@@ -44,21 +43,6 @@ import {
   testMyTelegramConnection,
   verifyMyTelegramConnection
 } from "../../api/connectionApi";
-
-const settingsColumns = [
-  { key: "field", label: "Field" },
-  { key: "value", label: "Value" },
-  { key: "group", label: "Group" }
-];
-
-
-function normalizeCellValue(value) {
-  if (value === null || value === undefined || value === "") {
-    return "--";
-  }
-
-  return String(value);
-}
 
 function formatRoleLabel(role) {
   if (!role) {
@@ -87,8 +71,8 @@ function formatDateTime(value) {
 function getStoredCurrentUser() {
   try {
     const currentUser =
-      localStorage.getItem("open_analytics_current_user") ||
-      localStorage.getItem("open_analytics_user");
+      sessionStorage.getItem("open_analytics_current_user") ||
+      sessionStorage.getItem("open_analytics_user");
 
     if (!currentUser) {
       return null;
@@ -158,27 +142,6 @@ function getErrorMessage(error, fallback) {
   return fallback;
 }
 
-function getColumnValue(row, key) {
-  return row[key];
-}
-
-function getFilterValues(rows, key) {
-  const valueMap = new Map();
-
-  rows.forEach((row) => {
-    const value = normalizeCellValue(getColumnValue(row, key));
-    valueMap.set(value, (valueMap.get(value) || 0) + 1);
-  });
-
-  return Array.from(valueMap.entries())
-    .map(([value, count]) => ({
-      label: value,
-      value,
-      count
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
-
 function PasswordFloatingInput({
   name,
   label,
@@ -236,20 +199,6 @@ function Settings() {
   });
   const [telegramLink, setTelegramLink] = useState("");
   const [telegramBotUsername, setTelegramBotUsername] = useState("");
-
-  const [searchText, setSearchText] = useState("");
-  const [appliedSearchText, setAppliedSearchText] = useState("");
-  const [groupFilter, setGroupFilter] = useState("all");
-  const [telegramFilter, setTelegramFilter] = useState("all");
-
-  const [columnFilters, setColumnFilters] = useState({});
-  const [draftColumnFilters, setDraftColumnFilters] = useState({});
-  const [activeFilter, setActiveFilter] = useState(null);
-
-  const [sortConfig, setSortConfig] = useState({
-    key: null,
-    direction: null
-  });
 
   const [loading, setLoading] = useState(false);
   const [loadingTelegram, setLoadingTelegram] = useState(false);
@@ -371,100 +320,13 @@ function Settings() {
     ];
   }, [profile, telegram, telegramStatus, updatedAtValue]);
 
-  const headerValues = useMemo(() => {
-    return settingsColumns.reduce((result, column) => {
-      result[column.key] = getFilterValues(settingsRows, column.key);
-      return result;
-    }, {});
-  }, [settingsRows]);
-
-  const filteredRows = useMemo(() => {
-    let result = settingsRows;
-    const query = appliedSearchText.trim().toLowerCase();
-
-    if (query) {
-      result = result.filter((row) => {
-        const values = [
-          row.field,
-          row.value,
-          row.group,
-          row.telegramName,
-          row.telegramUpdatedAt
-        ];
-
-        return values.some((value) =>
-          String(value || "")
-            .toLowerCase()
-            .includes(query)
-        );
-      });
-    }
-
-    if (groupFilter !== "all") {
-      result = result.filter((row) => row.groupKey === groupFilter);
-    }
-
-    if (telegramFilter !== "all") {
-      result = result.filter((row) => {
-        if (row.id !== "telegram") {
-          return false;
-        }
-
-        return telegramStatus === telegramFilter;
-      });
-    }
-
-    result = result.filter((row) => {
-      return Object.entries(columnFilters).every(([key, selectedValues]) => {
-        if (!selectedValues || selectedValues.length === 0) {
-          return true;
-        }
-
-        const value = normalizeCellValue(getColumnValue(row, key));
-        return selectedValues.includes(value);
-      });
-    });
-
-    if (sortConfig.key && sortConfig.direction) {
-      result = [...result].sort((a, b) => {
-        const firstValue = normalizeCellValue(
-          getColumnValue(a, sortConfig.key)
-        ).toLowerCase();
-
-        const secondValue = normalizeCellValue(
-          getColumnValue(b, sortConfig.key)
-        ).toLowerCase();
-
-        if (firstValue < secondValue) {
-          return sortConfig.direction === "asc" ? -1 : 1;
-        }
-
-        if (firstValue > secondValue) {
-          return sortConfig.direction === "asc" ? 1 : -1;
-        }
-
-        return 0;
-      });
-    }
-
-    return result;
-  }, [
-    settingsRows,
-    appliedSearchText,
-    groupFilter,
-    telegramFilter,
-    telegramStatus,
-    columnFilters,
-    sortConfig
-  ]);
-
   function saveUserToStorage(user) {
     if (!user) {
       return;
     }
 
-    localStorage.setItem("open_analytics_current_user", JSON.stringify(user));
-    localStorage.setItem("open_analytics_user", JSON.stringify(user));
+    sessionStorage.setItem("open_analytics_current_user", JSON.stringify(user));
+    sessionStorage.setItem("open_analytics_user", JSON.stringify(user));
   }
 
   async function loadProfile({ silent = false } = {}) {
@@ -533,7 +395,7 @@ function Settings() {
   }
 
   useEffect(() => {
-    loadAll();
+    const initialLoad = window.setTimeout(() => loadAll(), 0);
 
     function handleWindowFocus() {
       loadAll({ silent: true });
@@ -549,100 +411,13 @@ function Settings() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      window.clearTimeout(initialLoad);
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function hasAnyActiveFilter() {
-    return (
-      appliedSearchText.trim() !== "" ||
-      groupFilter !== "all" ||
-      telegramFilter !== "all" ||
-      sortConfig.key !== null ||
-      Object.values(columnFilters).some(
-        (value) => Array.isArray(value) && value.length > 0
-      )
-    );
-  }
-
-  function clearAllFilters() {
-    setSearchText("");
-    setAppliedSearchText("");
-    setGroupFilter("all");
-    setTelegramFilter("all");
-    setColumnFilters({});
-    setDraftColumnFilters({});
-    setSortConfig({
-      key: null,
-      direction: null
-    });
-    setActiveFilter(null);
-  }
-
-  function clearSearchFilter() {
-    setSearchText("");
-    setAppliedSearchText("");
-  }
-
-  function openColumnFilter(key) {
-    setDraftColumnFilters((previous) => ({
-      ...previous,
-      [key]: columnFilters[key] || []
-    }));
-
-    setActiveFilter((previous) => {
-      if (previous === key) {
-        return null;
-      }
-
-      return key;
-    });
-  }
-
-  function applyColumnFilter(key) {
-    setColumnFilters((previous) => ({
-      ...previous,
-      [key]: draftColumnFilters[key] || []
-    }));
-
-    setActiveFilter(null);
-  }
-
-  function clearColumnFilter(key) {
-    setColumnFilters((previous) => ({
-      ...previous,
-      [key]: []
-    }));
-
-    setDraftColumnFilters((previous) => ({
-      ...previous,
-      [key]: []
-    }));
-
-    setActiveFilter(null);
-  }
-
-  function handleSort(key, direction) {
-    setSortConfig({
-      key,
-      direction
-    });
-
-    setActiveFilter(null);
-  }
-
-  function isColumnFilterActive(key) {
-    const selectedValues = columnFilters[key] || [];
-    return selectedValues.length > 0;
-  }
-
-  function handleSearchSubmit(event) {
-    event.preventDefault();
-    setAppliedSearchText(searchText.trim());
-  }
 
   function openDetailsModal() {
     setActionMessage("");
@@ -1039,43 +814,15 @@ function Settings() {
         <div className="space-y-3">
           <div className={oaCardStyles.wrapper}>
             <div className={oaCardStyles.header}>
-              <h2 className={oaCardStyles.headerTitle}>Settings</h2>
+              <h2 className={oaCardStyles.headerTitle}>Personal Details</h2>
             </div>
 
             <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-              <TableToolbar
-                searchValue={searchText}
-                onSearchChange={setSearchText}
-                onSearchClear={clearSearchFilter}
-                onSearchSubmit={handleSearchSubmit}
-                searchActive={appliedSearchText.trim() !== ""}
-                searchPlaceholder="Search settings"
-                hasActiveFilter={hasAnyActiveFilter()}
-                onClearAll={clearAllFilters}
-                loading={loading || loadingTelegram}
-                rightActions={[
-                  {
-                    icon: RefreshCcw,
-                    label: "Refresh",
-                    variant: "refresh",
-                    disabled: loading || loadingTelegram,
-                    onClick: () => loadAll()
-                  },
-                  {
-                    icon: Pencil,
-                    label: "Edit Details",
-                    variant: "default",
-                    disabled: loading || !profile,
-                    onClick: openDetailsModal
-                  },
-                  {
-                    icon: LockKeyhole,
-                    label: "Change Password",
-                    variant: "add",
-                    onClick: openPasswordModal
-                  }
-                ]}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <IconButton icon={RefreshCcw} label="Refresh" variant="refresh" disabled={loading || loadingTelegram} onClick={() => loadAll()} tooltipSide="top" />
+                <IconButton icon={Pencil} label="Edit Details" disabled={loading || !profile} onClick={openDetailsModal} tooltipSide="top" />
+                <IconButton icon={LockKeyhole} label="Change Password" variant="add" onClick={openPasswordModal} tooltipSide="top" />
+              </div>
             </div>
 
             {actionMessage && (
@@ -1087,11 +834,9 @@ function Settings() {
               </div>
             )}
 
-            <div className="flex flex-col bg-black">
-              <section aria-labelledby="personal-details-heading" className="min-w-0 border-b border-oa-border px-4 py-3">
-                <h3 id="personal-details-heading" className="-mx-4 -mt-3 mb-4 border-b border-oa-border bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Personal Details</h3>
+            <div className="min-w-0 bg-black px-4 py-3">
                 <dl className="mt-4 divide-y divide-oa-border">
-                  {filteredRows.filter((row) => row.id !== "telegram").map((row) => (
+                  {settingsRows.filter((row) => row.id !== "telegram").map((row) => (
                     <div key={row.id} className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-x-4 py-3 first:pt-0 sm:grid-cols-[180px_minmax(0,1fr)]">
                       <dt className="text-xs text-oa-muted"><FieldLabel icon={row.icon} label={row.field} /></dt>
                       <dd className="min-w-0 break-words text-left text-xs [&>span]:whitespace-normal">{renderCell(row, { key: "value" })}</dd>
@@ -1099,13 +844,16 @@ function Settings() {
                   ))}
                 </dl>
                 {loading && !profile ? <ScreenLoading message="Loading user details" /> : null}
-              </section>
-              <section aria-labelledby="brokers-heading" className="min-h-28 min-w-0 border-b border-oa-border px-4 py-3">
-                <h3 id="brokers-heading" className="-mx-4 -mt-3 mb-4 border-b border-oa-border bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Brokers</h3>
-              </section>
-              <section aria-labelledby="communications-heading" className="min-w-0 px-4 py-3">
-                <h3 id="communications-heading" className="-mx-4 -mt-3 mb-4 border-b border-oa-border bg-[#1a1a1a] px-4 py-3 text-sm font-bold uppercase tracking-wider text-white">Communications</h3>
-                {filteredRows.filter((row) => row.id === "telegram").map((row) => (
+            </div>
+          </div>
+          <section aria-labelledby="brokers-heading" className={oaCardStyles.wrapper}>
+            <div className={oaCardStyles.header}><h2 id="brokers-heading" className={oaCardStyles.headerTitle}>Brokers</h2></div>
+            <div className="flex min-h-28 items-center justify-center px-4 py-3 text-xs text-oa-muted">No brokers connected.</div>
+          </section>
+          <section aria-labelledby="communications-heading" className={oaCardStyles.wrapper}>
+            <div className={oaCardStyles.header}><h2 id="communications-heading" className={oaCardStyles.headerTitle}>Communications</h2></div>
+            <div className="min-w-0 bg-black px-4 py-3">
+                {settingsRows.filter((row) => row.id === "telegram").map((row) => (
                   <div key={row.id} className="mt-4 grid grid-cols-[140px_minmax(0,1fr)] items-start gap-x-4 sm:grid-cols-[180px_minmax(0,1fr)]">
                     <h4 className="flex items-center gap-2 text-xs font-semibold text-white"><Send size={14} />Telegram</h4>
                     <div className="min-w-0 text-left">{renderCell(row, { key: "value" })}</div>
@@ -1137,7 +885,7 @@ function Settings() {
                     rel="noreferrer"
                     className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted"
                     aria-label="Open Telegram Link"
-                    title="Open Telegram Link"
+
                   >
                     <ExternalLink size={15} />
                   </a>
@@ -1151,9 +899,8 @@ function Settings() {
             ) : null}
 
 
-              </section>
             </div>
-          </div>
+          </section>
         </div>
       </section>
 

@@ -1,10 +1,10 @@
 import json
 from app.app_access import allowed_apps
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 
 from app.database import get_connection
 from app.audit import save_user_history, create_sync_log, create_audit_log
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_admin_or_super_admin
 
 
 router = APIRouter(tags=["Users"])
@@ -54,7 +54,7 @@ def user_row_to_dict(row):
     }
 
 
-@router.get("/users")
+@router.get("/users", dependencies=[Depends(require_admin_or_super_admin)])
 def get_users():
     """
     Get active users only.
@@ -96,12 +96,13 @@ def get_users():
 
 
 @router.get("/users/me")
-def get_logged_in_user(current_user: dict = Depends(get_current_user)):
+def get_logged_in_user(response: Response, current_user: dict = Depends(get_current_user)):
     """
     Get logged-in user profile.
     Frontend calls this after login.
     """
 
+    response.headers["Cache-Control"] = "no-store, private"
     conn = get_connection()
 
     try:
@@ -143,7 +144,7 @@ def get_logged_in_user(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 
-@router.get("/users/{user_id}")
+@router.get("/users/{user_id}", dependencies=[Depends(require_admin_or_super_admin)])
 def get_user(user_id: str):
     """
     Get single user by user_id.
@@ -185,7 +186,7 @@ def get_user(user_id: str):
         conn.close()
 
 
-@router.put("/users/{user_id}")
+@router.put("/users/{user_id}", dependencies=[Depends(require_admin_or_super_admin)])
 def update_user(user_id: str, payload: dict):
     """
     Update user with version control.
@@ -324,7 +325,7 @@ def update_user(user_id: str, payload: dict):
         conn.close()
 
 
-@router.delete("/users/{user_id}")
+@router.delete("/users/{user_id}", dependencies=[Depends(require_admin_or_super_admin)])
 def delete_user(user_id: str, changed_by: str | None = None):
     """
     Soft delete user with version control.
@@ -436,7 +437,7 @@ def delete_user(user_id: str, changed_by: str | None = None):
         conn.close()
 
 
-@router.get("/users/{user_id}/history")
+@router.get("/users/{user_id}/history", dependencies=[Depends(require_admin_or_super_admin)])
 def get_user_history(user_id: str):
     """
     Shows all previous versions of a user.
@@ -497,7 +498,7 @@ def get_user_history(user_id: str):
         conn.close()
 
 
-@router.get("/sync-log")
+@router.get("/sync-log", dependencies=[Depends(require_admin_or_super_admin)])
 def get_sync_log():
     """
     Shows sync/version changes.
@@ -544,7 +545,7 @@ def get_sync_log():
         conn.close()
 
 
-@router.get("/audit-logs")
+@router.get("/audit-logs", dependencies=[Depends(require_admin_or_super_admin)])
 def get_audit_logs():
     """
     Shows readable audit logs.

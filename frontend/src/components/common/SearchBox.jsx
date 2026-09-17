@@ -59,7 +59,7 @@ function SearchBox({
         <span
           className={oaSearchBoxStyles.activeDot}
           aria-hidden="true"
-          title="Search active"
+
         />
       )}
     </div>
