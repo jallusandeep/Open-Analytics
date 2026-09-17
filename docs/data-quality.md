@@ -146,3 +146,137 @@ python -m pytest tests/unit/test_data_quality.py tests/unit/test_data_quality_sp
 Tests use synthetic data and in-memory databases, including action-factor matching,
 malformed dates, fiscal gaps, revisions, exchange calendars, stored adapters and
 preflight exclusion. The live database is not used for verification.
+
+## Detailed execution walkthrough
+
+### 1. Request parsing
+
+`data_quality_schema.py` checks request shape and limits before business rules run.
+For example, a negative stale-session threshold is rejected with HTTP 422 rather
+than interpreted as a market-data problem. Raw candle values remain uncoerced so
+the validator can report invalid observations instead of silently repairing them.
+
+`data_quality_routes.py` applies authentication and delegates to either the pure
+validator or the stored-data repository. Database connections are closed after
+each request. Reading a report does not write corrected candles back to storage.
+
+### 2. Identify the expected records
+
+For daily OHLCV, the validator groups input records by session date and walks the
+union of expected dates and observed dates. It creates a synthetic missing-row
+result when an expected session has no candle. An observed date outside the
+calendar becomes an unexpected-session result. Invalid date values are reported
+with their input `source_row` index.
+
+Two candles on one date produce one duplicate-date result. Neither candle is
+chosen as authoritative. `duplicate_count` counts the extra observations; coverage
+counts that date once. The stored adapter scopes provider, source, mode and daily
+interval so multiple sources are not accidentally interpreted as duplicates.
+
+### 3. Validate candle values
+
+All four prices must be finite and greater than zero. High must be at least every
+other OHLC value, and low must be at most every other value. Volume must be finite
+and nonnegative. A missing or invalid volume is critical; zero volume is a warning.
+A candle explicitly naming another instrument is critical.
+
+The validator then compares consecutive usable closes. Missing/invalid sessions
+reset that comparison. A configured run of unchanged closes produces a stale
+warning; it does not prove the exchange record is wrong. Symbol changes produce
+a warning because a legitimate rename also needs reference-history confirmation.
+
+### 4. Explain unusual moves
+
+A sufficiently large close-to-close move first becomes an outlier. Action records
+are independently validated before being considered explanatory. A price-changing
+action must have a usable factor or dividend amount and match the observed move
+within tolerance. Mere coincidence with an action date cannot suppress a warning.
+
+Example with prior close 100 and current close 50:
+
+| Evidence | Result |
+| --- | --- |
+| Valid split, adjustment factor 0.5 | Informational corporate-action move |
+| Symbol change only | Unexplained-move warning |
+| Split with no usable factor | Unexplained-move warning |
+| Split factor 0.25 | Unexplained-move warning because the move does not match |
+| Invalid OHLC bounds | Critical data failure regardless of an action |
+
+`confirmed_market_moves` represents verification supplied by the caller; the
+engine itself does not consult exchange announcements or confirm news externally.
+
+### 5. Validate auxiliary records
+
+Fundamentals are grouped by instrument, statement type and period type. Duplicate
+identity additionally includes period end and revision. Revisions are checked in
+revision-number order against their report dates. Inferred fiscal gaps cover only
+the interval between observed periods; discovering an absent latest filing needs
+an explicitly supplied expected reporting calendar.
+
+News duplicate identity uses instrument plus URL, falling back to title and
+timestamp. This identifies duplicate records, not all semantically similar news.
+Missing/future timestamps and missing source/title values are reported. Naive
+timestamps are interpreted as UTC with a warning. A supplied reference mapping
+allows instrument and ticker checks; a current mapping can flag historical renames.
+
+Corporate actions normalize aliases before comparing identities. Conflicting
+factors remain critical. The validator does not calculate cumulative price/volume
+adjustments; that is Step 03's responsibility. Reference checks validate identity
+fields, duplicates and chronological listing/delisting boundaries.
+
+### 6. Interpret the report correctly
+
+An isolated missing candle can have `quality_status: WARNING` and `is_valid: false`.
+These fields answer different questions: severity describes the issue, while
+validity says whether that observation can be used. Never accept a missing row
+because its score is relatively high. A zero-volume candle may remain a warning
+in Data Quality; the Returns engine applies a stricter no-trading rule.
+
+Instrument coverage measures presence, not correctness. Consequently, 100%
+coverage can coexist with critical duplicate/price failures. The average quality
+score likewise does not override critical status or row exclusions.
+
+## Python usage and downstream integration
+
+```python
+from app.engines.data_quality.data_quality_service import validate_ohlcv, require_quality
+
+report = validate_ohlcv(
+    instrument_key="EXAMPLE",
+    sessions=["2026-09-14", "2026-09-15"],
+    records=[
+        {"date": "2026-09-14", "open": 100, "high": 102,
+         "low": 99, "close": 101, "volume": 1000},
+        {"date": "2026-09-15", "open": 101, "high": 104,
+         "low": 100, "close": 103, "volume": 1200},
+    ],
+)
+require_quality(report)  # Raises ValueError if the batch is unusable.
+```
+
+The guard is intentionally strict at the batch level. Returns uses per-metric
+validity because a historical gap should not block every unrelated calculation.
+For a Returns snapshot, the producer associates each source observation with its
+quality result, obtains Step 03 adjusted prices and versions, then supplies
+`quality_valid`, `adjustment_valid`, adjustment provenance and historical eligibility.
+The Returns engine also checks its own numeric requirements, missing sessions,
+no-trading state and adjustment availability.
+
+This is an explicit producer contract. The Returns API does not automatically
+fetch a Data Quality report or certify a caller's `quality_valid: true` claim.
+Its immutable stored request preserves the exact inputs used. See `docs/returns.md`
+for calculation examples, versioned storage, label isolation and the full plan.
+
+## Operating checklist
+
+1. Load a complete eligible calendar and historical reference mapping.
+2. Validate supplied records or call a stored-data endpoint.
+3. Inspect critical issues and missing inputs before interpreting scores.
+4. Correct source records or metadata through the collection/reference workflow.
+5. Revalidate the same requested scope after correction.
+6. Pass a consistent validated snapshot to the next engine.
+
+There is no scheduled validation job, persisted report history or repair workflow
+in this module. API calls return reports immediately. Automatic scheduling and
+report persistence remain integration work; restarting the application alone does
+not validate its historical database.

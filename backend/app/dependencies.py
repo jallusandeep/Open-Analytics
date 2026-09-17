@@ -133,7 +133,7 @@ def get_current_user(
 
     apps = allowed_apps(role, access_restrictions)
     path = request.url.path
-    app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/connections/upstox")) else "recom" if path.startswith(("/api/v1/quant-research/", "/api/v1/data-quality/")) else None
+    app_name = "admin" if path.startswith(("/api/v1/admin/", "/api/v1/data/", "/api/v1/connections/upstox")) else "recom" if path.startswith(("/api/v1/quant-research/", "/api/v1/data-quality/", "/api/v1/returns/", "/api/v1/risk/")) else None
     if app_name and app_name not in apps:
         raise HTTPException(status_code=403, detail="App access denied")
     safe_touch_session_last_seen(session[0])

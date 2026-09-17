@@ -208,6 +208,8 @@ from app.db.schema_instruments import ensure_instrument_schema
 from app.db.schema_legacy_data import ensure_legacy_data_schema
 from app.db.schema_fundamentals import ensure_fundamentals_schema
 from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
+from app.engines.returns.returns_repository import ensure_returns_schema
+from app.engines.risk.risk_repository import ensure_risk_schema
 
 
 def init_database():
@@ -220,6 +222,8 @@ def init_database():
         ensure_instrument_schema(conn, safe_execute)
         ensure_legacy_data_schema(conn, safe_execute)
         ensure_fundamentals_schema(conn, safe_execute, migrate_fii_dii_activity_table)
+        ensure_returns_schema(conn)
+        ensure_risk_schema(conn)
         conn.commit()
         print(
             "[DB] Schema ready. "
