@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 import MainLayout from "../../components/layout/MainLayout";
-import AiConnections from "./AiConnections";
+import axiosClient from "../../api/axiosClient";
 import Spinner from "../../components/common/Spinner";
 import IconButton from "../../components/common/IconButton";
 import Tooltip from "../../components/common/Tooltip";
@@ -49,7 +49,9 @@ const emptyFormData = {
   redirect_url: "",
   analytical_token: "",
   access_token: "",
-  bot_token: ""
+  bot_token: "",
+  name: "",
+  model: ""
 };
 
 const brokers = [
@@ -66,6 +68,20 @@ const brokers = [
     description: "Bot alert connection.",
     apiSupported: true,
     icon: Send
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    description: "AI model connection.",
+    apiSupported: true,
+    icon: PlugZap
+  },
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    description: "AI model connection.",
+    apiSupported: true,
+    icon: PlugZap
   }
 ];
 
@@ -336,13 +352,17 @@ function ConnectionFormModal({
   onSave,
   onInputChange,
   onClearField,
-  onUseDefaultRedirectUrl
+  onUseDefaultRedirectUrl,
+  aiModels,
+  aiModelsLoading,
+  aiModelsError
 }) {
   const selectedBroker =
     brokers.find((broker) => broker.id === formData.provider) || null;
 
   const isUpstox = formData.provider === "upstox";
   const isTelegram = formData.provider === "telegram";
+  const isAi = ["openai", "gemini"].includes(formData.provider);
   const hasProviderSelected = Boolean(selectedBroker);
 
   const title = mode === "edit" ? "Edit Connection" : "Add Connection";
@@ -576,6 +596,14 @@ function ConnectionFormModal({
           </div>
         ) : null}
 
+        {isAi ? (
+          <div className="space-y-3">
+            <div><label className={oaFormTextStyles.label}>Connection Name</label><div className="mt-1"><Input name="name" value={formData.name} onChange={onInputChange} placeholder="Enter connection name" autoFocus /></div></div>
+            <div><label className={oaFormTextStyles.label}>API Key</label><div className="mt-1"><Input name="api_key" type="password" value={formData.api_key} onChange={onInputChange} placeholder={selectedConnection?.has_api_key ? "Saved - leave empty to keep" : "Enter API key"} /></div></div>
+            <div><label className={oaFormTextStyles.label}>Available Models</label><div className="mt-1"><Select value={formData.model} onChange={(event) => onInputChange({ target: { name: "model", value: event.target.value } })} options={aiModels.length ? aiModels : [{ value: "", label: aiModelsLoading ? "Loading models..." : "Enter API key to load models" }]} disabled={aiModelsLoading || !aiModels.length} minWidth="w-full" ariaLabel="Available AI models" /></div>{aiModelsError ? <p className="mt-1 text-xs text-red-400">{aiModelsError}</p> : null}</div>
+          </div>
+        ) : null}
+
         <button type="submit" className="hidden" aria-hidden="true">
           Submit {selectedBroker?.name || "connection"}
         </button>
@@ -586,6 +614,10 @@ function ConnectionFormModal({
 
 function Connections() {
   const [connections, setConnections] = useState([]);
+  const [aiConnections, setAiConnections] = useState([]);
+  const [aiModels, setAiModels] = useState([]);
+  const [aiModelsLoading, setAiModelsLoading] = useState(false);
+  const [aiModelsError, setAiModelsError] = useState("");
   const [formData, setFormData] = useState(emptyFormData);
   const [formMode, setFormMode] = useState("closed");
 
@@ -626,7 +658,8 @@ function Connections() {
   }, [connections]);
 
   const rows = useMemo(() => {
-    return brokers
+    const providerRows = brokers
+      .filter((broker) => !["openai", "gemini"].includes(broker.id))
       .map((broker) => {
         const connection = connectionsByProvider[broker.id] || null;
 
@@ -644,7 +677,25 @@ function Connections() {
         };
       })
       .filter(Boolean);
-  }, [connectionsByProvider, currentUser]);
+    const aiRows = aiConnections.map((connection) => {
+      const providerId = connection.provider;
+      const broker = brokers.find((item) => item.id === providerId);
+      return {
+        id: `ai:${connection.connection_id}`,
+        broker,
+        connection,
+        connection_kind: "ai",
+        provider: `${providerId === "openai" ? "OpenAI" : "Google Gemini"} · ${connection.name}`,
+        provider_id: providerId,
+        description: connection.model,
+        status: normalizeConnectionStatus(connection.connection_status || "saved"),
+        updated_at: connection.updated_at,
+        token_expiry: "--",
+        updated_by: formatUserName(currentUser)
+      };
+    });
+    return [...providerRows, ...aiRows];
+  }, [connectionsByProvider, aiConnections, currentUser]);
 
   const headerValues = useMemo(() => {
     return connectionColumns.reduce((result, column) => {
@@ -726,7 +777,9 @@ function Connections() {
   }, [formData.provider]);
 
   const selectedConnection = formData.provider
-    ? connectionsByProvider[formData.provider] || null
+    ? (["openai", "gemini"].includes(formData.provider)
+      ? aiConnections.find((item) => item.connection_id === formData.connection_id) || null
+      : connectionsByProvider[formData.provider] || null)
     : null;
 
   const formOpen = formMode !== "closed";
@@ -820,8 +873,12 @@ function Connections() {
     setLoading(true);
 
     try {
-      const response = await getConnections();
+      const [response, aiResponse] = await Promise.all([
+        getConnections(),
+        isAdminControlAllowed ? axiosClient.get("/connections/ai") : Promise.resolve({ data: { connections: [] } })
+      ]);
       setConnections(response.data.connections || []);
+      setAiConnections(aiResponse.data.connections || []);
 
       if (showRefreshToast) {
         showToast("Connections refreshed successfully.", "success");
@@ -842,6 +899,8 @@ function Connections() {
   function openAddForm(provider = "") {
     setFormMode("add");
     setFormData({ ...emptyFormData, provider });
+    setAiModels([]);
+    setAiModelsError("");
   }
 
   function openEditForm(provider) {
@@ -854,6 +913,13 @@ function Connections() {
       api_key: connection?.api_key || "",
       redirect_url: connection?.redirect_url || ""
     });
+  }
+
+  function openEditAiForm(connection) {
+    setFormMode("edit");
+    setAiModels([]);
+    setAiModelsError("");
+    setFormData({ ...emptyFormData, ...connection, provider: connection.provider, api_key: "" });
   }
 
   function closeForm() {
@@ -873,6 +939,8 @@ function Connections() {
         ...emptyFormData,
         provider: value
       });
+      setAiModels([]);
+      setAiModelsError("");
       return;
     }
 
@@ -881,6 +949,27 @@ function Connections() {
       [name]: value
     }));
   }
+
+  useEffect(() => {
+    if (!formOpen || !["openai", "gemini"].includes(formData.provider)) return undefined;
+    const connectionId = formData.connection_id;
+    if (!formData.api_key.trim() && !connectionId) { setAiModels([]); return undefined; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setAiModelsLoading(true);
+      setAiModelsError("");
+      try {
+        const response = await axiosClient.post("/connections/ai/models", { provider: formData.provider, api_key: formData.api_key.trim() || null, connection_id: connectionId || null }, { signal: controller.signal, timeout: 60000 });
+        const models = response.data.models || [];
+        setAiModels(models);
+        setFormData((previous) => ({ ...previous, model: models.some((item) => item.value === previous.model) ? previous.model : (models[0]?.value || "") }));
+        if (!models.length) setAiModelsError("No models available for this API key.");
+      } catch (error) {
+        if (!controller.signal.aborted) setAiModelsError(getErrorMessage(error, "Unable to load models for this API key."));
+      } finally { if (!controller.signal.aborted) setAiModelsLoading(false); }
+    }, 500);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [formOpen, formData.provider, formData.api_key, formData.connection_id]);
 
   function handleClearField(fieldName) {
     setFormData((previous) => ({
@@ -923,6 +1012,27 @@ function Connections() {
 
     const analyticalToken = formData.analytical_token.trim();
     const accessToken = formData.access_token.trim();
+    const isAiProvider = ["openai", "gemini"].includes(formBroker.id);
+
+    if (isAiProvider) {
+      if (!formData.name.trim() || !aiModels.some((item) => item.value === formData.model) || (!selectedConnection && !apiKey)) {
+        showToast("Enter a connection name and API key, then select an available model.", "warning");
+        return;
+      }
+      setSaving(true);
+      try {
+        const payload = { name: formData.name.trim(), provider: formBroker.id, model: formData.model, api_key: apiKey || null };
+        if (selectedConnection) await axiosClient.put(`/connections/ai/${selectedConnection.connection_id}`, payload);
+        else await axiosClient.post("/connections/ai", payload);
+        await loadConnections(false);
+        showToast("AI connection saved successfully.", "success");
+        setFormMode("closed");
+        setFormData(emptyFormData);
+      } catch (error) {
+        showToast(getErrorMessage(error, "Unable to save AI connection."), "error");
+      } finally { setSaving(false); }
+      return;
+    }
 
     if (formBroker.id === "upstox") {
       const hasStoredApiSecret =
@@ -1103,6 +1213,18 @@ function Connections() {
     }
   }
 
+  async function handleTestAi(connection) {
+    if (!isAdminControlAllowed) return;
+    setTestingProvider(`ai:${connection.connection_id}`);
+    try {
+      await axiosClient.post(`/connections/ai/${connection.connection_id}/test`, null, { timeout: 130000 });
+      showToast("API key and model access verified.", "success");
+      await loadConnections(false);
+    } catch (error) {
+      showToast(getErrorMessage(error, "Unable to test AI connection."), "error");
+    } finally { setTestingProvider(""); }
+  }
+
   async function handleDisconnect(provider) {
     const broker = brokers.find((item) => item.id === provider);
 
@@ -1152,6 +1274,18 @@ function Connections() {
     }
   }
 
+  async function handleDisconnectAi(connection) {
+    if (!isAdminControlAllowed) return;
+    setDisconnectingProvider(`ai:${connection.connection_id}`);
+    try {
+      await axiosClient.delete(`/connections/ai/${connection.connection_id}`);
+      await loadConnections(false);
+      showToast("AI connection deleted successfully.", "success");
+    } catch (error) {
+      showToast(getErrorMessage(error, "Unable to delete AI connection."), "error");
+    } finally { setDisconnectingProvider(""); }
+  }
+
   function renderCell(row, column) {
     if (column.key === "provider") {
       return (
@@ -1194,8 +1328,9 @@ function Connections() {
 
   function renderActions(row) {
     const hasConnection = Boolean(row.connection);
-    const isTesting = testingProvider === row.broker.id;
-    const isDeleting = disconnectingProvider === row.broker.id;
+    const actionKey = row.connection_kind === "ai" ? row.id : row.broker.id;
+    const isTesting = testingProvider === actionKey;
+    const isDeleting = disconnectingProvider === actionKey;
     const isAuthorizing = authorizingProvider === row.broker.id;
 
     return (
@@ -1207,11 +1342,11 @@ function Connections() {
           disabled={
             !hasConnection || !row.broker.apiSupported || !isAdminControlAllowed
           }
-          onClick={() => openEditForm(row.broker.id)}
+          onClick={() => row.connection_kind === "ai" ? openEditAiForm(row.connection) : openEditForm(row.broker.id)}
           tooltipSide="left"
         />
 
-        {row.broker.id === "upstox" ? (
+        {row.connection_kind !== "ai" && row.broker.id === "upstox" ? (
           <Tooltip
             text={
               isAuthorizing ? "Generating access token" : "Generate access token"
@@ -1255,7 +1390,7 @@ function Connections() {
               !row.broker.apiSupported ||
               !isAdminControlAllowed
             }
-            onClick={() => handleTest(row.broker.id)}
+            onClick={() => row.connection_kind === "ai" ? handleTestAi(row.connection) : handleTest(row.broker.id)}
             className="flex h-8 w-8 items-center justify-center rounded border border-oa-border bg-black text-oa-muted outline-none transition hover:bg-oa-card hover:text-white focus:border-oa-muted disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={isTesting ? "Testing connection" : "Test connection"}
           >
@@ -1279,7 +1414,7 @@ function Connections() {
               !row.broker.apiSupported ||
               !isAdminControlAllowed
             }
-            onClick={() => handleDisconnect(row.broker.id)}
+            onClick={() => row.connection_kind === "ai" ? handleDisconnectAi(row.connection) : handleDisconnect(row.broker.id)}
             className="flex h-8 w-8 items-center justify-center rounded border border-red-500/30 bg-red-950/20 text-red-300 outline-none transition hover:border-red-500/60 hover:bg-red-950/40 hover:text-red-200 focus:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={isDeleting ? "Deleting connection" : "Delete connection"}
           >
@@ -1294,7 +1429,8 @@ function Connections() {
     );
   }
 
-  function renderConnectionTable(title, providerId, emptyMessage) {
+  function renderConnectionTable() {
+    const title = "Connections";
     return (
       <div className={oaCardStyles.wrapper}>
         <div className={oaCardStyles.header}>
@@ -1322,19 +1458,19 @@ function Connections() {
             loading={loading}
             rightActions={[
               { icon: RefreshCcw, label: `Refresh ${title.toLowerCase()}`, variant: "refresh", disabled: loading, onClick: () => loadConnections(true) },
-              { icon: Plus, label: `Add ${providerId} connection`, variant: "add", disabled: !isAdminControlAllowed, onClick: () => openAddForm(providerId) }
+              { icon: Plus, label: "Add connection", variant: "add", disabled: !isAdminControlAllowed, onClick: () => openAddForm() }
             ]}
           />
         </div>
         <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
           <DataTable
             columns={connectionColumns}
-            rows={filteredRows.filter((row) => row.provider_id === providerId)}
+            rows={filteredRows}
             loading={loading}
             loadingMessage={`Loading ${title.toLowerCase()}`}
             loadingPlacement="table"
             stateMessageMinHeight={64}
-            emptyMessage={emptyMessage}
+            emptyMessage="No connections found."
             gridTemplateColumns={connectionGridTemplateColumns}
             minWidth="min-w-full"
             getRowKey={(row) => row.id}
@@ -1383,11 +1519,8 @@ function Connections() {
             </div>
           )}
 
-          {renderConnectionTable("Broker Data Connections", "upstox", "No broker data connections found.")}
-          {renderConnectionTable("Communication Connections", "telegram", "No communication connections found.")}
+          {renderConnectionTable()}
         </div>
-
-        <div className="mt-3"><AiConnections allowed={isAdminControlAllowed} /></div>
 
         <ConnectionFormModal
           open={formOpen}
@@ -1401,6 +1534,9 @@ function Connections() {
           onInputChange={handleInputChange}
           onClearField={handleClearField}
           onUseDefaultRedirectUrl={handleUseDefaultRedirectUrl}
+          aiModels={aiModels}
+          aiModelsLoading={aiModelsLoading}
+          aiModelsError={aiModelsError}
         />
       </section>
     </MainLayout>
