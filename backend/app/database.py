@@ -206,7 +206,7 @@ def migrate_fii_dii_activity_table(conn):
 from app.db.schema_identity import ensure_identity_schema
 from app.db.schema_instruments import ensure_instrument_schema
 from app.db.schema_ai import ensure_ai_schema
-from app.services.security_reference import ensure_reference_schema, migrate_legacy_reference
+from app.services.security_reference import ensure_reference_schema, migrate_legacy_reference, sync_reference_if_empty
 from app.db.schema_legacy_data import ensure_legacy_data_schema
 from app.db.schema_fundamentals import ensure_fundamentals_schema
 from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
@@ -239,7 +239,14 @@ def init_database():
         ensure_corporate_action_schema(conn)
         if not reference_exists:
             migrate_legacy_reference(conn)
+        reference_seed = sync_reference_if_empty(conn)
         conn.commit()
+        if reference_seed:
+            print(
+                "[DB] Reference Data seeded from Current Instruments: "
+                f"{reference_seed['securities']} securities, "
+                f"{reference_seed['listings']} listings."
+            )
         print(
             "[DB] Schema ready. "
             f"Existing items skipped: {DB_SCHEMA_STATS['already_exists']}, "
