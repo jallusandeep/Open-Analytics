@@ -213,6 +213,9 @@ from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
 from app.engines.returns.returns_repository import ensure_returns_schema
 from app.engines.risk.risk_repository import ensure_risk_schema
 from app.engines.liquidity.liquidity_repository import ensure_liquidity_schema
+from app.engines.universe import ensure_universe_engine_schema
+from app.engines.data_quality import ensure_data_quality_schema
+from app.engines.corporate_actions import ensure_corporate_action_schema
 
 
 def init_database():
@@ -231,6 +234,9 @@ def init_database():
         ensure_liquidity_schema(conn)
         reference_exists = conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='security_reference'").fetchone()[0]
         ensure_reference_schema(conn)
+        ensure_universe_engine_schema(conn)
+        ensure_data_quality_schema(conn)
+        ensure_corporate_action_schema(conn)
         if not reference_exists:
             migrate_legacy_reference(conn)
         conn.commit()

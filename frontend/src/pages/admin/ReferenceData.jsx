@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { referenceViews as VIEWS } from "../../utils/referenceNavigation";
-import { Download, RefreshCcw, Upload } from "lucide-react";
+import { Download, History, RefreshCcw, Upload, X } from "lucide-react";
 
 import axiosClient from "../../api/axiosClient";
 import MainLayout from "../../components/layout/MainLayout";
@@ -10,12 +11,44 @@ import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
 import Modal from "../../components/common/Modal";
 import Select from "../../components/common/Select";
-import IconButton from "../../components/common/IconButton";
 import { useToast } from "../../components/common/ToastProvider";
 import { oaCardStyles } from "../../components/common/uiStyles";
 
 const BLANK_FILTER_VALUE = "__oa_reference_blank__";
 const displayFilterValue = (value) => value === "" ? BLANK_FILTER_VALUE : value;
+
+const auditValue = (value) => value === null || value === undefined || value === "" ? "--" : String(value);
+
+function AuditTrailDrawer({ open, loading, events, total, onClose }) {
+  const [retained, setRetained] = useState(open);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setRetained(open), open ? 0 : 180);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open, onClose]);
+  if (!open && !retained) return null;
+  return createPortal(<div className={`fixed inset-0 z-[10000] ${open ? "" : "pointer-events-none"}`}>
+    <button type="button" aria-label="Close audit trail" onClick={onClose} className={`absolute inset-0 bg-black/65 transition-opacity duration-150 ${open ? "opacity-100" : "opacity-0"}`} />
+    <aside role="dialog" aria-modal="true" aria-label="Security type mapping audit trail" className={`absolute inset-y-0 right-0 flex w-full max-w-xl flex-col border-l border-oa-border bg-black shadow-2xl transition-transform duration-[180ms] ease-out ${open ? "translate-x-0" : "translate-x-full"}`}>
+      <header className="flex min-h-12 items-center justify-between border-b border-oa-border bg-zinc-800/70 px-4">
+        <div><h2 className={oaCardStyles.headerTitle}>Audit Trail</h2><p className="mt-0.5 font-mono text-[10px] text-oa-muted">Security Type Mapping · {total} events</p></div>
+        <button type="button" onClick={onClose} aria-label="Close audit trail" className="flex h-8 w-8 items-center justify-center rounded border border-red-500/40 bg-red-950/20 text-red-400 transition hover:bg-red-950/50"><X size={14} /></button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {loading ? <div className="flex h-full items-center justify-center font-mono text-xs text-oa-muted">Loading audit trail...</div> : events.length === 0 ? <div className="flex h-full items-center justify-center font-mono text-xs text-oa-muted">No mapping changes recorded.</div> : <div className="space-y-2">{events.map((event, eventIndex) => <article key={`${event.at}-${event.exchange}-${event.source_type}-${eventIndex}`} className="rounded border border-oa-border bg-oa-panel/30 p-3 font-mono">
+          <div className="flex flex-wrap items-start justify-between gap-2"><div className="text-[11px] font-semibold text-white">{event.exchange} / {event.segment} / {event.source_type}{event.security_type ? ` / ${event.security_type}` : ""}</div><time className="text-[10px] text-oa-muted">{event.at ? new Date(event.at).toLocaleString() : "--"}</time></div>
+          <div className="mt-2 grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10px]"><span className="text-oa-muted">Who</span><span className="text-white">{event.actor || "--"}</span><span className="text-oa-muted">Tab</span><span className="text-white">{event.tab || "--"}</span><span className="text-oa-muted">Method</span><span className="text-sky-300">{String(event.action || "CHANGE").replaceAll("_", " ")} · {String(event.source || "UNKNOWN").replaceAll("_", " ")}</span></div>
+          <div className="mt-2 space-y-1.5">{Object.entries(event.changes || {}).map(([field, change]) => <div key={field} className="grid grid-cols-[72px_120px_minmax(0,1fr)] gap-2 border-t border-oa-border/60 pt-1.5 text-[11px]"><span className="text-oa-muted">Column</span><span className="text-white">{field.replaceAll("_", " ")}</span><span className="min-w-0 break-words"><span className="text-red-300">{auditValue(change?.from)}</span><span className="px-2 text-oa-muted">→</span><span className="text-emerald-300">{auditValue(change?.to)}</span></span></div>)}</div>
+        </article>)}</div>}
+      </div>
+    </aside>
+  </div>, document.body);
+}
 
 function parseCsv(content) {
   const rows = [];
@@ -60,6 +93,9 @@ function ReferenceDataPage({ view }) {
   const fileRef = useRef(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloadType, setDownloadType] = useState("data");
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditData, setAuditData] = useState({ events: [], total: 0 });
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -70,13 +106,13 @@ function ReferenceDataPage({ view }) {
   const [columnFilters, setColumnFilters] = useState({});
   const [draftColumnFilters, setDraftColumnFilters] = useState({});
   const [activeFilter, setActiveFilter] = useState(null);
-  const [sort, setSort] = useState({ key: view === "listings" ? "instrument_key" : "isin", direction: "asc" });
+  const [sort, setSort] = useState({ key: view === "listings" ? "instrument_key" : view === "types" ? "exchange" : "isin", direction: "asc" });
   const filters = JSON.stringify(columnFilters);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await axiosClient.get(`/reference-data/tables/${view}`, { params: { search: appliedSearch, page, page_size: 50, filters, sort_by: sort.key, sort_direction: sort.direction } });
+      const response = await axiosClient.get(`/reference-data/tables/${view}`, { params: { search: appliedSearch, page, page_size: view === "types" ? 500 : 50, filters, sort_by: sort.key, sort_direction: sort.direction } });
       setData(response.data);
     } catch {
       showToast("Unable to load reference data.", "error");
@@ -150,6 +186,19 @@ function ReferenceDataPage({ view }) {
     } finally { setBusy(false); }
   }
 
+  async function openAuditTrail() {
+    setAuditOpen(true);
+    setAuditLoading(true);
+    try {
+      const response = await axiosClient.get("/reference-data/tables/types/audit", { params: { limit: 500 } });
+      setAuditData(response.data);
+    } catch {
+      showToast("Unable to load the audit trail.", "error");
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
   return <MainLayout>
     <section className="oa-app-font h-screen min-h-0 overflow-hidden bg-black p-3">
       <div className={`${oaCardStyles.wrapper} flex h-full min-h-0 flex-col`}>
@@ -166,12 +215,14 @@ function ReferenceDataPage({ view }) {
                 showToast(response.data.message, "success"); setSyncing(true);
               } catch (error) { showToast(error.response?.data?.detail || "Unable to sync Upstox instruments.", "error"); } finally { setBusy(false); }
             } },
-            { icon: Upload, label: "Upload CSV", variant: "add", disabled: loading || busy, onClick: () => fileRef.current?.click() }
-          ]} trailingContent={<IconButton icon={Download} label="Download data" disabled={loading || busy} onClick={() => setDownloadOpen(true)} tooltipSide="top" />} />
+            { icon: Upload, label: "Upload CSV", variant: "add", disabled: loading || busy, onClick: () => fileRef.current?.click() },
+            { icon: Download, label: "Download data", disabled: loading || busy, onClick: () => setDownloadOpen(true) },
+            ...(view === "types" ? [{ icon: History, label: "Open audit trail", disabled: loading || busy, onClick: openAuditTrail }] : [])
+          ]} trailingContent={view === "types" && data.summary ? <span className="ml-auto whitespace-nowrap text-right text-[10px] text-oa-muted" aria-label={`Mapping completeness: ${data.summary.complete} of ${data.summary.total}`}>Mapped <strong className="text-white">{data.summary.complete}/{data.summary.total}</strong> ({data.summary.completion_percent}%) · Partial {data.summary.partial} · Unmapped {data.summary.unmapped}</span> : null} />
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference data CSV" />
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto [&>div]:border-0">
-          <DataTable columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => `${row.instrument_key || row.isin}:${row.index_code || row.identifier_type || ""}:${row.old_value || ""}:${row.new_value || ""}:${row.effective_from || ""}`} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
+          <DataTable columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":")} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
             activeFilter,
             headerValues: Object.fromEntries(Object.entries(data.header_values || {}).map(([key, values]) => [key, values.map((value) => ({ value: displayFilterValue(value), label: value === "" ? "--" : value }))])),
             columnFilters: Object.fromEntries(Object.entries(columnFilters).map(([key, values]) => [key, values.map(displayFilterValue)])),
@@ -195,5 +246,6 @@ function ReferenceDataPage({ view }) {
         <button type="submit" disabled={busy} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-white font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download size={14} />{busy ? "Downloading..." : "Download"}</button>
       </form>
     </Modal>
+    <AuditTrailDrawer open={auditOpen} loading={auditLoading} events={auditData.events} total={auditData.total} onClose={() => setAuditOpen(false)} />
   </MainLayout>;
 }

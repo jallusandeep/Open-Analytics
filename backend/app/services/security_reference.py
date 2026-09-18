@@ -19,14 +19,57 @@ LISTING = {
 }
 INDEX = {"isin": "VARCHAR", "index_code": "VARCHAR", "index_name": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "is_current": "BOOLEAN"}
 HISTORY = {"isin": "VARCHAR", "identifier_type": "VARCHAR", "old_value": "VARCHAR", "new_value": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "change_reason": "VARCHAR"}
+TYPE_MAPPING = {"exchange": "VARCHAR", "segment": "VARCHAR", "source_type": "VARCHAR", "security_type": "VARCHAR", "instrument_type": "VARCHAR", "gbo_type": "VARCHAR", "description": "VARCHAR", "mapping_source": "VARCHAR", "mapping_updated_at": "TIMESTAMP", "history_json": "VARCHAR", "is_active": "BOOLEAN", "source_updated_at": "TIMESTAMP"}
 TABLES = {
     "securities": ("security_reference", MASTER, ["isin"]),
     "listings": ("security_listing_reference", LISTING, ["instrument_key"]),
     "indices": ("security_index_membership", INDEX, ["isin", "index_code", "effective_from"]),
-    "identifiers": ("security_identifier_history", HISTORY, ["isin", "identifier_type", "old_value", "new_value", "effective_from"])
+    "identifiers": ("security_identifier_history", HISTORY, ["isin", "identifier_type", "old_value", "new_value", "effective_from"]),
+    "types": ("security_type_mapping", TYPE_MAPPING, ["exchange", "segment", "source_type", "security_type"])
 }
 MASTER_EDITABLE = {"company_name", "short_name", "security_class", "macro_sector", "sector", "industry", "basic_industry", "market_cap_bucket", "listing_status", "is_active", "is_listed", "is_suspended", "is_delisted", "listing_date", "face_value", "classification_source"}
 LISTING_EDITABLE = {"series", "listing_status", "is_active"}
+TYPE_EDITABLE = {"instrument_type", "gbo_type", "description", "is_active"}
+
+
+def default_type_mapping(exchange, source_type, security_type):
+    """Return conservative normalized mappings based on exchange-published series."""
+    source_type = source_type.upper()
+    security_type = security_type.upper()
+    if exchange == "BSE":
+        mapping = {
+            "E": ("ETF", "ETF", "BSE ETF group"),
+            "F": ("DEBT", "FIXED_INCOME", "BSE fixed-income group"),
+            "G": ("GOVERNMENT_SECURITY", "FIXED_INCOME", "BSE government-security group"),
+            "IF": ("INVIT", "ALTERNATIVE_LISTED", "BSE infrastructure investment trust group"),
+            "M": ("SME_EQUITY", "COMMON_EQUITY", "BSE SME equity group"),
+            "MS": ("SME_EQUITY", "COMMON_EQUITY", "BSE SME equity group"),
+            "MT": ("SME_EQUITY", "COMMON_EQUITY", "BSE SME trade-to-trade equity group"),
+        }
+        if source_type in mapping:
+            return mapping[source_type]
+        if source_type in {"A", "B", "P", "R", "T", "TS", "X", "XT", "Z", "ZP"}:
+            return "EQUITY", "COMMON_EQUITY", "BSE equity trading group"
+    if exchange == "NSE":
+        if source_type in {"EQ", "BE", "BZ"}:
+            return "EQUITY", "COMMON_EQUITY", "NSE fully paid equity/ETF series; review ETFs manually"
+        if source_type in {"SM", "ST", "SZ"}:
+            return "SME_EQUITY", "COMMON_EQUITY", "NSE SME equity series"
+        if source_type in {"MF", "ME"}:
+            return "MUTUAL_FUND", "FUND", "NSE mutual-fund unit series"
+        if source_type == "IV":
+            return "INVIT", "ALTERNATIVE_LISTED", "NSE InvIT unit series"
+        if source_type in {"RR", "RT"}:
+            return "REIT", "ALTERNATIVE_LISTED", "NSE REIT unit series"
+        if source_type == "GB":
+            return "GOLD_BOND", "FIXED_INCOME", "NSE sovereign gold-bond series"
+        if source_type in {"GS", "SG", "TB"}:
+            return "GOVERNMENT_SECURITY", "FIXED_INCOME", "NSE government-security series"
+        if source_type.startswith("W"):
+            return "WARRANT", "OTHER_SECURITY", "NSE convertible-warrant series"
+    if security_type in {"SME", "IPO", "RELIST", "PCA", "NORMAL"}:
+        return None, None, f"Upstox security status: {security_type}"
+    return None, None, None
 
 def is_equity_instrument(segment, instrument_type):
     segment = str(segment or "").strip().upper()
@@ -38,6 +81,63 @@ def ensure_reference_schema(conn):
         definition = ", ".join(f"{key} {kind}" for key, kind in columns.items())
         extra = ", manual_fields VARCHAR DEFAULT '[]'" if table in {"security_reference", "security_listing_reference"} else ""
         conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({definition}{extra}, PRIMARY KEY ({', '.join(keys)}))")
+    mapping_columns = {row[1] for row in conn.execute("PRAGMA table_info('security_type_mapping')").fetchall()}
+    if "source_type" not in mapping_columns:
+        conn.execute("ALTER TABLE security_type_mapping RENAME COLUMN instrument_type TO source_type")
+        conn.execute("ALTER TABLE security_type_mapping ADD COLUMN instrument_type VARCHAR")
+        mapping_columns = {row[1] for row in conn.execute("PRAGMA table_info('security_type_mapping')").fetchall()}
+    for column in ("mapping_source", "mapping_updated_at", "history_json"):
+        if column not in mapping_columns:
+            conn.execute(f"ALTER TABLE security_type_mapping ADD COLUMN {column} {TYPE_MAPPING[column]}")
+
+
+def mapping_history(value):
+    try:
+        history = json.loads(value or "[]")
+        return history if isinstance(history, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def append_mapping_history(old, record, action, source, changed_fields=None, occurred_at=None, actor=None, tab="Security Type Mapping"):
+    """Append a compact JSON audit event and return the serialized history."""
+    history = mapping_history((old or {}).get("history_json"))
+    tracked = changed_fields or ["instrument_type", "gbo_type", "description", "is_active"]
+    changes = {
+        field: {"from": (old or {}).get(field), "to": record.get(field)}
+        for field in tracked if (old or {}).get(field) != record.get(field)
+    }
+    if not old or not history or changes:
+        history.append({
+            "at": (occurred_at or datetime.now()).isoformat(),
+            "action": action,
+            "source": source,
+            "actor": actor or ("System / Upstox Sync" if source == "UPSTOX_SYNC" else "System"),
+            "tab": tab,
+            "changes": changes,
+        })
+    return json.dumps(history, separators=(",", ":"), default=str)
+
+
+def type_mapping_summary(conn):
+    """Return completeness across active source-type combinations."""
+    rows = conn.execute("""
+        SELECT exchange,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE instrument_type IS NOT NULL AND TRIM(instrument_type) <> ''
+                                  AND gbo_type IS NOT NULL AND TRIM(gbo_type) <> '') AS complete,
+               COUNT(*) FILTER (WHERE (instrument_type IS NULL OR TRIM(instrument_type) = '')
+                                  AND (gbo_type IS NULL OR TRIM(gbo_type) = '')) AS unmapped
+        FROM security_type_mapping WHERE is_active IS TRUE
+        GROUP BY exchange ORDER BY exchange
+    """).fetchall()
+    exchanges = [{"exchange": row[0], "total": row[1], "complete": row[2], "partial": row[1] - row[2] - row[3], "unmapped": row[3]} for row in rows]
+    total = sum(row["total"] for row in exchanges)
+    complete = sum(row["complete"] for row in exchanges)
+    unmapped = sum(row["unmapped"] for row in exchanges)
+    return {"total": total, "complete": complete, "partial": total - complete - unmapped,
+            "unmapped": unmapped, "completion_percent": round(complete * 100 / total, 1) if total else 0,
+            "exchanges": exchanges}
 
 
 def valid_isin(value):
@@ -70,6 +170,7 @@ def write_record(conn, table, columns, keys, record):
 def sync_reference(conn):
     ensure_reference_schema(conn)
     current = row_dicts(conn, "upstox_instruments")
+    sync_type_mappings(conn, current)
     old_master = {row["isin"]: row for row in row_dicts(conn, "security_reference")}
     old_listings = {row["instrument_key"]: row for row in row_dicts(conn, "security_listing_reference")}
     groups, contracts = {}, {}
@@ -157,6 +258,52 @@ def sync_reference(conn):
             persist("securities", record, old, manual)
     counts["profile_updated"] = enrich_reference_from_profiles(conn)
     return counts
+
+
+def sync_type_mappings(conn, current=None):
+    """Discover exchange type combinations without overwriting manual GBO mappings."""
+    ensure_reference_schema(conn)
+    current = current if current is not None else row_dicts(conn, "upstox_instruments")
+    observed = {}
+    for row in current:
+        segment = str(row.get("segment") or "").strip().upper()
+        if segment not in {"NSE_EQ", "BSE_EQ"}:
+            continue
+        exchange = str(row.get("exchange") or segment.split("_")[0]).strip().upper()
+        source_type = str(row.get("instrument_type") or "").strip().upper()
+        security_type = str(row.get("security_type") or "").strip().upper()
+        if not exchange or not source_type:
+            continue
+        observed[(exchange, segment, source_type, security_type)] = row.get("synced_at") or datetime.now()
+    existing = {
+        (row["exchange"], row["segment"], row["source_type"], row["security_type"]): row
+        for row in row_dicts(conn, "security_type_mapping")
+    }
+    for key, updated_at in observed.items():
+        old = existing.get(key, {})
+        default_instrument, default_gbo, default_description = default_type_mapping(key[0], key[2], key[3])
+        inferred_source = old.get("mapping_source")
+        if not inferred_source:
+            if old and (old.get("instrument_type"), old.get("gbo_type")) != (default_instrument, default_gbo):
+                inferred_source = "MANUAL_UPLOAD"
+            else:
+                inferred_source = "EXCHANGE_RULE" if default_instrument and default_gbo else "UNMAPPED"
+        record = dict(exchange=key[0], segment=key[1], source_type=key[2], security_type=key[3],
+                      instrument_type=old.get("instrument_type") or default_instrument,
+                      gbo_type=old.get("gbo_type") or default_gbo,
+                      description=old.get("description") or default_description,
+                      mapping_source=inferred_source,
+                      mapping_updated_at=old.get("mapping_updated_at") or datetime.now(),
+                      is_active=True, source_updated_at=updated_at)
+        action = "DISCOVERED" if not old else "REACTIVATED" if old.get("is_active") is False else "BASELINE"
+        record["history_json"] = append_mapping_history(old, record, action, "UPSTOX_SYNC", occurred_at=updated_at)
+        write_record(conn, *TABLES["types"], record)
+    for key, old in existing.items():
+        if key not in observed and old.get("is_active") is not False:
+            record = dict(old, is_active=False, mapping_updated_at=datetime.now())
+            record["history_json"] = append_mapping_history(old, record, "DEACTIVATED", "UPSTOX_SYNC")
+            write_record(conn, *TABLES["types"], record)
+    return len(observed)
 
 
 def migrate_legacy_reference(conn):

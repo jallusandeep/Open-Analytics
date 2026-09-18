@@ -1,1 +1,1 @@
-"""Research engines and their supporting interfaces."""
+"""Research and calculation engines with their supporting interfaces."""

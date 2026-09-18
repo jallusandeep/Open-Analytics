@@ -1,7 +1,7 @@
 import axiosClient from "./axiosClient";
 
 export function loginUser(payload) {
-  return axiosClient.post("/auth/login", payload);
+  return axiosClient.post("/auth/login", payload, { timeout: 15000 });
 }
 
 export function registerUser(payload) {
@@ -9,7 +9,10 @@ export function registerUser(payload) {
 }
 
 export function getCurrentUser() {
-  return axiosClient.get("/users/me", { headers: { "Cache-Control": "no-cache" } });
+  return axiosClient.get("/users/me", {
+    headers: { "Cache-Control": "no-cache" },
+    timeout: 10000
+  });
 }
 
 export function requestForgotPasswordOtp(payload) {
