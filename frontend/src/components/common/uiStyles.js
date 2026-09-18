@@ -13,8 +13,8 @@ export const oaTableStyles = {
   dataRow:
     "grid items-center border-b border-oa-border py-2 last:border-b-0 hover:bg-oa-panel/60",
   dataText:
-    "font-mono text-[13px] font-medium tracking-[-0.01em] text-oa-text",
-  dataCell: "min-w-0 truncate px-3",
+    "font-mono text-[13px] font-medium tracking-[-0.01em] text-zinc-300",
+  dataCell: "oa-data-table-cell min-w-0 truncate px-3",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
   actionHeader: "relative flex min-w-0 items-center justify-end px-3",
