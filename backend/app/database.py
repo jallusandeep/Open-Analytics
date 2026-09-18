@@ -225,15 +225,12 @@ def init_database():
         ensure_ai_schema(conn)
         ensure_legacy_data_schema(conn, safe_execute)
         ensure_fundamentals_schema(conn, safe_execute, migrate_fii_dii_activity_table)
-<<<<<<< HEAD
         ensure_returns_schema(conn)
         ensure_risk_schema(conn)
-=======
         reference_exists = conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='security_reference'").fetchone()[0]
         ensure_reference_schema(conn)
         if not reference_exists:
             migrate_legacy_reference(conn)
->>>>>>> 48545553ed55a13ecd9551ad9d8049aa9c7e53df
         conn.commit()
         print(
             "[DB] Schema ready. "
