@@ -23,6 +23,8 @@ import { getAppAccess } from "../../utils/appAccess";
 import { clearSessionActivity } from "../../utils/sessionActivity";
 import { viewOptions, ipoCalendarSubTabOptions, companyFundamentalsEndpointOptions } from "../../pages/admin/dataCollection/constants";
 
+const listMenuClass = (active) => `flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs transition ${active ? "bg-sky-950/50 text-sky-300 ring-1 ring-inset ring-sky-500/30" : "text-oa-muted hover:bg-[#242424]"}`;
+
 function MainLayout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -277,7 +279,7 @@ function MainLayout({ children }) {
       {referenceMenuOpen && createPortal(<nav ref={referenceMenuRef} aria-label="Reference Data tables" style={{ top: referenceMenuTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
         {referenceViews.map((view) => {
           const selected = location.pathname === "/reference-data" && (new URLSearchParams(location.search).get("view") || "securities") === view.value;
-          return <NavigationLink key={view.value} to={referencePageUrl(view.value)} onClick={() => { setReferenceMenuOpen(false); navigate(referencePageUrl(view.value)); }} aria-current={selected ? "page" : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] hover:text-sky-300 ${selected ? "bg-[#2b2b2b] text-sky-300" : "text-oa-muted"}`}>
+          return <NavigationLink key={view.value} to={referencePageUrl(view.value)} onClick={() => { setReferenceMenuOpen(false); navigate(referencePageUrl(view.value)); }} aria-current={selected ? "page" : undefined} className={listMenuClass(selected)}>
             {view.label}
           </NavigationLink>;
         })}
@@ -285,6 +287,8 @@ function MainLayout({ children }) {
       {dataMenuOpen && createPortal(<nav ref={dataMenuRef} aria-label="Data pages" style={{ top: dataMenuTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
         {viewOptions.map((view) => {
           const subpages = view.key === "ipo_calendar" ? ipoCalendarSubTabOptions : view.key === "company_fundamentals" ? companyFundamentalsEndpointOptions : [];
+          const selected = location.pathname === "/data" && new URLSearchParams(location.search).get("view") === view.key;
+          const highlighted = selected || dataSubmenu === view.key;
           return <NavigationLink to={dataPageUrl(view.key)} key={view.key} onMouseEnter={(event) => {
             if (!subpages.length) {
               setDataSubmenu(null);
@@ -296,8 +300,8 @@ function MainLayout({ children }) {
             if (!subpages.length) return openDataPage(view.key);
             setDataSubmenuTop(Math.max(8, Math.min(event.currentTarget.getBoundingClientRect().top, window.innerHeight - subpages.length * 30 - 16)));
             setDataSubmenu(view.key);
-          }} aria-expanded={subpages.length ? dataSubmenu === view.key : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] hover:text-sky-300 ${dataSubmenu === view.key ? "bg-[#2b2b2b] text-sky-300" : "text-oa-muted"}`}>
-            {view.label}{subpages.length ? <ChevronRight size={13} className={dataSubmenu === view.key ? "text-sky-400" : ""} /> : null}
+          }} aria-current={selected ? "page" : undefined} aria-expanded={subpages.length ? dataSubmenu === view.key : undefined} className={listMenuClass(highlighted)}>
+            {view.label}{subpages.length ? <ChevronRight size={13} className={highlighted ? "text-sky-400" : ""} /> : null}
           </NavigationLink>;
         })}
       </nav>, document.body)}

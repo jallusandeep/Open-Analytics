@@ -4,9 +4,8 @@ import re
 from datetime import datetime, date
 
 MASTER = {
-    "isin": "VARCHAR", "company_name": "VARCHAR", "short_name": "VARCHAR", "security_class": "VARCHAR", "instrument_type": "VARCHAR",
+    "isin": "VARCHAR", "company_name": "VARCHAR", "index_memberships": "VARCHAR", "short_name": "VARCHAR", "security_class": "VARCHAR", "instrument_type": "VARCHAR",
     "macro_sector": "VARCHAR", "sector": "VARCHAR", "industry": "VARCHAR", "basic_industry": "VARCHAR", "market_cap_bucket": "VARCHAR",
-    "index_memberships": "VARCHAR",
     "has_nse_listing": "BOOLEAN", "has_bse_listing": "BOOLEAN", "is_cross_listed": "BOOLEAN", "listing_count": "INTEGER",
     "primary_exchange": "VARCHAR", "primary_symbol": "VARCHAR", "primary_instrument_key": "VARCHAR",
     "listing_status": "VARCHAR", "is_active": "BOOLEAN", "is_listed": "BOOLEAN", "is_suspended": "BOOLEAN", "is_delisted": "BOOLEAN",
@@ -19,14 +18,15 @@ LISTING = {
     "listing_status": "VARCHAR", "is_active": "BOOLEAN", "is_primary_listing": "BOOLEAN"
 }
 INDEX = {"isin": "VARCHAR", "company_name": "VARCHAR", "index_code": "VARCHAR", "index_name": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "is_current": "BOOLEAN"}
-HISTORY = {"isin": "VARCHAR", "identifier_type": "VARCHAR", "old_value": "VARCHAR", "new_value": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "change_reason": "VARCHAR"}
 TYPE_MAPPING = {"exchange": "VARCHAR", "segment": "VARCHAR", "source_type": "VARCHAR", "security_type": "VARCHAR", "instrument_type": "VARCHAR", "gbo_type": "VARCHAR", "description": "VARCHAR", "mapping_source": "VARCHAR", "mapping_updated_at": "TIMESTAMP", "history_json": "VARCHAR", "is_active": "BOOLEAN", "source_updated_at": "TIMESTAMP"}
 TABLES = {
     "securities": ("security_reference", MASTER, ["isin"]),
     "listings": ("security_listing_reference", LISTING, ["instrument_key"]),
-    "indices": ("security_index_membership", INDEX, ["isin", "index_code", "effective_from"]),
-    "identifiers": ("security_identifier_history", HISTORY, ["isin", "identifier_type", "old_value", "new_value", "effective_from"]),
     "types": ("security_type_mapping", TYPE_MAPPING, ["exchange", "segment", "source_type", "security_type"])
+}
+STORAGE_TABLES = {
+    **TABLES,
+    "indices": ("security_index_membership", INDEX, ["isin", "index_code", "effective_from"]),
 }
 MASTER_EDITABLE = {"company_name", "short_name", "security_class", "macro_sector", "sector", "industry", "basic_industry", "market_cap_bucket", "listing_status", "is_active", "is_listed", "is_suspended", "is_delisted", "listing_date", "face_value", "classification_source"}
 LISTING_EDITABLE = {"series", "listing_status", "is_active"}
@@ -78,7 +78,10 @@ def is_equity_instrument(segment, instrument_type):
 
 
 def ensure_reference_schema(conn):
-    for table, columns, keys in TABLES.values():
+    # Identifier History was retired from Reference Data; remove the legacy
+    # table during schema initialization instead of leaving an unused dataset.
+    conn.execute("DROP TABLE IF EXISTS security_identifier_history")
+    for table, columns, keys in STORAGE_TABLES.values():
         definition = ", ".join(f"{key} {kind}" for key, kind in columns.items())
         extra = ", manual_fields VARCHAR DEFAULT '[]'" if table in {"security_reference", "security_listing_reference"} else ""
         conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({definition}{extra}, PRIMARY KEY ({', '.join(keys)}))")
@@ -111,15 +114,15 @@ def refresh_security_index_memberships(conn):
         UPDATE security_reference AS security
         SET index_memberships = memberships.value,
             record_updated_at = CASE
-                WHEN COALESCE(security.index_memberships, '[]') <> memberships.value THEN CURRENT_TIMESTAMP
+                WHEN COALESCE(security.index_memberships, '') <> memberships.value THEN CURRENT_TIMESTAMP
                 ELSE security.record_updated_at
             END
         FROM (
             SELECT security.isin,
                    COALESCE(
-                       '[' || STRING_AGG('"' || REPLACE(member.index_code, '"', '\\"') || '"', ',' ORDER BY member.index_code)
-                           FILTER (WHERE member.index_code IS NOT NULL) || ']',
-                       '[]'
+                       STRING_AGG(member.index_code, ', ' ORDER BY member.index_code)
+                           FILTER (WHERE member.index_code IS NOT NULL),
+                       ''
                    ) AS value
             FROM security_reference AS security
             LEFT JOIN security_index_membership AS member
@@ -274,15 +277,10 @@ def sync_reference(conn):
         row.update(isin=isin, exchange=segment.split('_')[0], segment=segment, instrument_key=instrument_key)
         groups.setdefault(isin, {})[instrument_key] = max([row, groups.get(isin, {}).get(instrument_key, row)], key=lambda item: (str(item.get("synced_at") or ""), str(item.get("trading_symbol") or "")))
     counts = {"securities": len(groups), "listings": sum(len(rows) for rows in groups.values()),
-              "type_mappings": type_mapping_count, "identifier_changes": 0,
+              "type_mappings": type_mapping_count,
               "invalid_skipped": skipped, "added": 0, "updated": 0}
     now = datetime.now()
-    pending = {"securities": [], "listings": [], "identifiers": []}
-    def history(isin, kind, before, after, observed_at):
-        if before and after and before != after:
-            record = dict(isin=isin, identifier_type=kind, old_value=before, new_value=after, effective_from=observed_at.date(), effective_to=None, change_reason="Observed in Upstox instrument sync; effective date is observation date")
-            pending["identifiers"].append(record)
-            counts["identifier_changes"] += 1
+    pending = {"securities": [], "listings": []}
     def persist(table_key, record, old, manual):
         record["manual_fields"] = json.dumps(sorted(manual))
         comparable = [key for key in TABLES[table_key][1] if key not in {"record_updated_at"}]
@@ -299,8 +297,6 @@ def sync_reference(conn):
         record = {key: old.get(key) for key in MASTER}
         for key, value in {"company_name": primary.get("name"), "short_name": primary.get("short_name")}.items():
             if key not in manual:
-                if key == "company_name":
-                    history(isin, "COMPANY_NAME", old.get(key), value, primary.get("synced_at") or now)
                 record[key] = value
         kinds = set().union(*(contracts.get(row["instrument_key"], set()) for row in ordered))
         normalized_instrument_type = next((normalized_types.get((row["exchange"], row["segment"], str(row.get("instrument_type") or "").strip().upper(), str(row.get("security_type") or "").strip().upper())) for row in ordered if normalized_types.get((row["exchange"], row["segment"], str(row.get("instrument_type") or "").strip().upper(), str(row.get("security_type") or "").strip().upper()))), None)
@@ -322,7 +318,6 @@ def sync_reference(conn):
             for field, value in {"series": raw.get("series"), "listing_status": "ACTIVE", "is_active": True}.items():
                 if field not in manual:
                     listing[field] = value
-            history(isin, "SYMBOL:" + row["exchange"], old.get("trading_symbol"), listing["trading_symbol"], row.get("synced_at") or now)
             persist("listings", listing, old, manual)
     for key, old in old_listings.items():
         if key not in live_keys:
@@ -341,7 +336,7 @@ def sync_reference(conn):
                 if key not in manual:
                     record[key] = value
             persist("securities", record, old, manual)
-    for table_key in ("listings", "securities", "identifiers"):
+    for table_key in ("listings", "securities"):
         write_records(conn, *TABLES[table_key], pending[table_key])
     counts["profile_updated"] = enrich_reference_from_profiles(conn)
     return counts

@@ -133,13 +133,13 @@ def test_upload_preserved_on_sync_and_source_identity_protected(db):
     assert db.execute('SELECT sector, company_name FROM security_reference').fetchone() == (None, 'Reliance Industries Limited')
 
 
-def test_missing_listing_not_declared_delisted_and_symbol_history(db):
+def test_missing_listing_not_declared_delisted(db):
     instrument(db)
     instrument(db, 'BSE', '500325')
     sync_reference(db)
     db.execute("UPDATE upstox_instruments SET trading_symbol='RELIANCE_NEW' WHERE exchange='NSE'")
     sync_reference(db)
-    assert db.execute("SELECT old_value, new_value FROM security_identifier_history WHERE identifier_type='SYMBOL:NSE'").fetchone() == ('RELIANCE', 'RELIANCE_NEW')
+    assert db.execute("SELECT trading_symbol FROM security_listing_reference WHERE exchange='NSE'").fetchone()[0] == 'RELIANCE_NEW'
     db.execute("DELETE FROM upstox_instruments WHERE exchange='BSE'")
     sync_reference(db)
     assert db.execute('SELECT listing_count, has_bse_listing, is_delisted FROM security_reference').fetchone() == (1, False, None)
@@ -149,13 +149,11 @@ def test_missing_listing_not_declared_delisted_and_symbol_history(db):
 def test_index_dates_and_atomic_upload(db):
     instrument(db)
     sync_reference(db)
-    row = dict(isin=ISIN, index_code='NIFTY_50', index_name='Nifty 50', effective_from='2024-01-01', flag='A')
-    assert api.upload('indices', api.Upload(rows=[row]))['added'] == 1
-    with pytest.raises(HTTPException):
-        api.upload('indices', api.Upload(rows=[dict(row, index_code='OTHER'), dict(row, effective_from='2025-01-01')]))
+    apply_index_snapshot(db, 'NIFTY_50', 'Nifty 50', {ISIN}, date(2024, 1, 1))
+    refresh_security_index_memberships(db)
     assert db.execute('SELECT COUNT(*) FROM security_index_membership').fetchone()[0] == 1
     assert db.execute('SELECT company_name FROM security_index_membership').fetchone()[0] == 'Reliance Industries Limited'
-    assert db.execute('SELECT index_memberships FROM security_reference').fetchone()[0] == '["NIFTY_50"]'
+    assert db.execute('SELECT index_memberships FROM security_reference').fetchone()[0] == 'NIFTY_50'
 
 
 def test_index_snapshot_is_stored_per_isin_and_preserves_history(db):
@@ -168,7 +166,7 @@ def test_index_snapshot_is_stored_per_isin_and_preserves_history(db):
     assert apply_index_snapshot(db, 'NIFTY_50', 'Nifty 50', {ISIN}, date(2026, 1, 1))['added'] == 1
     assert apply_index_snapshot(db, 'NIFTY_100', 'Nifty 100', {ISIN, other_isin}, date(2026, 1, 1))['added'] == 2
     refresh_security_index_memberships(db)
-    assert db.execute('SELECT index_memberships FROM security_reference WHERE isin=?', [ISIN]).fetchone()[0] == '["NIFTY_100","NIFTY_50"]'
+    assert db.execute('SELECT index_memberships FROM security_reference WHERE isin=?', [ISIN]).fetchone()[0] == 'NIFTY_100, NIFTY_50'
     assert apply_index_snapshot(db, 'NIFTY_50', 'Nifty 50', {other_isin}, date(2026, 2, 1)) == {
         'received': 1, 'matched': 1, 'added': 1, 'removed': 1
     }
@@ -217,7 +215,7 @@ def test_reference_refresh_uses_profile_endpoint_and_keeps_instruments_on_key_fa
     assert job.STATE['counts']['securities'] == 1
 
 
-@pytest.mark.parametrize('view', ['securities', 'listings', 'indices', 'identifiers'])
+@pytest.mark.parametrize('view', ['securities', 'listings'])
 def test_reference_admin_only(view):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

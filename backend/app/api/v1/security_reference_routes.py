@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.database import get_connection
 from app.dependencies import require_admin_or_super_admin
-from app.services.security_reference import TABLES, MASTER_EDITABLE, LISTING_EDITABLE, TYPE_EDITABLE, append_mapping_history, type_mapping_summary, valid_isin, sync_reference, write_record, refresh_security_index_memberships
+from app.services.security_reference import TABLES, MASTER_EDITABLE, LISTING_EDITABLE, TYPE_EDITABLE, append_mapping_history, type_mapping_summary, valid_isin, sync_reference, write_record
 
 router = APIRouter(prefix="/reference-data", tags=["Reference Data"], dependencies=[Depends(require_admin_or_super_admin)])
 
@@ -52,7 +52,7 @@ def query_parts(view, search, filters, sort_by, sort_direction):
                 params.extend(values)
     except (ValueError, TypeError):
         raise HTTPException(400, "Invalid table filters.") from None
-    select_columns = ', '.join("(effective_from <= CURRENT_DATE AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)) AS is_current" if view == 'indices' and key == 'is_current' else key for key in columns)
+    select_columns = ', '.join(columns)
     query = f"SELECT {select_columns} FROM {table}" + (' WHERE ' + ' AND '.join(clauses) if clauses else '')
     return query, params, f"{sort_by} {sort_direction}, {', '.join(keys)}"
 
@@ -301,7 +301,7 @@ def convert(value, kind, row, field):
 @router.post("/tables/{view}/upload")
 def upload(view: str, payload: Upload, current_user: dict = Depends(require_admin_or_super_admin)):
     table, columns, keys = config(view)
-    editable = MASTER_EDITABLE if view == 'securities' else LISTING_EDITABLE if view == 'listings' else TYPE_EDITABLE if view == 'types' else set(columns) - set(keys) - ({'company_name'} if view == 'indices' else set())
+    editable = MASTER_EDITABLE if view == 'securities' else LISTING_EDITABLE if view == 'listings' else TYPE_EDITABLE
     conn = get_connection()
     counts = dict(added=0, updated=0, deleted=0, skipped=0)
     try:
@@ -317,8 +317,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 counts['skipped'] += 1
                 continue
             record = {key: convert(value, columns[key], index, key) for key, value in source.items() if key in columns}
-            if view == 'indices' and record.get('index_code'):
-                record['index_code'] = record['index_code'].upper()
             if view == 'types':
                 actor = "System"
                 if isinstance(current_user, dict):
@@ -337,10 +335,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
             names = [column[0] for column in result.description]
             existing_row = result.fetchone()
             old = dict(zip(names, existing_row)) if existing_row else None
-            if view in {'indices', 'identifiers'} and not conn.execute('SELECT 1 FROM security_reference WHERE isin=?', [record['isin']]).fetchone():
-                raise HTTPException(400, f'Row {index}: ISIN is not in the security master.')
-            if view == 'indices':
-                record['company_name'] = conn.execute('SELECT company_name FROM security_reference WHERE isin=?', [record['isin']]).fetchone()[0]
             if flag == 'A' and old or flag == 'D' and not old:
                 counts['skipped'] += 1
                 continue
@@ -352,10 +346,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 for key in set(record) - editable - set(keys):
                     if record[key] is not None and record[key] != old.get(key):
                         raise HTTPException(400, f'Row {index}: {key} is managed by Upstox and cannot be changed.')
-            if flag == 'D' and view in {'indices', 'identifiers'}:
-                conn.execute(f'DELETE FROM {table} WHERE {where}', params)
-                counts['deleted'] += 1
-                continue
             merged = {key: (old or {}).get(key) for key in columns}
             merged.update({key: record[key] for key in keys})
             manual = set(json.loads((old or {}).get('manual_fields') or '[]'))
@@ -390,18 +380,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 delisted = merged.get('is_delisted') is True
                 if suspended and delisted or (suspended or delisted) and merged.get('is_active') is True or delisted and merged.get('is_listed') is True:
                     raise HTTPException(400, f'Row {index}: active, listed, suspended and delisted flags conflict.')
-            if view in {'indices', 'identifiers'}:
-                if not merged.get('effective_from') or merged.get('effective_to') and merged['effective_to'] < merged['effective_from']:
-                    raise HTTPException(400, f'Row {index}: invalid effective date range.')
-                if view == 'indices':
-                    if not merged.get('index_name'):
-                        raise HTTPException(400, f'Row {index}: index name is required.')
-                    merged['company_name'] = conn.execute('SELECT company_name FROM security_reference WHERE isin=?', [merged['isin']]).fetchone()[0]
-                    merged['index_code'] = merged['index_code'].upper()
-                    merged['is_current'] = merged['effective_from'] <= date.today() and (not merged.get('effective_to') or merged['effective_to'] >= date.today())
-                    overlap = conn.execute("SELECT 1 FROM security_index_membership WHERE isin=? AND index_code=? AND effective_from<>? AND effective_from <= COALESCE(?, DATE '9999-12-31') AND COALESCE(effective_to, DATE '9999-12-31') >= ?", [merged['isin'], merged['index_code'], merged['effective_from'], merged.get('effective_to'), merged['effective_from']]).fetchone()
-                    if overlap:
-                        raise HTTPException(400, f'Row {index}: index membership dates overlap an existing period.')
             if old and all(old.get(key) == merged.get(key) for key in columns if key != 'record_updated_at') and manual == set(json.loads(old.get('manual_fields') or '[]')):
                 counts['skipped'] += 1
                 continue
@@ -413,8 +391,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
             counts['deleted' if flag == 'D' else 'updated' if old else 'added'] += 1
         if view in {'securities', 'listings'}:
             sync_reference(conn)
-        elif view == 'indices':
-            refresh_security_index_memberships(conn)
         conn.commit()
         return counts
     except Exception:
