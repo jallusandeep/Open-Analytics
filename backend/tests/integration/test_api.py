@@ -126,6 +126,9 @@ def test_app_access_persists_and_denies_api_access(api, admin_headers, account):
     denied = api.get("/api/v1/data/upstox/summary", headers=headers)
     assert denied.status_code == 403, denied.text
     assert denied.json()["detail"] == "App access denied"
+    denied = api.get('/api/v1/liquidity/features', params={'run_id': 'restricted'}, headers=headers)
+    assert denied.status_code == 403, denied.text
+    assert denied.json()['detail'] == 'App access denied'
 
 
 @pytest.mark.parametrize("params", [{"page": 0}, {"page_size": 1}, {"page_size": 2001}])

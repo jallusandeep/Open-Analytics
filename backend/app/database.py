@@ -210,6 +210,9 @@ from app.services.security_reference import ensure_reference_schema, migrate_leg
 from app.db.schema_legacy_data import ensure_legacy_data_schema
 from app.db.schema_fundamentals import ensure_fundamentals_schema
 from app.db.schema_ipo_scraper import ensure_ipo_scraper_schema
+from app.engines.returns.returns_repository import ensure_returns_schema
+from app.engines.risk.risk_repository import ensure_risk_schema
+from app.engines.liquidity.liquidity_repository import ensure_liquidity_schema
 
 
 def init_database():
@@ -223,6 +226,9 @@ def init_database():
         ensure_ai_schema(conn)
         ensure_legacy_data_schema(conn, safe_execute)
         ensure_fundamentals_schema(conn, safe_execute, migrate_fii_dii_activity_table)
+        ensure_returns_schema(conn)
+        ensure_risk_schema(conn)
+        ensure_liquidity_schema(conn)
         reference_exists = conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='security_reference'").fetchone()[0]
         ensure_reference_schema(conn)
         if not reference_exists:

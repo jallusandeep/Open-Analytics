@@ -43,6 +43,18 @@ def test_isin_validation():
     assert valid_isin('12345') is None
 
 
+def test_instrument_schema_repeatable_in_transaction():
+    with duckdb.connect(':memory:') as conn:
+        conn.execute('CREATE TABLE upstox_instruments (instrument_key VARCHAR)')
+        conn.execute("INSERT INTO upstox_instruments VALUES ('existing')")
+        conn.execute('BEGIN TRANSACTION')
+        execute = lambda connection, sql: connection.execute(sql)
+        ensure_instrument_schema(conn, execute)
+        ensure_instrument_schema(conn, execute)
+        conn.execute('COMMIT')
+        assert conn.execute('SELECT instrument_key, source_type FROM upstox_instruments').fetchall() == [('existing', None)]
+
+
 def test_one_isin_two_listings_and_derivative_link(db):
     key = instrument(db)
     instrument(db, 'BSE', '500325')

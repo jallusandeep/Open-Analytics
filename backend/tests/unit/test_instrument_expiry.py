@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 def conn():
     database = duckdb.connect(":memory:")
     def safe_execute(connection, sql):
-        connection.execute(sql.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS "))
+        connection.execute(sql)
     ensure_instrument_schema(database, safe_execute)
     yield database
     database.close()
