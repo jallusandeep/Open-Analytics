@@ -791,7 +791,7 @@ export function MonitorContent({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
         <DataTable
           fitToViewport
           resizableColumns
@@ -954,7 +954,7 @@ export function DbPreviewContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1345,7 +1345,7 @@ export function MarketCalendarContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1446,7 +1446,7 @@ export function GenericPreviewContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1547,7 +1547,7 @@ export function OhlcvTabContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1690,7 +1690,7 @@ export function CompanyFundamentalsContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport

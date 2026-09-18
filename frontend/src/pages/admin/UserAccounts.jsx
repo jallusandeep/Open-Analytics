@@ -947,7 +947,7 @@ function UserAccounts() {
               />
             </div>
 
-            <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+            <div className="min-w-0 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
               <DataTable
                 columns={tableColumns}
                 rows={filteredUsers}

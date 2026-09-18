@@ -137,7 +137,7 @@ function ReferenceDataPage({ view }) {
         if (!response.data.pending && response.data.status !== "running") {
           setSyncing(false);
           const counts = response.data.counts;
-          showToast(`${response.data.message || "Reference sync finished."}${counts ? ` ${counts.securities} securities, ${counts.listings} listings; ${counts.added} added, ${counts.updated} updated, ${counts.invalid_skipped} invalid skipped.` : ""}`, response.data.status === "success" ? "success" : "warning");
+          showToast(`${response.data.message || "Reference sync finished."}${counts ? ` ${counts.type_mappings || 0} type mappings, ${counts.listings} listings, ${counts.securities} securities, ${counts.identifier_changes || 0} identifier changes; ${counts.added} added, ${counts.updated} updated, ${counts.invalid_skipped} invalid skipped.` : ""}`, response.data.status === "success" ? "success" : "warning");
           await load();
         }
       } catch { if (!cancelled) { setSyncing(false); showToast("Unable to check sync status. Check the collection monitor.", "error"); } }
@@ -221,7 +221,7 @@ function ReferenceDataPage({ view }) {
           ]} trailingContent={view === "types" && data.summary ? <span className="ml-auto whitespace-nowrap text-right text-[10px] text-oa-muted" aria-label={`Mapping completeness: ${data.summary.complete} of ${data.summary.total}`}>Mapped <strong className="text-white">{data.summary.complete}/{data.summary.total}</strong> ({data.summary.completion_percent}%) · Partial {data.summary.partial} · Unmapped {data.summary.unmapped}</span> : null} />
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference data CSV" />
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto [&>div]:border-0">
+        <div className="min-h-0 flex-1 overflow-hidden [&>div]:border-0">
           <DataTable columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":")} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
             activeFilter,
             headerValues: Object.fromEntries(Object.entries(data.header_values || {}).map(([key, values]) => [key, values.map((value) => ({ value: displayFilterValue(value), label: value === "" ? "--" : value }))])),

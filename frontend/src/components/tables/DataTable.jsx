@@ -71,13 +71,9 @@ function DataTable({
   filterConfig
 }) {
   const headerRef = useRef(null);
-  const horizontalScrollRef = useRef(null);
-  const horizontalScrollProxyRef = useRef(null);
-  const tableSurfaceRef = useRef(null);
   const dragCleanupRef = useRef(null);
   const [columnWidths, setColumnWidths] = useState(null);
   const [formattedColumns, setFormattedColumns] = useState({});
-  const [horizontalScroll, setHorizontalScroll] = useState({ visible: false, width: 0 });
   function formattingKey(column) {
     return `${columns.map((item) => item.key).join("|")}:${column.key}`;
   }
@@ -111,30 +107,6 @@ function DataTable({
   const resizedWidths = columnWidths?.signature === columnSignature ? columnWidths.widths : null;
 
   useEffect(() => () => dragCleanupRef.current?.(), []);
-
-  useEffect(() => {
-    const scrollArea = horizontalScrollRef.current;
-    const surface = tableSurfaceRef.current;
-    if (!scrollArea || !surface || loading) {
-      setHorizontalScroll({ visible: false, width: 0 });
-      return undefined;
-    }
-    const update = () => setHorizontalScroll({
-      visible: surface.scrollWidth > scrollArea.clientWidth + 1,
-      width: surface.scrollWidth
-    });
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(scrollArea);
-    observer.observe(surface);
-    return () => observer.disconnect();
-  }, [columnSignature, loading, resizedWidths, rows.length]);
-
-  function syncHorizontalScroll(source, target) {
-    if (target && Math.abs(target.scrollLeft - source.scrollLeft) > 1) {
-      target.scrollLeft = source.scrollLeft;
-    }
-  }
 
   function resizeColumn(index, delta) {
     const widths = resizedWidths || measureColumnWidths();
@@ -252,9 +224,9 @@ function DataTable({
   }
 
   return (
-    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0 !rounded-none`}>
-      <div ref={horizontalScrollRef} onScroll={(event) => syncHorizontalScroll(event.currentTarget, horizontalScrollProxyRef.current)} className={`oa-data-table-scroll min-h-0 !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}${horizontalScroll.visible ? " oa-data-table-scroll-source" : ""}`}>
-        <div ref={tableSurfaceRef} className={tableWidthClass} style={tableSurfaceStyle}>
+    <div className={`${oaTableStyles.wrapper} relative z-0 flex h-full w-full min-w-0 max-w-full min-h-0 flex-col overflow-hidden !rounded-none`}>
+      <div className={`oa-data-table-scroll min-h-0 flex-1 overflow-y-auto !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+        <div className={tableWidthClass} style={tableSurfaceStyle}>
           <div
             ref={headerRef}
             className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 !rounded-none border-b border-oa-border`}
@@ -358,11 +330,6 @@ function DataTable({
         {loading && loadingPlacement === "table" && rows.length === 0 && <div aria-hidden="true" style={{ height: stateMessageMinHeight }} />}
         {loading ? renderStateMessage("loading") : rows.length === 0 ? renderStateMessage("empty") : null}
       </div>
-      {horizontalScroll.visible && !loading ? (
-        <div ref={horizontalScrollProxyRef} onScroll={(event) => syncHorizontalScroll(event.currentTarget, horizontalScrollRef.current)} className="oa-data-table-scroll sticky bottom-0 z-30 h-[12px] overflow-x-auto overflow-y-hidden border-t border-oa-border bg-black" aria-label="Horizontal table scroll">
-          <div aria-hidden="true" className="h-px" style={{ width: `${horizontalScroll.width}px` }} />
-        </div>
-      ) : null}
     </div>
   );
 }

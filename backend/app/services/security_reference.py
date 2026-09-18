@@ -6,6 +6,7 @@ from datetime import datetime, date
 MASTER = {
     "isin": "VARCHAR", "company_name": "VARCHAR", "short_name": "VARCHAR", "security_class": "VARCHAR", "instrument_type": "VARCHAR",
     "macro_sector": "VARCHAR", "sector": "VARCHAR", "industry": "VARCHAR", "basic_industry": "VARCHAR", "market_cap_bucket": "VARCHAR",
+    "index_memberships": "VARCHAR",
     "has_nse_listing": "BOOLEAN", "has_bse_listing": "BOOLEAN", "is_cross_listed": "BOOLEAN", "listing_count": "INTEGER",
     "primary_exchange": "VARCHAR", "primary_symbol": "VARCHAR", "primary_instrument_key": "VARCHAR",
     "listing_status": "VARCHAR", "is_active": "BOOLEAN", "is_listed": "BOOLEAN", "is_suspended": "BOOLEAN", "is_delisted": "BOOLEAN",
@@ -17,7 +18,7 @@ LISTING = {
     "exchange_token": "VARCHAR", "instrument_type": "VARCHAR", "series": "VARCHAR", "lot_size": "BIGINT", "tick_size": "DOUBLE",
     "listing_status": "VARCHAR", "is_active": "BOOLEAN", "is_primary_listing": "BOOLEAN"
 }
-INDEX = {"isin": "VARCHAR", "index_code": "VARCHAR", "index_name": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "is_current": "BOOLEAN"}
+INDEX = {"isin": "VARCHAR", "company_name": "VARCHAR", "index_code": "VARCHAR", "index_name": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "is_current": "BOOLEAN"}
 HISTORY = {"isin": "VARCHAR", "identifier_type": "VARCHAR", "old_value": "VARCHAR", "new_value": "VARCHAR", "effective_from": "DATE", "effective_to": "DATE", "change_reason": "VARCHAR"}
 TYPE_MAPPING = {"exchange": "VARCHAR", "segment": "VARCHAR", "source_type": "VARCHAR", "security_type": "VARCHAR", "instrument_type": "VARCHAR", "gbo_type": "VARCHAR", "description": "VARCHAR", "mapping_source": "VARCHAR", "mapping_updated_at": "TIMESTAMP", "history_json": "VARCHAR", "is_active": "BOOLEAN", "source_updated_at": "TIMESTAMP"}
 TABLES = {
@@ -89,6 +90,46 @@ def ensure_reference_schema(conn):
     for column in ("mapping_source", "mapping_updated_at", "history_json"):
         if column not in mapping_columns:
             conn.execute(f"ALTER TABLE security_type_mapping ADD COLUMN {column} {TYPE_MAPPING[column]}")
+    master_columns = {row[1] for row in conn.execute("PRAGMA table_info('security_reference')").fetchall()}
+    if "index_memberships" not in master_columns:
+        conn.execute("ALTER TABLE security_reference ADD COLUMN index_memberships VARCHAR")
+    index_columns = {row[1] for row in conn.execute("PRAGMA table_info('security_index_membership')").fetchall()}
+    if "company_name" not in index_columns:
+        conn.execute("ALTER TABLE security_index_membership ADD COLUMN company_name VARCHAR")
+    conn.execute("""
+        UPDATE security_index_membership AS membership
+        SET company_name = security.company_name
+        FROM security_reference AS security
+        WHERE security.isin = membership.isin
+          AND membership.company_name IS DISTINCT FROM security.company_name
+    """)
+
+
+def refresh_security_index_memberships(conn):
+    """Materialize current normalized memberships on each security for table use."""
+    conn.execute("""
+        UPDATE security_reference AS security
+        SET index_memberships = memberships.value,
+            record_updated_at = CASE
+                WHEN COALESCE(security.index_memberships, '[]') <> memberships.value THEN CURRENT_TIMESTAMP
+                ELSE security.record_updated_at
+            END
+        FROM (
+            SELECT security.isin,
+                   COALESCE(
+                       '[' || STRING_AGG('"' || REPLACE(member.index_code, '"', '\\"') || '"', ',' ORDER BY member.index_code)
+                           FILTER (WHERE member.index_code IS NOT NULL) || ']',
+                       '[]'
+                   ) AS value
+            FROM security_reference AS security
+            LEFT JOIN security_index_membership AS member
+              ON member.isin = security.isin
+             AND member.effective_from <= CURRENT_DATE
+             AND (member.effective_to IS NULL OR member.effective_to >= CURRENT_DATE)
+            GROUP BY security.isin
+        ) AS memberships
+        WHERE memberships.isin = security.isin
+    """)
 
 
 def mapping_history(value):
@@ -182,10 +223,33 @@ def write_record(conn, table, columns, keys, record):
     conn.execute(f"INSERT INTO {table} ({', '.join(fields)}) VALUES ({','.join('?' for _ in fields)}) ON CONFLICT ({', '.join(keys)}) DO UPDATE SET {updates}", [record.get(key) for key in fields])
 
 
+def write_records(conn, table, columns, keys, records):
+    if not records:
+        return
+    fields = list(columns)
+    if any("manual_fields" in record for record in records):
+        fields.append("manual_fields")
+    updates = ', '.join(f"{key}=excluded.{key}" for key in fields if key not in keys)
+    sql = f"INSERT INTO {table} ({', '.join(fields)}) VALUES ({','.join('?' for _ in fields)}) ON CONFLICT ({', '.join(keys)}) DO UPDATE SET {updates}"
+    values = [[record.get(key) for key in fields] for record in records]
+    if hasattr(conn, "executemany"):
+        conn.executemany(sql, values)
+    else:
+        for params in values:
+            conn.execute(sql, params)
+
+
 def sync_reference(conn):
     ensure_reference_schema(conn)
     current = row_dicts(conn, "upstox_instruments")
-    sync_type_mappings(conn, current)
+    # Dependency order: discover type mappings, then listings/security master,
+    # then identifier history and profile enrichment.
+    type_mapping_count = sync_type_mappings(conn, current)
+    normalized_types = {
+        (row["exchange"], row["segment"], row["source_type"], row["security_type"]): row.get("instrument_type")
+        for row in row_dicts(conn, "security_type_mapping")
+        if row.get("is_active") is True
+    }
     old_master = {row["isin"]: row for row in row_dicts(conn, "security_reference")}
     old_listings = {row["instrument_key"]: row for row in row_dicts(conn, "security_listing_reference")}
     groups, contracts = {}, {}
@@ -209,18 +273,22 @@ def sync_reference(conn):
             continue
         row.update(isin=isin, exchange=segment.split('_')[0], segment=segment, instrument_key=instrument_key)
         groups.setdefault(isin, {})[instrument_key] = max([row, groups.get(isin, {}).get(instrument_key, row)], key=lambda item: (str(item.get("synced_at") or ""), str(item.get("trading_symbol") or "")))
-    counts = {"securities": len(groups), "listings": sum(len(rows) for rows in groups.values()), "invalid_skipped": skipped, "added": 0, "updated": 0}
+    counts = {"securities": len(groups), "listings": sum(len(rows) for rows in groups.values()),
+              "type_mappings": type_mapping_count, "identifier_changes": 0,
+              "invalid_skipped": skipped, "added": 0, "updated": 0}
     now = datetime.now()
+    pending = {"securities": [], "listings": [], "identifiers": []}
     def history(isin, kind, before, after, observed_at):
         if before and after and before != after:
             record = dict(isin=isin, identifier_type=kind, old_value=before, new_value=after, effective_from=observed_at.date(), effective_to=None, change_reason="Observed in Upstox instrument sync; effective date is observation date")
-            write_record(conn, *TABLES["identifiers"], record)
+            pending["identifiers"].append(record)
+            counts["identifier_changes"] += 1
     def persist(table_key, record, old, manual):
         record["manual_fields"] = json.dumps(sorted(manual))
         comparable = [key for key in TABLES[table_key][1] if key not in {"record_updated_at"}]
         if old and all(old.get(key) == record.get(key) for key in comparable):
             return
-        write_record(conn, *TABLES[table_key], record)
+        pending[table_key].append(record)
         counts["updated" if old else "added"] += 1
     live_keys = set()
     for isin, listing_rows in groups.items():
@@ -235,7 +303,8 @@ def sync_reference(conn):
                     history(isin, "COMPANY_NAME", old.get(key), value, primary.get("synced_at") or now)
                 record[key] = value
         kinds = set().union(*(contracts.get(row["instrument_key"], set()) for row in ordered))
-        record.update(isin=isin, instrument_type="EQ", has_nse_listing=any(row["exchange"] == "NSE" for row in ordered), has_bse_listing=any(row["exchange"] == "BSE" for row in ordered), is_cross_listed=len({row["exchange"] for row in ordered}) > 1, listing_count=len(ordered), primary_exchange=primary["exchange"], primary_symbol=primary.get("trading_symbol"), primary_instrument_key=primary["instrument_key"], fno_eligible=bool(kinds), futures_available="FUT" in kinds, options_available=bool(kinds & {"CE", "PE"}), instrument_source="Upstox", source_updated_at=max([row.get("synced_at") or now for row in ordered] + ([old["source_updated_at"]] if old.get("source_updated_at") else [])), record_updated_at=now)
+        normalized_instrument_type = next((normalized_types.get((row["exchange"], row["segment"], str(row.get("instrument_type") or "").strip().upper(), str(row.get("security_type") or "").strip().upper())) for row in ordered if normalized_types.get((row["exchange"], row["segment"], str(row.get("instrument_type") or "").strip().upper(), str(row.get("security_type") or "").strip().upper()))), None)
+        record.update(isin=isin, instrument_type=normalized_instrument_type, has_nse_listing=any(row["exchange"] == "NSE" for row in ordered), has_bse_listing=any(row["exchange"] == "BSE" for row in ordered), is_cross_listed=len({row["exchange"] for row in ordered}) > 1, listing_count=len(ordered), primary_exchange=primary["exchange"], primary_symbol=primary.get("trading_symbol"), primary_instrument_key=primary["instrument_key"], fno_eligible=bool(kinds), futures_available="FUT" in kinds, options_available=bool(kinds & {"CE", "PE"}), instrument_source="Upstox", source_updated_at=max([row.get("synced_at") or now for row in ordered] + ([old["source_updated_at"]] if old.get("source_updated_at") else [])), record_updated_at=now)
         for key, value in {"listing_status": "ACTIVE", "is_active": True, "is_listed": True}.items():
             if key not in manual:
                 record[key] = value
@@ -249,7 +318,7 @@ def sync_reference(conn):
             raw = json.loads(row.get("raw_json") or "{}") if isinstance(row.get("raw_json"), str) else (row.get("raw_json") or {})
             raw = raw if isinstance(raw, dict) else {}
             listing = {field: old.get(field) for field in LISTING}
-            listing.update(instrument_key=key, isin=isin, exchange=row["exchange"], segment=row["segment"], symbol=row.get("trading_symbol"), trading_symbol=row.get("trading_symbol"), exchange_token=row.get("exchange_token"), instrument_type="EQ", lot_size=row.get("lot_size"), tick_size=row.get("tick_size"), is_primary_listing=key == primary["instrument_key"])
+            listing.update(instrument_key=key, isin=isin, exchange=row["exchange"], segment=row["segment"], symbol=row.get("trading_symbol"), trading_symbol=row.get("trading_symbol"), exchange_token=row.get("exchange_token"), instrument_type=str(row.get("instrument_type") or "").strip().upper() or None, lot_size=row.get("lot_size"), tick_size=row.get("tick_size"), is_primary_listing=key == primary["instrument_key"])
             for field, value in {"series": raw.get("series"), "listing_status": "ACTIVE", "is_active": True}.items():
                 if field not in manual:
                     listing[field] = value
@@ -272,6 +341,8 @@ def sync_reference(conn):
                 if key not in manual:
                     record[key] = value
             persist("securities", record, old, manual)
+    for table_key in ("listings", "securities", "identifiers"):
+        write_records(conn, *TABLES[table_key], pending[table_key])
     counts["profile_updated"] = enrich_reference_from_profiles(conn)
     return counts
 

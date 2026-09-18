@@ -20,6 +20,7 @@ def state():
 def run_reference_refresh(current_user):
     from app.services.data_collection.instrument_sync_service import sync_upstox_current_instruments_service
     from app.services.data_collection.company_fundamentals_service import sync_upstox_company_fundamentals_service
+    from app.services.index_membership_sync import sync_nse_index_memberships
     with LOCK:
         STATE.clear()
         STATE.update(status='running', stage='instruments')
@@ -30,11 +31,15 @@ def run_reference_refresh(current_user):
                 STATE.update(status=instruments['status'], message=instruments['message'])
             return
         with LOCK:
-            STATE.update(stage='profiles', counts=instruments.get('reference_data', {}))
+            STATE.update(stage='indices', counts=instruments.get('reference_data', {}))
+        indices = sync_nse_index_memberships()
+        with LOCK:
+            STATE.update(stage='profiles', indices=indices)
         try:
             profiles = sync_upstox_company_fundamentals_service(current_user, config={'endpoints': ['company_profile'], 'skip_existing': True, 'force_refresh': False}, clear_cancel_at_start=False)
             with LOCK:
-                STATE.update(status=profiles['status'], message=profiles['message'], profiles=profiles['metrics'])
+                final_status = 'partial_success' if indices['status'] != 'success' and profiles['status'] == 'success' else profiles['status']
+                STATE.update(status=final_status, message=profiles['message'], profiles=profiles['metrics'])
         except HTTPException as error:
             with LOCK:
                 STATE.update(status='partial_success', message=f'Instruments synced; profiles unavailable: {error.detail}')

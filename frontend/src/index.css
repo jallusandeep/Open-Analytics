@@ -177,15 +177,6 @@ textarea {
   background: #a1a1aa;
 }
 
-.oa-data-table-scroll-source {
-  scrollbar-width: none;
-}
-
-.oa-data-table-scroll-source::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
 .oa-data-table-cell {
   color: #d4d4d8;
 }
