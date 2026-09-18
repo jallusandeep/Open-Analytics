@@ -153,6 +153,21 @@ def valid_isin(value):
     return value if total % 10 == 0 else None
 
 
+def valid_upstox_isin(value, supplied_value):
+    """Validate an identifier from the trusted Upstox instrument master.
+
+    Some exchange-issued Indian government-security identifiers are published as
+    ISINs by Upstox/NSE/BSE but do not pass the generic ISO 6166 Luhn check. Keep
+    manual input strict while accepting these source identifiers only when the
+    instrument-key suffix and the separate ISIN field match exactly.
+    """
+    value = str(value or "").strip().upper()
+    supplied = str(supplied_value or "").strip().upper()
+    if not re.fullmatch(r"IN[A-Z0-9]{9}[0-9]", value):
+        return None
+    return value if supplied == value else None
+
+
 def row_dicts(conn, table):
     result = conn.execute(f"SELECT * FROM {table}")
     keys = [column[0] for column in result.description]
@@ -186,9 +201,10 @@ def sync_reference(conn):
             continue
         instrument_key = str(row.get("instrument_key") or "").strip()
         parts = instrument_key.split('|')
-        isin = valid_isin(parts[1] if len(parts) == 2 else row.get("isin"))
+        key_isin = parts[1] if len(parts) == 2 else None
         supplied = str(row.get("isin") or "").strip().upper()
-        if not isin or len(parts) != 2 or parts[0] != segment or (supplied and supplied != isin):
+        isin = valid_isin(key_isin) or valid_upstox_isin(key_isin, supplied)
+        if not isin or len(parts) != 2 or parts[0] != segment:
             skipped += 1
             continue
         row.update(isin=isin, exchange=segment.split('_')[0], segment=segment, instrument_key=instrument_key)
