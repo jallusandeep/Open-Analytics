@@ -252,7 +252,7 @@ def test_returns_routes_registered_and_documented_example_runs():
     assert '/api/v1/returns/build' in paths
     assert '/api/v1/returns/labels/build' in paths
     import re
-    guide = Path(__file__).resolve().parents[3] / 'docs' / 'returns.md'
+    guide = Path(__file__).resolve().parents[2] / 'docs' / 'returns.md'
     payload = json.loads(re.findall(r'```json\n(.*?)\n```', guide.read_text(encoding='utf-8'), re.S)[0])
     row = calculate_returns(ReturnsRequest.model_validate(payload))['rows'][-1]
     assert row['metrics']['return_1d'] == pytest.approx(.03)
