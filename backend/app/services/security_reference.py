@@ -276,6 +276,18 @@ def sync_reference(conn):
     return counts
 
 
+def sync_reference_if_empty(conn):
+    """Seed new/empty reference tables from an existing instrument master."""
+    ensure_reference_schema(conn)
+    reference_count = conn.execute("SELECT COUNT(*) FROM security_reference").fetchone()[0]
+    if reference_count:
+        return None
+    instrument_count = conn.execute("SELECT COUNT(*) FROM upstox_instruments").fetchone()[0]
+    if not instrument_count:
+        return None
+    return sync_reference(conn)
+
+
 def sync_type_mappings(conn, current=None):
     """Discover exchange type combinations without overwriting manual GBO mappings."""
     ensure_reference_schema(conn)

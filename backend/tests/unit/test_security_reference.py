@@ -5,7 +5,7 @@ import duckdb
 import pytest
 from fastapi import HTTPException
 from app.db.schema_instruments import ensure_instrument_schema
-from app.services.security_reference import ensure_reference_schema, sync_reference, sync_type_mappings, valid_isin, valid_upstox_isin
+from app.services.security_reference import ensure_reference_schema, sync_reference, sync_reference_if_empty, sync_type_mappings, valid_isin, valid_upstox_isin
 from app.api.v1 import security_reference_routes as api
 
 pytestmark = pytest.mark.unit
@@ -53,6 +53,14 @@ def test_exchange_published_government_security_is_synced(db):
     assert db.execute('SELECT isin, exchange, segment, trading_symbol FROM security_listing_reference').fetchone() == (
         'IN1520250085', 'NSE', 'NSE_EQ', '61GJ28'
     )
+
+
+def test_empty_reference_is_seeded_from_existing_current_instruments(db):
+    instrument(db)
+    result = sync_reference_if_empty(db)
+    assert result['securities'] == 1
+    assert result['listings'] == 1
+    assert sync_reference_if_empty(db) is None
 
 
 def test_instrument_schema_repeatable_in_transaction():
