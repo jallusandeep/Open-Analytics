@@ -22,6 +22,7 @@ from app.api.v1.data_collection_routes import router as data_collection_router
 from app.engines.data_quality.data_quality_routes import router as data_quality_router
 from app.engines.returns.returns_routes import router as returns_router
 from app.engines.risk.risk_routes import router as risk_router
+from app.engines.liquidity.liquidity_routes import router as liquidity_router
 from app.api.v1.reference_data_routes import router as reference_data_router
 from app.api.v1.security_reference_routes import router as security_reference_router
 app = FastAPI(
@@ -73,6 +74,7 @@ app.include_router(data_collection_router, prefix="/api/v1")
 app.include_router(data_quality_router, prefix="/api/v1")
 app.include_router(returns_router, prefix="/api/v1")
 app.include_router(risk_router, prefix="/api/v1")
+app.include_router(liquidity_router, prefix="/api/v1")
 app.include_router(reference_data_router, prefix="/api/v1")
 app.include_router(security_reference_router, prefix="/api/v1")
 from app.api.v1.data_export_routes import router as data_export_router

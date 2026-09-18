@@ -93,7 +93,7 @@ jobs:
   publish-reports:
     name: Publish test reports to GitHub Pages
     needs: tests
-    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/production' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
