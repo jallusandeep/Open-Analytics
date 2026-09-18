@@ -240,7 +240,7 @@ function UserAccounts() {
   });
 
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(100);
+  const [pageSize] = useState(500);
   const [totalPages, setTotalPages] = useState(1);
   const [totalRecords, setTotalRecords] = useState(0);
 
@@ -947,7 +947,7 @@ function UserAccounts() {
               />
             </div>
 
-            <div className="overflow-x-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+            <div className="min-w-0 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
               <DataTable
                 columns={tableColumns}
                 rows={filteredUsers}

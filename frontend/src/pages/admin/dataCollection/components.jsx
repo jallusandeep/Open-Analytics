@@ -387,6 +387,8 @@ export function DataCollectionShell({
       {navigationOpen ? createPortal(<nav ref={navigationRef} aria-label="Data pages" style={{ top: navigationTop }} className="fixed left-14 z-[20000] max-h-[calc(100vh-16px)] w-64 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
         {viewOptions.map((view) => {
           const subpages = view.key === "ipo_calendar" ? ipoCalendarSubTabOptions : view.key === "company_fundamentals" ? companyFundamentalsEndpointOptions : [];
+          const selected = activeView === view.key;
+          const highlighted = selected || expandedView === view.key;
           return <div key={view.key}>
             <NavigationLink to={dataPageUrl(view.key)} onMouseEnter={(event) => {
               if (!subpages.length) {
@@ -401,14 +403,17 @@ export function DataCollectionShell({
               const menuHeight = subpages.length * 30 + 8;
               setSubmenuTop(Math.max(8, Math.min(event.currentTarget.getBoundingClientRect().top, window.innerHeight - menuHeight - 8)));
               setExpandedView(view.key);
-            }} aria-expanded={subpages.length ? expandedView === view.key : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs hover:bg-[#2b2b2b] ${expandedView === view.key ? "bg-[#2b2b2b] text-sky-300" : activeView === view.key ? "text-sky-300" : "text-oa-muted hover:text-sky-300"}`}>
-              {view.label}{subpages.length ? <ChevronRight size={13} className={expandedView === view.key ? "text-sky-400" : ""} /> : null}
+            }} aria-current={selected ? "page" : undefined} aria-expanded={subpages.length ? expandedView === view.key : undefined} className={`flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-xs transition ${highlighted ? "bg-sky-950/50 text-sky-300 ring-1 ring-inset ring-sky-500/30" : "text-oa-muted hover:bg-[#242424]"}`}>
+              {view.label}{subpages.length ? <ChevronRight size={13} className={highlighted ? "text-sky-400" : ""} /> : null}
             </NavigationLink>
           </div>;
         })}
       </nav>, document.body) : null}
       {navigationOpen && expandedView ? createPortal(<nav ref={submenuRef} aria-label={`${viewOptions.find((view) => view.key === expandedView)?.label} pages`} style={{ top: submenuTop }} className="fixed left-[312px] z-[20001] max-h-[calc(100vh-16px)] w-56 origin-top overflow-y-auto rounded-r border border-oa-border bg-[#101010] p-1 shadow-2xl animate-[oaSelectDown_0.1s_ease-out]">
-        {(expandedView === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => <NavigationLink to={dataPageUrl(expandedView, subpage.value)} key={subpage.value} onClick={() => chooseView(expandedView, subpage.value)} className={`block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] hover:bg-[#2b2b2b] ${activeView === expandedView && (expandedView === "ipo_calendar" ? ipoCalendarSubTab : companyFundamentalsEndpoint) === subpage.value ? "text-sky-300" : "text-oa-muted"}`}>{subpage.label}</NavigationLink>)}
+        {(expandedView === "ipo_calendar" ? ipoCalendarSubTabOptions : companyFundamentalsEndpointOptions).map((subpage) => {
+          const selected = activeView === expandedView && (expandedView === "ipo_calendar" ? ipoCalendarSubTab : companyFundamentalsEndpoint) === subpage.value;
+          return <NavigationLink to={dataPageUrl(expandedView, subpage.value)} key={subpage.value} onClick={() => chooseView(expandedView, subpage.value)} aria-current={selected ? "page" : undefined} className={`block w-full rounded px-3 py-1.5 text-left font-mono text-[11px] transition ${selected ? "bg-sky-950/50 text-sky-300 ring-1 ring-inset ring-sky-500/30" : "text-oa-muted hover:bg-[#242424]"}`}>{subpage.label}</NavigationLink>;
+        })}
       </nav>, document.body) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-black">
@@ -791,7 +796,7 @@ export function MonitorContent({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
         <DataTable
           fitToViewport
           resizableColumns
@@ -954,7 +959,7 @@ export function DbPreviewContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1345,7 +1350,7 @@ export function MarketCalendarContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1446,7 +1451,7 @@ export function GenericPreviewContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1547,7 +1552,7 @@ export function OhlcvTabContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport
@@ -1690,7 +1695,7 @@ export function CompanyFundamentalsContent({
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-auto bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
         <DataTable
           fitToViewport

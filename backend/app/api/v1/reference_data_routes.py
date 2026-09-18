@@ -90,7 +90,7 @@ def sort_order(sort_by: str, sort_direction: str):
 
 
 @router.get("/equities")
-def list_reference_equities(search: str = "", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=500), filters: str = "{}", sort_by: str = "trading_symbol", sort_direction: str = "asc"):
+def list_reference_equities(search: str = "", page: int = Query(1, ge=1), page_size: int = Query(500, ge=10, le=500), filters: str = "{}", sort_by: str = "trading_symbol", sort_direction: str = "asc"):
     query, params = equity_query(search, filters)
     order = sort_order(sort_by, sort_direction)
     conn = get_connection()

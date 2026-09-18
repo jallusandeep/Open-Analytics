@@ -200,6 +200,10 @@ function DataTable({
       : oaTableStyles.headerCellNoFilter;
   }
 
+  function getColumnDividerClass(index) {
+    return index > 0 || renderActions ? " border-l border-oa-border" : "";
+  }
+
   function renderStateMessage(type) {
     const isLoading = type === "loading";
 
@@ -220,22 +224,22 @@ function DataTable({
   }
 
   return (
-    <div className={`${oaTableStyles.wrapper} relative z-0 min-h-0 !rounded-none`}>
-      <div className={`min-h-0 !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+    <div className={`${oaTableStyles.wrapper} relative z-0 flex h-full w-full min-w-0 max-w-full min-h-0 flex-col overflow-hidden !rounded-none`}>
+      <div className={`oa-data-table-scroll min-h-0 flex-1 overflow-y-auto !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}`}>
         <div className={tableWidthClass} style={tableSurfaceStyle}>
           <div
             ref={headerRef}
             className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 !rounded-none border-b border-oa-border`}
             style={gridStyle}
           >
-            {columns.map((column) => {
+            {columns.map((column, columnIndex) => {
               const active =
                 filterConfig?.isColumnFilterActive?.(column.key) || false;
 
               const open = filterConfig?.activeFilter === column.key;
 
               return (
-                <div key={column.key} className={getHeaderCellClass(column)}>
+                <div key={column.key} className={`${getHeaderCellClass(column)}${getColumnDividerClass(columnIndex)}`}>
                   <span  className={`${oaTableStyles.headerLabel}${wrapHeaders ? " !whitespace-normal !leading-4" : ""}`}>
                     {column.label}
                   </span>
@@ -308,8 +312,8 @@ function DataTable({
                 className={`${compactDataRowClass} ${oaTableStyles.dataText}${loading && loadingPlacement === "table" ? " invisible" : ""}`}
                 style={gridStyle}
               >
-                {columns.map((column) => (
-                  <div key={column.key}  className={`${oaTableStyles.dataCell}${cellFormatting(row, column)}${numericCellValue(row, column) !== null ? " text-right tabular-nums" : ""}`}>
+                {columns.map((column, columnIndex) => (
+                  <div key={column.key}  className={`${oaTableStyles.dataCell}${getColumnDividerClass(columnIndex)}${cellFormatting(row, column)}${numericCellValue(row, column) !== null ? " text-right tabular-nums" : ""}`}>
                     {renderDisplayCell(row, column)}
                   </div>
                 ))}

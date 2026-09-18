@@ -5,7 +5,8 @@ import duckdb
 import pytest
 from fastapi import HTTPException
 from app.db.schema_instruments import ensure_instrument_schema
-from app.services.security_reference import ensure_reference_schema, sync_reference, sync_reference_if_empty, sync_type_mappings, valid_isin, valid_upstox_isin
+from app.services.security_reference import ensure_reference_schema, sync_reference, sync_reference_if_empty, sync_type_mappings, valid_isin, valid_upstox_isin, refresh_security_index_memberships
+from app.services.index_membership_sync import apply_index_snapshot, parse_constituent_isins
 from app.api.v1 import security_reference_routes as api
 
 pytestmark = pytest.mark.unit
@@ -53,6 +54,8 @@ def test_exchange_published_government_security_is_synced(db):
     assert db.execute('SELECT isin, exchange, segment, trading_symbol FROM security_listing_reference').fetchone() == (
         'IN1520250085', 'NSE', 'NSE_EQ', '61GJ28'
     )
+    assert db.execute('SELECT instrument_type FROM security_listing_reference').fetchone()[0] == 'SG'
+    assert db.execute('SELECT instrument_type FROM security_reference').fetchone()[0] == 'GOVERNMENT_SECURITY'
 
 
 def test_empty_reference_is_seeded_from_existing_current_instruments(db):
@@ -130,13 +133,13 @@ def test_upload_preserved_on_sync_and_source_identity_protected(db):
     assert db.execute('SELECT sector, company_name FROM security_reference').fetchone() == (None, 'Reliance Industries Limited')
 
 
-def test_missing_listing_not_declared_delisted_and_symbol_history(db):
+def test_missing_listing_not_declared_delisted(db):
     instrument(db)
     instrument(db, 'BSE', '500325')
     sync_reference(db)
     db.execute("UPDATE upstox_instruments SET trading_symbol='RELIANCE_NEW' WHERE exchange='NSE'")
     sync_reference(db)
-    assert db.execute("SELECT old_value, new_value FROM security_identifier_history WHERE identifier_type='SYMBOL:NSE'").fetchone() == ('RELIANCE', 'RELIANCE_NEW')
+    assert db.execute("SELECT trading_symbol FROM security_listing_reference WHERE exchange='NSE'").fetchone()[0] == 'RELIANCE_NEW'
     db.execute("DELETE FROM upstox_instruments WHERE exchange='BSE'")
     sync_reference(db)
     assert db.execute('SELECT listing_count, has_bse_listing, is_delisted FROM security_reference').fetchone() == (1, False, None)
@@ -146,11 +149,28 @@ def test_missing_listing_not_declared_delisted_and_symbol_history(db):
 def test_index_dates_and_atomic_upload(db):
     instrument(db)
     sync_reference(db)
-    row = dict(isin=ISIN, index_code='NIFTY_50', index_name='Nifty 50', effective_from='2024-01-01', flag='A')
-    assert api.upload('indices', api.Upload(rows=[row]))['added'] == 1
-    with pytest.raises(HTTPException):
-        api.upload('indices', api.Upload(rows=[dict(row, index_code='OTHER'), dict(row, effective_from='2025-01-01')]))
+    apply_index_snapshot(db, 'NIFTY_50', 'Nifty 50', {ISIN}, date(2024, 1, 1))
+    refresh_security_index_memberships(db)
     assert db.execute('SELECT COUNT(*) FROM security_index_membership').fetchone()[0] == 1
+    assert db.execute('SELECT company_name FROM security_index_membership').fetchone()[0] == 'Reliance Industries Limited'
+    assert db.execute('SELECT index_memberships FROM security_reference').fetchone()[0] == 'NIFTY_50'
+
+
+def test_index_snapshot_is_stored_per_isin_and_preserves_history(db):
+    instrument(db)
+    other_isin = 'INE742F01042'
+    instrument(db, symbol='ADANIPORTS', isin=other_isin)
+    sync_reference(db)
+    csv_data = 'Company Name,Industry,Symbol,Series,ISIN Code\nReliance,Energy,RELIANCE,EQ,INE002A01018\n'
+    assert parse_constituent_isins(csv_data) == {ISIN}
+    assert apply_index_snapshot(db, 'NIFTY_50', 'Nifty 50', {ISIN}, date(2026, 1, 1))['added'] == 1
+    assert apply_index_snapshot(db, 'NIFTY_100', 'Nifty 100', {ISIN, other_isin}, date(2026, 1, 1))['added'] == 2
+    refresh_security_index_memberships(db)
+    assert db.execute('SELECT index_memberships FROM security_reference WHERE isin=?', [ISIN]).fetchone()[0] == 'NIFTY_100, NIFTY_50'
+    assert apply_index_snapshot(db, 'NIFTY_50', 'Nifty 50', {other_isin}, date(2026, 2, 1)) == {
+        'received': 1, 'matched': 1, 'added': 1, 'removed': 1
+    }
+    assert db.execute("SELECT effective_to, is_current FROM security_index_membership WHERE isin=? AND index_code='NIFTY_50'", [ISIN]).fetchone() == (date(2026, 1, 31), False)
 
 
 def test_download_template_and_pagination_filters(db):
@@ -162,6 +182,8 @@ def test_download_template_and_pagination_filters(db):
     csv = api.download('securities', template=True).body.decode('utf-8-sig')
     assert 'company_name' in csv.splitlines()[0] and csv.splitlines()[0].endswith(',flag')
     assert 'flag' not in api.download('securities').body.decode('utf-8-sig').splitlines()[0].split(',')
+    assert 'symbol' not in {column['key'] for column in api.list_rows('listings', page=1, page_size=500)['columns']}
+    assert 'trading_symbol' in {column['key'] for column in api.list_rows('listings', page=1, page_size=500)['columns']}
 
 
 def test_profile_sector_mapping_preserves_upload(db):
@@ -180,7 +202,9 @@ def test_profile_sector_mapping_preserves_upload(db):
 def test_reference_refresh_uses_profile_endpoint_and_keeps_instruments_on_key_failure(monkeypatch):
     from app.services import reference_sync as job
     from app.services.data_collection import instrument_sync_service, company_fundamentals_service
+    from app.services import index_membership_sync
     monkeypatch.setattr(instrument_sync_service, 'sync_upstox_current_instruments_service', lambda user: {'status': 'success', 'reference_data': {'securities': 1, 'listings': 2}})
+    monkeypatch.setattr(index_membership_sync, 'sync_nse_index_memberships', lambda: {'status': 'success', 'memberships': 1})
     def profile(user, config, clear_cancel_at_start):
         assert config['endpoints'] == ['company_profile']
         assert config['skip_existing'] is True
@@ -191,7 +215,7 @@ def test_reference_refresh_uses_profile_endpoint_and_keeps_instruments_on_key_fa
     assert job.STATE['counts']['securities'] == 1
 
 
-@pytest.mark.parametrize('view', ['securities', 'listings', 'indices', 'identifiers'])
+@pytest.mark.parametrize('view', ['securities', 'listings'])
 def test_reference_admin_only(view):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

@@ -26,7 +26,8 @@ def config(view):
 
 
 def visible_columns(view, columns):
-    return {key: kind for key, kind in columns.items() if not (view == 'types' and key == 'history_json')}
+    hidden = {'types': {'history_json'}, 'listings': {'symbol'}}
+    return {key: kind for key, kind in columns.items() if key not in hidden.get(view, set())}
 
 
 def query_parts(view, search, filters, sort_by, sort_direction):
@@ -51,7 +52,7 @@ def query_parts(view, search, filters, sort_by, sort_direction):
                 params.extend(values)
     except (ValueError, TypeError):
         raise HTTPException(400, "Invalid table filters.") from None
-    select_columns = ', '.join("(effective_from <= CURRENT_DATE AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)) AS is_current" if view == 'indices' and key == 'is_current' else key for key in columns)
+    select_columns = ', '.join(columns)
     query = f"SELECT {select_columns} FROM {table}" + (' WHERE ' + ' AND '.join(clauses) if clauses else '')
     return query, params, f"{sort_by} {sort_direction}, {', '.join(keys)}"
 
@@ -61,7 +62,7 @@ def pull_upstox(user: dict = Depends(require_admin_or_super_admin)):
     from app.services.reference_sync import run_reference_refresh, JOB_KEY
     from app.services.data_collection_queue_service import enqueue_data_collection_job
     position = enqueue_data_collection_job(run_reference_refresh, job_name=JOB_KEY, job_key=JOB_KEY, kwargs={'current_user': user})
-    return {'status': 'queued', 'queue_position': position, 'message': 'Upstox instruments and ISIN profiles queued for reference sync.'}
+    return {'status': 'queued', 'queue_position': position, 'message': 'Instruments, index memberships, and ISIN profiles queued for reference sync.'}
 
 
 @router.get("/sync/status")
@@ -182,7 +183,7 @@ def corporate_action_summary():
 
 
 @router.get("/tables/{view}")
-def list_rows(view: str, search: str = "", filters: str = "{}", sort_by: str = "", sort_direction: str = "asc", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=500)):
+def list_rows(view: str, search: str = "", filters: str = "{}", sort_by: str = "", sort_direction: str = "asc", page: int = Query(1, ge=1), page_size: int = Query(500, ge=10, le=500)):
     table, columns, keys = config(view)
     columns = visible_columns(view, columns)
     query, params, order = query_parts(view, search, filters, sort_by, sort_direction)
@@ -300,7 +301,7 @@ def convert(value, kind, row, field):
 @router.post("/tables/{view}/upload")
 def upload(view: str, payload: Upload, current_user: dict = Depends(require_admin_or_super_admin)):
     table, columns, keys = config(view)
-    editable = MASTER_EDITABLE if view == 'securities' else LISTING_EDITABLE if view == 'listings' else TYPE_EDITABLE if view == 'types' else set(columns) - set(keys)
+    editable = MASTER_EDITABLE if view == 'securities' else LISTING_EDITABLE if view == 'listings' else TYPE_EDITABLE
     conn = get_connection()
     counts = dict(added=0, updated=0, deleted=0, skipped=0)
     try:
@@ -316,8 +317,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 counts['skipped'] += 1
                 continue
             record = {key: convert(value, columns[key], index, key) for key, value in source.items() if key in columns}
-            if view == 'indices' and record.get('index_code'):
-                record['index_code'] = record['index_code'].upper()
             if view == 'types':
                 actor = "System"
                 if isinstance(current_user, dict):
@@ -336,8 +335,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
             names = [column[0] for column in result.description]
             existing_row = result.fetchone()
             old = dict(zip(names, existing_row)) if existing_row else None
-            if view in {'indices', 'identifiers'} and not conn.execute('SELECT 1 FROM security_reference WHERE isin=?', [record['isin']]).fetchone():
-                raise HTTPException(400, f'Row {index}: ISIN is not in the security master.')
             if flag == 'A' and old or flag == 'D' and not old:
                 counts['skipped'] += 1
                 continue
@@ -349,10 +346,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 for key in set(record) - editable - set(keys):
                     if record[key] is not None and record[key] != old.get(key):
                         raise HTTPException(400, f'Row {index}: {key} is managed by Upstox and cannot be changed.')
-            if flag == 'D' and view in {'indices', 'identifiers'}:
-                conn.execute(f'DELETE FROM {table} WHERE {where}', params)
-                counts['deleted'] += 1
-                continue
             merged = {key: (old or {}).get(key) for key in columns}
             merged.update({key: record[key] for key in keys})
             manual = set(json.loads((old or {}).get('manual_fields') or '[]'))
@@ -387,17 +380,6 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 delisted = merged.get('is_delisted') is True
                 if suspended and delisted or (suspended or delisted) and merged.get('is_active') is True or delisted and merged.get('is_listed') is True:
                     raise HTTPException(400, f'Row {index}: active, listed, suspended and delisted flags conflict.')
-            if view in {'indices', 'identifiers'}:
-                if not merged.get('effective_from') or merged.get('effective_to') and merged['effective_to'] < merged['effective_from']:
-                    raise HTTPException(400, f'Row {index}: invalid effective date range.')
-                if view == 'indices':
-                    if not merged.get('index_name'):
-                        raise HTTPException(400, f'Row {index}: index name is required.')
-                    merged['index_code'] = merged['index_code'].upper()
-                    merged['is_current'] = merged['effective_from'] <= date.today() and (not merged.get('effective_to') or merged['effective_to'] >= date.today())
-                    overlap = conn.execute("SELECT 1 FROM security_index_membership WHERE isin=? AND index_code=? AND effective_from<>? AND effective_from <= COALESCE(?, DATE '9999-12-31') AND COALESCE(effective_to, DATE '9999-12-31') >= ?", [merged['isin'], merged['index_code'], merged['effective_from'], merged.get('effective_to'), merged['effective_from']]).fetchone()
-                    if overlap:
-                        raise HTTPException(400, f'Row {index}: index membership dates overlap an existing period.')
             if old and all(old.get(key) == merged.get(key) for key in columns if key != 'record_updated_at') and manual == set(json.loads(old.get('manual_fields') or '[]')):
                 counts['skipped'] += 1
                 continue
@@ -407,7 +389,7 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
                 merged['manual_fields'] = json.dumps(sorted(manual))
             write_record(conn, table, columns, keys, merged)
             counts['deleted' if flag == 'D' else 'updated' if old else 'added'] += 1
-        if view != 'types':
+        if view in {'securities', 'listings'}:
             sync_reference(conn)
         conn.commit()
         return counts
