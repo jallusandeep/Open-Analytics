@@ -2003,6 +2003,9 @@ def sync_upstox_ohlcv_daily_service(
         "failed_instruments": 0
     }
     failed_items = []
+    universe_metrics = None
+    data_quality_metrics = None
+    corporate_action_metrics = None
     service_start_perf = time.perf_counter()
     first_api_call_logged = False
 
@@ -2355,6 +2358,25 @@ def sync_upstox_ohlcv_daily_service(
                 f"Failed items saved to {failed_file}."
             )
 
+        if total_records:
+            try:
+                from app.engines.universe import run_universe_engine
+                from app.engines.data_quality import run_data_quality_engine
+                from app.engines.corporate_actions import run_corporate_action_engine
+                corporate_action_metrics = run_corporate_action_engine(conn)
+                universe_metrics = run_universe_engine(conn)
+                data_quality_metrics = run_data_quality_engine(conn)
+                conn.commit()
+                log_ohlcv_message(f"Universe OHLCV metrics refreshed: {universe_metrics}.")
+                log_ohlcv_message(f"Data quality validation refreshed: {data_quality_metrics}.")
+                log_ohlcv_message(f"Corporate-action adjustments refreshed: {corporate_action_metrics}.")
+            except Exception as universe_error:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                log_ohlcv_message(f"Universe OHLCV metrics refresh skipped: {universe_error}")
+
         finish_ohlcv_sync_run_metrics(conn, sync_id, metrics)
         finish_sync_run(
             conn,
@@ -2380,6 +2402,9 @@ def sync_upstox_ohlcv_daily_service(
             "total_records": total_records,
             "duration_seconds": duration_seconds(started_at),
             "metrics": metrics,
+            "universe_metrics": universe_metrics,
+            "data_quality_metrics": data_quality_metrics,
+            "corporate_action_metrics": corporate_action_metrics,
             "failed_items": len(failed_items)
         }
 

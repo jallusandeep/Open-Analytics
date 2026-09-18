@@ -20,6 +20,15 @@ function normalizeValue(value) {
   return String(value);
 }
 
+function optionValue(item) {
+  return normalizeValue(typeof item === "object" && item !== null ? item.value : item);
+}
+
+function optionLabel(item) {
+  if (typeof item !== "object" || item === null) return normalizeValue(item);
+  return normalizeValue(item.label ?? item.value);
+}
+
 function SelectedDot() {
   return <span className={oaTableFilterDropdownStyles.selectedDot} />;
 }
@@ -127,14 +136,14 @@ export default function TableFilterDropdown({
 
   const filteredValues = useMemo(() => {
     return values.filter((item) =>
-      normalizeValue(item.label || item.value)
+      optionLabel(item)
         .toLowerCase()
         .includes(searchText.toLowerCase())
     );
   }, [values, searchText]);
 
   const allValues = useMemo(() => {
-    return values.map((item) => normalizeValue(item.value));
+    return values.map(optionValue);
   }, [values]);
 
   const isAllSelected =
@@ -310,8 +319,8 @@ export default function TableFilterDropdown({
           </div>
         ) : (
           filteredValues.map((item) => {
-            const value = normalizeValue(item.value);
-            const label = normalizeValue(item.label);
+            const value = optionValue(item);
+            const label = optionLabel(item);
             const selected = normalizedSelectedValues.includes(value);
 
             return (

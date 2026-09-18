@@ -41,6 +41,10 @@ function Login() {
   const navigate = useNavigate();
 
   function getErrorMessage(error, fallbackMessage) {
+    if (error.code === "ECONNABORTED") {
+      return "Authentication timed out. Please try again.";
+    }
+
     const detail = error.response?.data?.detail;
 
     if (typeof detail === "string") {
