@@ -112,7 +112,7 @@ function ReferenceDataPage({ view }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await axiosClient.get(`/reference-data/tables/${view}`, { params: { search: appliedSearch, page, page_size: view === "types" ? 500 : 50, filters, sort_by: sort.key, sort_direction: sort.direction } });
+      const response = await axiosClient.get(`/reference-data/tables/${view}`, { params: { search: appliedSearch, page, page_size: 500, filters, sort_by: sort.key, sort_direction: sort.direction } });
       setData(response.data);
     } catch {
       showToast("Unable to load reference data.", "error");

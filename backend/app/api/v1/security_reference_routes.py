@@ -182,7 +182,7 @@ def corporate_action_summary():
 
 
 @router.get("/tables/{view}")
-def list_rows(view: str, search: str = "", filters: str = "{}", sort_by: str = "", sort_direction: str = "asc", page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=500)):
+def list_rows(view: str, search: str = "", filters: str = "{}", sort_by: str = "", sort_direction: str = "asc", page: int = Query(1, ge=1), page_size: int = Query(500, ge=10, le=500)):
     table, columns, keys = config(view)
     columns = visible_columns(view, columns)
     query, params, order = query_parts(view, search, filters, sort_by, sort_direction)

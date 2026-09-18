@@ -240,7 +240,7 @@ function UserAccounts() {
   });
 
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(100);
+  const [pageSize] = useState(500);
   const [totalPages, setTotalPages] = useState(1);
   const [totalRecords, setTotalRecords] = useState(0);
 

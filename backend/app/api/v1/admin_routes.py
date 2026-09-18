@@ -23,7 +23,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 @router.get("/users", response_model=PaginatedUsersResponse)
 def list_users(
     page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=100),
+    page_size: int = Query(500, ge=1, le=500),
     search: str = "",
     role: str = "all",
     is_active: Optional[bool] = None,
