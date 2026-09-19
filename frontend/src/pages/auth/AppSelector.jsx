@@ -1,6 +1,8 @@
-import { ChartCandlestick, ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
+import { ChartCandlestick, ChevronRight, LogOut, ShieldCheck, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getAppAccess } from "../../utils/appAccess";
+import axiosClient from "../../api/axiosClient";
+import { clearSessionActivity } from "../../utils/sessionActivity";
 import { useState } from "react";
 import NavigationLink from "../../components/common/NavigationLink";
 
@@ -13,9 +15,24 @@ const apps = [
 
 export default function AppSelector() {
   const navigate = useNavigate();
-  const user = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || "null");
+  const user = JSON.parse(sessionStorage.getItem("open_analytics_current_user") || sessionStorage.getItem("open_analytics_user") || "null");
   const [notice, setNotice] = useState("");
   const access = getAppAccess(user);
+
+  async function handleLogout() {
+    try {
+      await axiosClient.post("/auth/logout");
+    } catch {
+      // Clear the local session even if the server is unavailable.
+    } finally {
+      sessionStorage.removeItem("open_analytics_token");
+      sessionStorage.removeItem("open_analytics_user");
+      sessionStorage.removeItem("open_analytics_current_user");
+      sessionStorage.removeItem("open_analytics_selected_app");
+      clearSessionActivity();
+      navigate("/login", { replace: true });
+    }
+  }
 
   return (
     <div className="oa-app-font flex min-h-screen flex-col bg-black text-white">
@@ -24,6 +41,7 @@ export default function AppSelector() {
         <span className="text-lg font-semibold tracking-wide">Open Analytics</span>
       </header>
       <main className="flex flex-1 flex-col items-center justify-center px-6 pb-24 pt-8 sm:pb-48">
+        <p className="mb-8 text-center text-base text-zinc-300">Welcome, {user?.full_name || user?.login_id || "User"}</p>
         <div aria-label="Choose your app" className="flex flex-wrap justify-center gap-7 sm:gap-10">
           {apps.filter((app) => access.includes(app.accessKey || app.name.toLowerCase())).map(({ name, icon: Icon, path, description }) => {
             const AppControl = path ? NavigationLink : "button";
@@ -53,6 +71,10 @@ export default function AppSelector() {
         </div>
         {notice && <p role="status" className="mt-6 text-sm text-zinc-400">{notice}</p>}
         {!access.length ? <p className="text-sm text-zinc-400">No apps are enabled. Contact your administrator.</p> : null}
+        <button type="button" onClick={handleLogout} className="mt-10 inline-flex items-center gap-2 rounded border border-oa-border px-4 py-2 text-xs text-oa-muted transition hover:border-red-500/60 hover:bg-red-950/30 hover:text-red-300">
+          <LogOut size={14} />
+          Logout
+        </button>
       </main>
     </div>
   );

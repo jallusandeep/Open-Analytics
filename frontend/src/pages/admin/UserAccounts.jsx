@@ -56,6 +56,7 @@ const emptyFormData = {
   mobile_number: "",
   password: "",
   role: "user",
+  app_access: ["trading", "recom"],
   is_active: true,
   access_restrictions: []
 };
@@ -99,9 +100,8 @@ function formatDateTime(value) {
 }
 
 function accessTextForUser(user) {
-  return user.role === "user"
-    ? user.access_restrictions || "[]"
-    : "Full Access";
+  const count = getAppAccess(user).length;
+  return `${count} ${count === 1 ? "app" : "apps"}`;
 }
 
 function getColumnValue(user, key) {
@@ -281,6 +281,10 @@ function UserAccounts() {
     { value: "admin", label: "Admin" },
     { value: "super_admin", label: "Super Admin" }
   ];
+
+  const createRoleOptions = currentUserRole === "admin"
+    ? [{ value: "user", label: "User" }]
+    : fullRoleOptions;
 
   async function loadUsers(customPage = page, overrides = {}) {
     setLoading(true);
@@ -684,11 +688,12 @@ function UserAccounts() {
 
     try {
       await createAdminUser({
-        full_name: formData.full_name,
-        email: formData.email,
-        mobile_number: formData.mobile_number,
+        full_name: formData.full_name.trim(),
+        email: formData.email.trim(),
+        mobile_number: formData.mobile_number.trim() || null,
         password: formData.password,
         role: formData.role,
+        app_access: formData.app_access,
         access_restrictions:
           formData.role === "user" ? formData.access_restrictions : []
       });
@@ -1094,19 +1099,30 @@ function UserAccounts() {
                   onChange={(event) =>
                     setFormData((previous) => ({
                       ...previous,
-                      role: event.target.value
+                      role: event.target.value,
+                      app_access: event.target.value === "user" ? previous.app_access : ["trading", "admin", "recom"]
                     }))
                   }
-                  options={[
-                    { value: "user", label: "User" },
-                    { value: "admin", label: "Admin" },
-                    { value: "super_admin", label: "Super Admin" }
-                  ]}
+                  options={createRoleOptions}
                   ariaLabel="New user role"
                   minWidth="w-full"
                 />
               </div>
             </div>
+          </div>
+          <div className="mt-4 divide-y divide-oa-border rounded border border-oa-border px-3">
+            {["trading", "admin", "recom"].map((app) => {
+              const eligible = app !== "admin" || ["admin", "super_admin"].includes(formData.role);
+              const enabled = eligible && formData.app_access.includes(app);
+              return <div key={app} className="flex items-center justify-between gap-4 py-3">
+                <div><span className="text-xs font-semibold capitalize text-white">{app}</span></div>
+                <button type="button" role="switch" aria-label={`${app} app access`} aria-checked={enabled} disabled={!eligible}
+                  onClick={() => setFormData((previous) => ({ ...previous, app_access: enabled ? previous.app_access.filter((item) => item !== app) : [...previous.app_access, app] }))}
+                  className={`h-6 w-11 rounded-full border p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-40 ${enabled ? "border-white bg-white" : "border-zinc-600 bg-zinc-900"}`}>
+                  <span className={`block h-4 w-4 rounded-full transition-transform ${enabled ? "translate-x-5 bg-black" : "translate-x-0 bg-zinc-400"}`} />
+                </button>
+              </div>;
+            })}
           </div>
         </form>
       </Modal>
@@ -1248,14 +1264,13 @@ function UserAccounts() {
           )}
           </div>
             <div aria-hidden={editTab !== "apps"} inert={editTab !== "apps"} className={`[grid-area:1/1] divide-y divide-oa-border ${editTab !== "apps" ? "invisible pointer-events-none" : ""}`}>
-              <p className="pb-3 text-xs text-oa-muted">{["admin", "super_admin"].includes(editUser?.role) || ["admin", "super_admin"].includes(editFormData.role) ? "App access is read-only for Admin and Super Admin accounts." : "Select the apps this user can open, then click Update user to save."}</p>
               {["trading", "admin", "recom"].map((app) => {
                 const eligible = app !== "admin" || ["admin", "super_admin"].includes(editFormData.role);
                 const enabled = eligible && (editFormData.app_access || []).includes(app);
                 const locked = updating || !eligible || ["admin", "super_admin"].includes(editUser?.role) || ["admin", "super_admin"].includes(editFormData.role);
                 return (
                   <div key={app} className="flex items-center justify-between gap-4 py-4">
-                    <div><span className="text-xs font-semibold capitalize text-white">{app}</span>{!eligible ? <p className="mt-1 text-xs text-oa-muted">Requires an admin role</p> : null}</div>
+                    <div><span className="text-xs font-semibold capitalize text-white">{app}</span></div>
                     <button type="button" role="switch" aria-label={`${app} app access`} aria-checked={enabled} disabled={locked}
                       onClick={() => setEditFormData((previous) => ({ ...previous, app_access: enabled ? previous.app_access.filter((item) => item !== app) : [...previous.app_access, app] }))}
                       className={`h-6 w-11 rounded-full border p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-40 ${enabled ? "border-white bg-white" : "border-zinc-600 bg-zinc-900"}`}>

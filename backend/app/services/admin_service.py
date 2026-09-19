@@ -223,12 +223,12 @@ def create_user_service(request, current_user):
     login_id = generate_unique_login_id(conn)
     password_hash = hash_password(request.password)
 
-    access_restrictions = None
-
-    if request.role == "user":
-        access_restrictions = json.dumps(
-            request.access_restrictions or []
-        )
+    grants = request.app_access
+    if request.role != "user":
+        grants = allowed_apps(request.role, [])
+    elif grants is None:
+        grants = allowed_apps(request.role, request.access_restrictions or [])
+    access_restrictions = serialize_app_access(request.access_restrictions or [], grants)
 
     conn.execute(
         """

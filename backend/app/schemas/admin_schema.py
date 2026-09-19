@@ -9,6 +9,7 @@ class AdminUserCreateRequest(BaseModel):
     mobile_number: Optional[str] = None
     password: str = Field(..., min_length=6)
     role: str = "user"
+    app_access: Optional[List[Literal["trading", "admin", "recom"]]] = None
     access_restrictions: Optional[List[str]] = []
 
 

@@ -99,7 +99,7 @@ function Login() {
 
     try {
       const response = await loginUser({
-        login_identifier: loginIdentifier,
+        login_identifier: loginIdentifier.trim(),
         password
       });
 
