@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useEffect, useRef, useState } from "react";
+import { cloneElement, isValidElement, memo, useEffect, useMemo, useRef, useState } from "react";
 import ScreenLoading from "../common/ScreenLoading";
 import Spinner from "../common/Spinner";
 import { oaTableStyles } from "../common/uiStyles";
@@ -6,6 +6,10 @@ import DataTableHeaderFilter from "./DataTableHeaderFilter";
 import ColumnConfig from "./ColumnConfig";
 
 const DEFAULT_ACTION_COLUMN_WIDTH = "96px";
+const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
 
 function splitGridTemplateColumns(gridTemplateColumns) {
   if (!gridTemplateColumns) {
@@ -53,6 +57,66 @@ function getResolvedGridTemplateColumns(gridTemplateColumns, columnCount, hasAct
   return `${DEFAULT_ACTION_COLUMN_WIDTH} ${gridTemplateColumns}`;
 }
 
+function numericValue(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const clean = value.trim().replace(/,/g, "").replace(/%$/, "");
+  if (!/^-?\d+(\.\d+)?$/.test(clean)) return null;
+  return Number(clean);
+}
+
+
+const DataTableBody = memo(function DataTableBody({
+  rows, columns, getRowKey, renderCell, renderActions, fitToViewport,
+  formattedColumns, columnKeys, gridTemplateColumns, hidden
+}) {
+  const compactDataRowClass = `${oaTableStyles.dataRow} !py-1`;
+  function formattingKey(column) { return `${columnKeys}:${column.key}`; }
+  function getColumnDividerClass(index) {
+    return index > 0 || renderActions ? " border-l border-oa-border" : "";
+  }
+  function numericCellValue(row, column) {
+    if (!fitToViewport || /(^|_)(id|key|isin|symbol|code|date|timestamp|year|period)(_|$)/i.test(column.key)) return null;
+    return numericValue(row[column.key]);
+  }
+  function renderDisplayCell(row, column) {
+    const rendered = renderCell(row, column);
+    const number = numericCellValue(row, column);
+    if (number === null) return rendered;
+    const text = NUMBER_FORMATTER.format(number) +
+      (typeof row[column.key] === "string" && row[column.key].trim().endsWith("%") ? "%" : "");
+    return isValidElement(rendered) && rendered.type === "span"
+      ? cloneElement(rendered, {}, text)
+      : text;
+  }
+  function cellFormatting(row, column) {
+    if (!formattedColumns[formattingKey(column)]) return "";
+    const number = numericValue(row[column.key]);
+    return number > 0 ? " bg-emerald-500/15 !text-emerald-300" : number < 0 ? " bg-red-500/15 !text-red-300" : "";
+  }
+  return (
+    rows.map((row, rowIndex) => (
+      <div
+        key={getRowKey ? getRowKey(row, rowIndex) : rowIndex}
+        className={`${compactDataRowClass} ${oaTableStyles.dataText}${hidden ? " invisible" : ""}`}
+        style={{ gridTemplateColumns }}
+      >
+        {columns.map((column, columnIndex) => (
+          <div key={column.key}  className={`${oaTableStyles.dataCell}${getColumnDividerClass(columnIndex)}${cellFormatting(row, column)}${numericCellValue(row, column) !== null ? " text-right tabular-nums" : ""}`}>
+            {renderDisplayCell(row, column)}
+          </div>
+        ))}
+
+        {renderActions && (
+          <div className={`${oaTableStyles.actionCell} -order-1 !justify-start`}>
+            {renderActions(row)}
+          </div>
+        )}
+      </div>
+    ))
+  );
+});
+
 function DataTable({
   columns,
   rows,
@@ -72,38 +136,18 @@ function DataTable({
   filterConfig
 }) {
   const headerRef = useRef(null);
+  const tableSurfaceRef = useRef(null);
   const dragCleanupRef = useRef(null);
   const [columnWidths, setColumnWidths] = useState(null);
   const [formattedColumns, setFormattedColumns] = useState({});
+  const columnKeys = columns.map((column) => column.key).join("|");
   function formattingKey(column) {
-    return `${columns.map((item) => item.key).join("|")}:${column.key}`;
+    return `${columnKeys}:${column.key}`;
   }
-  function numericValue(value) {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    if (typeof value !== "string" || !value.trim()) return null;
-    const clean = value.trim().replace(/,/g, "").replace(/%$/, "");
-    if (!/^-?\d+(\.\d+)?$/.test(clean)) return null;
-    return Number(clean);
-  }
-  function numericCellValue(row, column) {
-    if (!fitToViewport || /(^|_)(id|key|isin|symbol|code|date|timestamp|year|period)(_|$)/i.test(column.key)) return null;
-    return numericValue(row[column.key]);
-  }
-  function renderDisplayCell(row, column) {
-    const rendered = renderCell(row, column);
-    const number = numericCellValue(row, column);
-    if (number === null) return rendered;
-    const text = number.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
-      (typeof row[column.key] === "string" && row[column.key].trim().endsWith("%") ? "%" : "");
-    return isValidElement(rendered) && rendered.type === "span"
-      ? cloneElement(rendered, {}, text)
-      : text;
-  }
-  function cellFormatting(row, column) {
-    if (!formattedColumns[formattingKey(column)]) return "";
-    const number = numericValue(row[column.key]);
-    return number > 0 ? " bg-emerald-500/15 !text-emerald-300" : number < 0 ? " bg-red-500/15 !text-red-300" : "";
-  }
+  const numericColumns = useMemo(() => new Set(
+    columns.filter((column) => rows.some((row) => numericValue(row[column.key]) !== null))
+      .map((column) => column.key)
+  ), [columns, rows]);
   const columnSignature = `${columns.map((column) => column.key).join("|")}:${gridTemplateColumns}:${Boolean(renderActions)}`;
   const resizedWidths = columnWidths?.signature === columnSignature ? columnWidths.widths : null;
 
@@ -112,6 +156,19 @@ function DataTable({
   function resizeColumn(index, delta) {
     const widths = measureColumnWidths();
     setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(minimumWidths[index] || 80, width + delta) : width) });
+  }
+
+  function applyResizePreview(widths) {
+    const template = widths.map((width, position) =>
+      position === widths.length - 1 ? `minmax(${width}px, 1fr)` : `${width}px`
+    ).join(" ");
+    if (headerRef.current) headerRef.current.style.gridTemplateColumns = template;
+    const surface = tableSurfaceRef.current;
+    if (!surface) return;
+    surface.style.width = `${widths.reduce((total, width) => total + width, 0)}px`;
+    for (const child of surface.children) {
+      if (child !== headerRef.current && child.style) child.style.gridTemplateColumns = template;
+    }
   }
 
   function startResize(event, index) {
@@ -123,29 +180,40 @@ function DataTable({
     const startX = event.clientX;
     const minimumWidth = minimumWidths[index] || 80;
     const handle = event.currentTarget;
+    let currentWidths = widths;
+    let frame = null;
     handle.setPointerCapture(event.pointerId);
     function move(pointerEvent) {
-      setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(minimumWidth, width + pointerEvent.clientX - startX) : width) });
+      currentWidths = widths.map((width, position) => position === index ? Math.max(minimumWidth, width + pointerEvent.clientX - startX) : width);
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        applyResizePreview(currentWidths);
+      });
     }
-    function cleanup() {
+    function cleanup(commit = true) {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = null;
+      if (commit) setColumnWidths({ signature: columnSignature, widths: currentWidths });
       handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", cleanup);
-      handle.removeEventListener("pointercancel", cleanup);
-      handle.removeEventListener("lostpointercapture", cleanup);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", cancel);
+      handle.removeEventListener("lostpointercapture", finish);
       dragCleanupRef.current = null;
     }
+    function finish() { cleanup(true); }
+    function cancel() { cleanup(false); }
     handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", cleanup);
-    handle.addEventListener("pointercancel", cleanup);
-    handle.addEventListener("lostpointercapture", cleanup);
-    dragCleanupRef.current = cleanup;
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", cancel);
+    handle.addEventListener("lostpointercapture", finish);
+    dragCleanupRef.current = cancel;
   }
   function measureColumnWidths() {
     const cells = Array.from(headerRef.current.children);
     if (renderActions) cells.unshift(cells.pop());
     return cells.map((cell) => cell.getBoundingClientRect().width);
   }
-  const compactDataRowClass = `${oaTableStyles.dataRow} !py-1`;
   const resolvedGridTemplateColumns = getResolvedGridTemplateColumns(
     gridTemplateColumns,
     columns.length,
@@ -228,7 +296,7 @@ function DataTable({
   return (
     <div className={`${oaTableStyles.wrapper} oa-data-table relative z-0 flex h-full w-full min-w-0 max-w-full min-h-0 flex-col overflow-hidden !rounded-none`}>
       <div className={`oa-data-table-scroll min-h-0 flex-1 overflow-y-auto !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}`}>
-        <div className={tableWidthClass} style={tableSurfaceStyle}>
+          <div ref={tableSurfaceRef} className={tableWidthClass} style={tableSurfaceStyle}>
           <div
             ref={headerRef}
             className={`${oaTableStyles.headerRow} ${oaTableStyles.headerText} sticky top-0 z-10 !rounded-none border-b border-oa-border`}
@@ -274,7 +342,7 @@ function DataTable({
                       }
                       onClear={() => filterConfig?.onClear?.(column.key)}
                       conditionalFormatting={Boolean(formattedColumns[formattingKey(column)])}
-                      onToggleConditionalFormatting={rows.some((row) => numericValue(row[column.key]) !== null) || formattedColumns[formattingKey(column)] ? () => {
+                      onToggleConditionalFormatting={numericColumns.has(column.key) || formattedColumns[formattingKey(column)] ? () => {
                         const key = formattingKey(column);
                         setFormattedColumns((previous) => ({ ...previous, [key]: !previous[key] }));
                       } : undefined}
@@ -308,25 +376,11 @@ function DataTable({
           </div>
 
           {(!loading || loadingPlacement === "table") && rows.length > 0 ? (
-            rows.map((row, rowIndex) => (
-              <div
-                key={getRowKey ? getRowKey(row, rowIndex) : rowIndex}
-                className={`${compactDataRowClass} ${oaTableStyles.dataText}${loading && loadingPlacement === "table" ? " invisible" : ""}`}
-                style={gridStyle}
-              >
-                {columns.map((column, columnIndex) => (
-                  <div key={column.key}  className={`${oaTableStyles.dataCell}${getColumnDividerClass(columnIndex)}${cellFormatting(row, column)}${numericCellValue(row, column) !== null ? " text-right tabular-nums" : ""}`}>
-                    {renderDisplayCell(row, column)}
-                  </div>
-                ))}
-
-                {renderActions && (
-                  <div className={`${oaTableStyles.actionCell} -order-1 !justify-start`}>
-                    {renderActions(row)}
-                  </div>
-                )}
-              </div>
-            ))
+            <DataTableBody rows={rows} columns={columns} getRowKey={getRowKey}
+              renderCell={renderCell} renderActions={renderActions} fitToViewport={fitToViewport}
+              formattedColumns={formattedColumns} columnKeys={columnKeys}
+              gridTemplateColumns={gridStyle.gridTemplateColumns}
+              hidden={loading && loadingPlacement === "table"} />
           ) : null}
         </div>
         {loading && loadingPlacement === "table" && rows.length === 0 && <div aria-hidden="true" style={{ height: stateMessageMinHeight }} />}

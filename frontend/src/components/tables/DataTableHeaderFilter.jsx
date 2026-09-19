@@ -31,6 +31,7 @@ function DataTableHeaderFilter({
 }) {
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
+  const [mounted, setMounted] = useState(open);
 
   const [position, setPosition] = useState({
     top: 0,
@@ -38,6 +39,15 @@ function DataTableHeaderFilter({
     flyoutAlign: align,
     direction: "down"
   });
+
+  useEffect(() => {
+    if (open) {
+      const timer = window.setTimeout(() => setMounted(true), 0);
+      return () => window.clearTimeout(timer);
+    }
+    const timer = window.setTimeout(() => setMounted(false), 120);
+    return () => window.clearTimeout(timer);
+  }, [open]);
 
   function calculatePosition() {
     if (!buttonRef.current) {
@@ -64,12 +74,11 @@ function DataTableHeaderFilter({
     const flyoutAlign = flyoutRoomRight >= FILTER_DROPDOWN_FLYOUT_WIDTH || flyoutRoomRight >= flyoutRoomLeft
       ? "left" : "right";
 
-    setPosition({
-      top,
-      left,
-      flyoutAlign,
-      direction
-    });
+    setPosition((previous) =>
+      previous.top === top && previous.left === left &&
+      previous.flyoutAlign === flyoutAlign && previous.direction === direction
+        ? previous : { top, left, flyoutAlign, direction }
+    );
   }
 
   useLayoutEffect(() => {
@@ -81,8 +90,15 @@ function DataTableHeaderFilter({
       return undefined;
     }
 
-    function handlePositionRefresh() {
-      calculatePosition();
+    let frame = null;
+    function handlePositionRefresh(event) {
+      // Scrolling values inside the portal does not move its anchor.
+      if (event.target instanceof Node && dropdownRef.current?.contains(event.target)) return;
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        calculatePosition();
+      });
     }
 
     function handleClickOutside(event) {
@@ -99,6 +115,7 @@ function DataTableHeaderFilter({
     window.addEventListener("scroll", handlePositionRefresh, true);
 
     return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", handleClickOutside, true);
       window.removeEventListener("resize", handlePositionRefresh);
       window.removeEventListener("scroll", handlePositionRefresh, true);
@@ -126,11 +143,12 @@ function DataTableHeaderFilter({
         {active && <span className={oaHeaderFilterStyles.activeDot} />}
       </button>
 
-      {open &&
+      {mounted &&
         createPortal(
           <div
             ref={dropdownRef}
-            className={`${oaHeaderFilterStyles.portal} ${position.direction === "up" ? "origin-bottom animate-[oaMenuIn_0.1s_ease-out]" : "origin-top animate-[oaSelectDown_0.1s_ease-out]"}`}
+            data-state={open ? "open" : "closing"}
+            className={`${oaHeaderFilterStyles.portal} ${position.direction === "up" ? (open ? "origin-bottom animate-[oaMenuIn_0.1s_ease-out]" : "origin-bottom animate-[oaMenuOut_0.12s_ease-in]") : (open ? "origin-top animate-[oaSelectDown_0.1s_ease-out]" : "origin-top animate-[oaSelectUp_0.12s_ease-in]")}`}
             style={{
               top: `${position.top}px`,
               left: `${position.left}px`,

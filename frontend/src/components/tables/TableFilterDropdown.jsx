@@ -7,7 +7,7 @@ import {
   Palette,
   X
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import SearchBox from "../common/SearchBox";
 import { oaTableFilterDropdownStyles } from "../common/uiStyles";
@@ -27,6 +27,81 @@ function optionValue(item) {
 function optionLabel(item) {
   if (typeof item !== "object" || item === null) return normalizeValue(item);
   return normalizeValue(item.label ?? item.value);
+}
+
+// Fixed-height options keep opening and scrolling independent of value count.
+function FilterValueList({ values, selectedValueSet, toggleValue, toggleAll, isAllSelected }) {
+  const listRef = useRef(null);
+  const focusIndexRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const rowHeight = 32;
+  const overscan = 5;
+  const start = Math.max(0, Math.floor(Math.max(0, scrollTop - rowHeight) / rowHeight) - overscan);
+  const end = Math.min(values.length, start + 18);
+
+  useLayoutEffect(() => {
+    if (focusIndexRef.current === null) return;
+    const button = listRef.current?.querySelector(`[data-value-index="${focusIndexRef.current}"]`);
+    if (button) {
+      button.focus({ preventScroll: true });
+      focusIndexRef.current = null;
+    }
+  });
+
+  function navigate(event) {
+    const index = Number(event.target.dataset.valueIndex);
+    if (!Number.isInteger(index)) return;
+    let next;
+    if (event.key === "ArrowDown" || (event.key === "Tab" && !event.shiftKey)) next = index + 1;
+    else if (event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey)) next = index - 1;
+    else if (event.key === "Home") next = -1;
+    else if (event.key === "End") next = values.length - 1;
+    else return;
+    if (next < -1 || next >= values.length) return;
+    event.preventDefault();
+    const top = (next + 1) * rowHeight;
+    const list = listRef.current;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + rowHeight > list.scrollTop + list.clientHeight - 8) {
+      list.scrollTop = top + rowHeight - list.clientHeight + 8;
+    }
+    const button = list.querySelector(`[data-value-index="${next}"]`);
+    if (button) button.focus({ preventScroll: true });
+    else focusIndexRef.current = next;
+    setScrollTop(list.scrollTop);
+  }
+
+  function checkbox(checked) {
+    return <span className={`${oaTableFilterDropdownStyles.checkbox} ${checked
+      ? oaTableFilterDropdownStyles.checkboxChecked : oaTableFilterDropdownStyles.checkboxUnchecked}`}>
+      <Check size={11} />
+    </span>;
+  }
+
+  return <div ref={listRef} className={oaTableFilterDropdownStyles.valuesSection}
+    onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)} onKeyDown={navigate}>
+    <button type="button" data-value-index={-1} onClick={toggleAll}
+      aria-pressed={isAllSelected} className={oaTableFilterDropdownStyles.valueButton}>
+      {checkbox(isAllSelected)}<span className="truncate">(Select All)</span>
+    </button>
+    {values.length === 0 ? <div className={oaTableFilterDropdownStyles.emptyValues}>No values</div> : <>
+      <div aria-hidden="true" style={{ height: start * rowHeight }} />
+      {values.slice(start, end).map((item, offset) => {
+        const value = optionValue(item);
+        const selected = selectedValueSet.has(value);
+        return <button key={value} type="button" data-value-index={start + offset}
+          aria-pressed={selected} onClick={() => toggleValue(value)}
+          className={`${oaTableFilterDropdownStyles.valueRow} ${selected
+            ? oaTableFilterDropdownStyles.valueRowSelected : oaTableFilterDropdownStyles.valueRowDefault}`}>
+          <span className={oaTableFilterDropdownStyles.valueLeft}>
+            {checkbox(selected)}<span className="truncate">{optionLabel(item)}</span>
+          </span>
+          {item?.count !== undefined && <span className={oaTableFilterDropdownStyles.valueCount}>{item.count}</span>}
+        </button>;
+      })}
+      <div aria-hidden="true" style={{ height: (values.length - end) * rowHeight }} />
+    </>}
+  </div>;
 }
 
 function SelectedDot() {
@@ -135,10 +210,11 @@ export default function TableFilterDropdown({
   const normalizedSelectedValues = pendingValues ?? selectedValues;
 
   const filteredValues = useMemo(() => {
+    const query = searchText.toLowerCase();
     return values.filter((item) =>
       optionLabel(item)
         .toLowerCase()
-        .includes(searchText.toLowerCase())
+        .includes(query)
     );
   }, [values, searchText]);
 
@@ -146,9 +222,13 @@ export default function TableFilterDropdown({
     return values.map(optionValue);
   }, [values]);
 
+  const selectedValueSet = useMemo(
+    () => new Set(normalizedSelectedValues),
+    [normalizedSelectedValues]
+  );
   const isAllSelected =
     allValues.length > 0 &&
-    allValues.every((value) => normalizedSelectedValues.includes(value));
+    allValues.every((value) => selectedValueSet.has(value));
 
   const hasSortAsc = typeof onSortAsc === "function";
   const hasSortDesc = typeof onSortDesc === "function";
@@ -167,16 +247,10 @@ export default function TableFilterDropdown({
       ? "right-full mr-1 left-auto"
       : "left-full ml-1 right-auto";
 
-  function getCheckboxClassName(checked) {
-    return checked
-      ? oaTableFilterDropdownStyles.checkboxChecked
-      : oaTableFilterDropdownStyles.checkboxUnchecked;
-  }
-
   function toggleValue(value) {
     const normalized = normalizeValue(value);
 
-    if (normalizedSelectedValues.includes(normalized)) {
+    if (selectedValueSet.has(normalized)) {
       onChange(normalizedSelectedValues.filter((item) => item !== normalized));
       return;
     }
@@ -296,66 +370,9 @@ export default function TableFilterDropdown({
         />
       </div>
 
-      <div className={oaTableFilterDropdownStyles.valuesSection}>
-        <button
-          type="button"
-          onClick={toggleAll}
-          className={oaTableFilterDropdownStyles.valueButton}
-        >
-          <span
-            className={`${oaTableFilterDropdownStyles.checkbox} ${getCheckboxClassName(
-              isAllSelected
-            )}`}
-          >
-            <Check size={11} />
-          </span>
-
-          <span className="truncate">(Select All)</span>
-        </button>
-
-        {filteredValues.length === 0 ? (
-          <div className={oaTableFilterDropdownStyles.emptyValues}>
-            No values
-          </div>
-        ) : (
-          filteredValues.map((item) => {
-            const value = optionValue(item);
-            const label = optionLabel(item);
-            const selected = normalizedSelectedValues.includes(value);
-
-            return (
-              <button
-                key={value}
-                type="button"
-                onClick={() => toggleValue(value)}
-                className={`${oaTableFilterDropdownStyles.valueRow} ${
-                  selected
-                    ? oaTableFilterDropdownStyles.valueRowSelected
-                    : oaTableFilterDropdownStyles.valueRowDefault
-                }`}
-              >
-                <span className={oaTableFilterDropdownStyles.valueLeft}>
-                  <span
-                    className={`${oaTableFilterDropdownStyles.checkbox} ${getCheckboxClassName(
-                      selected
-                    )}`}
-                  >
-                    <Check size={11} />
-                  </span>
-
-                  <span className="truncate">{label}</span>
-                </span>
-
-                {item.count !== undefined && (
-                  <span className={oaTableFilterDropdownStyles.valueCount}>
-                    {item.count}
-                  </span>
-                )}
-              </button>
-            );
-          })
-        )}
-      </div>
+      <FilterValueList key={searchText} values={filteredValues}
+        selectedValueSet={selectedValueSet} toggleValue={toggleValue}
+        toggleAll={toggleAll} isAllSelected={isAllSelected} />
 
       <div className={oaTableFilterDropdownStyles.footer}>
         <button

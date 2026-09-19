@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Check, Columns3, GripVertical, ListChecks, ListX, Plus, Save, X } from "lucide-react";
 import axiosClient from "../../api/axiosClient";
 import Modal from "../common/Modal";
@@ -149,13 +149,17 @@ function ColumnConfigState({ columns, children, viewKey, tableId, configOpen, on
     }
   }
 
+  const visibleColumns = useMemo(
+    () => selected.map((key) => columns.find((column) => column.key === key)).filter(Boolean),
+    [selected, columns]
+  );
   const visibleOptions = columns.filter((column) => String(column.label).toLowerCase().includes(search.toLowerCase()));
   const visibleSelected = draft.filter((key) => String(columns.find((column) => column.key === key)?.label).toLowerCase().includes(selectedSearch.toLowerCase()));
   return <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
     {configOpen === undefined && <div className="flex shrink-0 border-b border-oa-border bg-black px-3 py-1.5">
       <IconButton icon={Columns3} label="Column config" disabled={!columns.length} onClick={() => setLocalOpen(true)} />
     </div>}
-    <div className="min-h-0 flex-1">{children(selected.map((key) => columns.find((column) => column.key === key)).filter(Boolean))}</div>
+    <div className="min-h-0 flex-1">{children(visibleColumns)}</div>
     <Modal open={open} title="Column config" onClose={close} width="max-w-4xl" footer={<>
       <IconButton icon={X} label="Close" variant="filterCancel" size="filter" tooltipSide="top" onClick={close} />
       <IconButton icon={Check} label="Apply columns" variant="filterApply" size="filter" disabled={!draft.length} onClick={() => {

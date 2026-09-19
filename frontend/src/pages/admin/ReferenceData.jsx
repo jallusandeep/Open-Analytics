@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { referenceViews as VIEWS } from "../../utils/referenceNavigation";
@@ -14,6 +14,11 @@ import Select from "../../components/common/Select";
 import Spinner from "../../components/common/Spinner";
 import { useToast } from "../../components/common/ToastProvider";
 import { oaCardStyles } from "../../components/common/uiStyles";
+
+function renderReferenceCell(row, column) {
+  const value = row[column.key];
+  return value === null || value === undefined || value === "" ? "--" : String(value);
+}
 
 const BLANK_FILTER_VALUE = "__oa_reference_blank__";
 const displayFilterValue = (value) => value === "" ? BLANK_FILTER_VALUE : value;
@@ -169,6 +174,14 @@ function ReferenceDataPage({ view }) {
   const [activeFilter, setActiveFilter] = useState(null);
   const [sort, setSort] = useState({ key: view === "listings" ? "instrument_key" : view === "types" ? "exchange" : "isin", direction: "asc" });
   const filters = JSON.stringify(columnFilters);
+  const getReferenceRowKey = useCallback(
+    (row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":"),
+    [data.columns]
+  );
+  const headerValues = useMemo(() => Object.fromEntries(
+    Object.entries(data.header_values || {}).map(([key, values]) => [key,
+      values.map((value) => ({ value: displayFilterValue(value), label: value === "" ? "--" : value }))])
+  ), [data.header_values]);
 
   async function openAuditTrail() {
     setAuditOpen(true);
@@ -286,9 +299,9 @@ function ReferenceDataPage({ view }) {
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference data CSV" />
         </div>
         <div className="min-h-0 flex-1 overflow-hidden [&_.oa-data-table]:border-0">
-          <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)} columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":")} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
+          <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)} columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={getReferenceRowKey} renderCell={renderReferenceCell} filterConfig={{
             activeFilter,
-            headerValues: Object.fromEntries(Object.entries(data.header_values || {}).map(([key, values]) => [key, values.map((value) => ({ value: displayFilterValue(value), label: value === "" ? "--" : value }))])),
+            headerValues,
             columnFilters: Object.fromEntries(Object.entries(columnFilters).map(([key, values]) => [key, values.map(displayFilterValue)])),
             draftColumnFilters,
             isColumnFilterActive: (key) => Boolean(columnFilters[key]?.length),
