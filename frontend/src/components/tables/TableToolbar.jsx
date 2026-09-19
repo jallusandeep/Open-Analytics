@@ -1,7 +1,6 @@
-import { Search, X } from "lucide-react";
+import { Columns3, Search, X } from "lucide-react";
 
 import IconButton from "../common/IconButton";
-import { oaToolbarStyles } from "../common/uiStyles";
 import FilterSearchInput from "./FilterSearchInput";
 import FilterSelect from "./FilterSelect";
 
@@ -17,6 +16,7 @@ function TableToolbar({
   onClearAll,
   loading = false,
   rightActions = [],
+  onColumnConfig,
   trailingContent = null
 }) {
   return (
@@ -65,7 +65,7 @@ function TableToolbar({
         />
       )}
 
-      {rightActions.length > 0 && (
+      {(rightActions.length > 0 || onColumnConfig) && (
         <div className="flex items-center gap-2">
           {rightActions.map((action) => (
             <IconButton
@@ -79,6 +79,7 @@ function TableToolbar({
               onClick={action.onClick}
             />
           ))}
+          {onColumnConfig && <IconButton icon={Columns3} label="Column config" tooltipSide="top" disabled={loading} onClick={onColumnConfig} />}
         </div>
       )}
       {trailingContent}

@@ -613,6 +613,7 @@ function ConnectionFormModal({
 }
 
 function Connections() {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [connections, setConnections] = useState([]);
   const [aiConnections, setAiConnections] = useState([]);
   const [aiModels, setAiModels] = useState([]);
@@ -1437,7 +1438,7 @@ function Connections() {
           <h2 className={oaCardStyles.headerTitle}>{title}</h2>
         </div>
         <div className="relative z-20 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-          <TableToolbar
+          <TableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             onSearchClear={clearSearchFilter}
@@ -1463,7 +1464,7 @@ function Connections() {
           />
         </div>
         <div className="bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-          <DataTable
+          <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
             columns={connectionColumns}
             rows={filteredRows}
             loading={loading}

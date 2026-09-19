@@ -222,6 +222,7 @@ function getErrorMessage(error, fallbackMessage) {
 }
 
 function UserAccounts() {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const { showToast } = useToast();
   const [users, setUsers] = useState([]);
 
@@ -900,7 +901,7 @@ function UserAccounts() {
             </div>
 
             <div className="border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-              <TableToolbar
+              <TableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
                 searchValue={searchText}
                 onSearchChange={setSearchText}
                 onSearchClear={clearSearchFilter}
@@ -948,7 +949,7 @@ function UserAccounts() {
             </div>
 
             <div className="min-w-0 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-              <DataTable
+              <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
                 columns={tableColumns}
                 rows={filteredUsers}
                 loading={loading}

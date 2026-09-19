@@ -111,7 +111,7 @@ function DataTable({
 
   function resizeColumn(index, delta) {
     const widths = measureColumnWidths();
-    setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(80, width + delta) : width) });
+    setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(minimumWidths[index] || 80, width + delta) : width) });
   }
 
   function startResize(event, index) {
@@ -121,10 +121,11 @@ function DataTable({
     dragCleanupRef.current?.();
     const widths = measureColumnWidths();
     const startX = event.clientX;
+    const minimumWidth = minimumWidths[index] || 80;
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
     function move(pointerEvent) {
-      setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(80, width + pointerEvent.clientX - startX) : width) });
+      setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(minimumWidth, width + pointerEvent.clientX - startX) : width) });
     }
     function cleanup() {
       handle.removeEventListener("pointermove", move);
@@ -225,7 +226,7 @@ function DataTable({
   }
 
   return (
-    <div className={`${oaTableStyles.wrapper} relative z-0 flex h-full w-full min-w-0 max-w-full min-h-0 flex-col overflow-hidden !rounded-none`}>
+    <div className={`${oaTableStyles.wrapper} oa-data-table relative z-0 flex h-full w-full min-w-0 max-w-full min-h-0 flex-col overflow-hidden !rounded-none`}>
       <div className={`oa-data-table-scroll min-h-0 flex-1 overflow-y-auto !rounded-none ${loading ? "overflow-x-hidden" : "overflow-x-auto"}`}>
         <div className={tableWidthClass} style={tableSurfaceStyle}>
           <div

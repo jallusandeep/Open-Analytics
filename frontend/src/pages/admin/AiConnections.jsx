@@ -23,6 +23,7 @@ function cellValue(row, key) {
 }
 
 export default function AiConnections({ allowed }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -94,14 +95,14 @@ export default function AiConnections({ allowed }) {
     <div className={oaCardStyles.wrapper}>
       <div className={oaCardStyles.header}><h2 className={oaCardStyles.headerTitle}>AI Connections</h2></div>
       <div className="relative z-20 border-b border-oa-border px-3 py-1.5">
-        <TableToolbar searchValue={search} onSearchChange={setSearch} onSearchClear={() => { setSearch(""); setAppliedSearch(""); }} onSearchSubmit={(event) => { event.preventDefault(); setAppliedSearch(search.trim()); }} searchPlaceholder="Search AI connections" searchActive={Boolean(appliedSearch)} loading={loading || busy} hasActiveFilter={Object.values(columnFilters).some((values) => values.length)} onClearAll={() => { setColumnFilters({}); setActiveFilter(null); }} rightActions={[
+        <TableToolbar onColumnConfig={() => setColumnConfigOpen(true)} searchValue={search} onSearchChange={setSearch} onSearchClear={() => { setSearch(""); setAppliedSearch(""); }} onSearchSubmit={(event) => { event.preventDefault(); setAppliedSearch(search.trim()); }} searchPlaceholder="Search AI connections" searchActive={Boolean(appliedSearch)} loading={loading || busy} hasActiveFilter={Object.values(columnFilters).some((values) => values.length)} onClearAll={() => { setColumnFilters({}); setActiveFilter(null); }} rightActions={[
           { icon: RefreshCcw, label: "Refresh AI connections", variant: "refresh", disabled: loading || busy || !allowed, onClick: load },
           { icon: Plus, label: "Add AI connection", variant: "add", disabled: busy || !allowed, onClick: () => { setEditing(null); setModels([]); setModelsError(""); setForm({ ...EMPTY }); } },
 
         ]} />
       </div>
       <div className="max-h-[50vh] overflow-y-auto [&>div]:border-0">
-        <DataTable columns={COLUMNS} rows={filteredRows} loading={loading} loadingMessage="Loading AI connections" loadingPlacement="table" stateMessageMinHeight={64} emptyMessage="No AI connections configured." gridTemplateColumns="180px 120px 220px 100px 180px 120px" getRowKey={(row) => row.connection_id} renderCell={(row, column) => cellValue(row, column.key)} renderActions={(row) => <div className="flex gap-1.5">
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)} columns={COLUMNS} rows={filteredRows} loading={loading} loadingMessage="Loading AI connections" loadingPlacement="table" stateMessageMinHeight={64} emptyMessage="No AI connections configured." gridTemplateColumns="180px 120px 220px 100px 180px 120px" getRowKey={(row) => row.connection_id} renderCell={(row, column) => cellValue(row, column.key)} renderActions={(row) => <div className="flex gap-1.5">
           <IconButton icon={Edit3} label="Edit AI connection" disabled={busy || !allowed} onClick={() => { setEditing(row); setModels([]); setModelsError(""); setForm({ ...EMPTY, ...row, api_key: "" }); }} />
           <IconButton icon={PlugZap} label="Test AI connection" disabled={busy || !allowed} onClick={() => action(() => axiosClient.post(`/connections/ai/${row.connection_id}/test`, null, { timeout: 130000 }), "API key and model access verified.")} />
           <IconButton icon={Trash2} label="Delete AI connection" variant="danger" disabled={busy || !allowed} onClick={() => action(() => axiosClient.delete(`/connections/ai/${row.connection_id}`), "AI connection deleted.")} />

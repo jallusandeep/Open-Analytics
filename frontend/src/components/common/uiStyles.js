@@ -13,7 +13,7 @@ export const oaTableStyles = {
   dataRow:
     "grid items-center border-b border-oa-border py-2 last:border-b-0 hover:bg-oa-panel/60",
   dataText:
-    "font-mono text-[13px] font-medium tracking-[-0.01em] text-zinc-300",
+    "font-mono text-[13px] font-medium tracking-[-0.01em] text-zinc-400",
   dataCell: "oa-data-table-cell min-w-0 truncate px-3",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
@@ -41,7 +41,7 @@ export const oaCardStyles = {
   modalTitle:
     "font-mono text-[14px] font-semibold tracking-[-0.01em] text-white",
   modalSubtitle: "font-mono text-[11px] tracking-[-0.01em] text-oa-muted",
-  modalBody: "font-mono text-[13px] tracking-[-0.01em] text-oa-text"
+  modalBody: "font-mono text-[13px] tracking-[-0.01em] text-zinc-300"
 };
 
 export const oaMetricCardStyles = {
@@ -110,7 +110,7 @@ export const oaFilterSelectStyles = {
 export const oaSelectStyles = {
   wrapper: "relative",
   button:
-    "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
+    "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded border border-oa-border bg-black px-2 font-mono text-xs tracking-[-0.01em] text-zinc-300 outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus:border-blue-500",
   buttonOpen: "border-blue-500 bg-oa-card",
   chevron: "shrink-0 text-oa-muted transition duration-150",
   chevronOpen: "rotate-180 text-sky-300",
@@ -127,14 +127,14 @@ export const oaSelectStyles = {
 
 export const oaCheckboxControlStyles = {
   wrapper:
-    "flex h-8 w-full cursor-pointer items-center justify-start gap-2 rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-oa-text outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus-within:border-blue-500",
+    "flex h-8 w-full cursor-pointer items-center justify-start gap-2 rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-zinc-300 outline-none transition hover:border-sky-500/40 hover:bg-oa-card focus-within:border-blue-500",
   checkbox: "h-4 w-4 shrink-0 accent-emerald-500",
   label: "truncate"
 };
 
 export const oaInputStyles = {
   base:
-    "h-8 w-full rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-white outline-none placeholder:text-oa-muted transition focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+    "h-8 w-full rounded border border-oa-border bg-black px-3 font-mono text-xs tracking-[-0.01em] text-zinc-300 outline-none placeholder:text-oa-muted transition focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
 };
 
 export const oaIconButtonStyles = {

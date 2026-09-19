@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Check,
+  Columns3,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -444,6 +445,7 @@ export function ScheduleManagerModal({
   onToggle,
   onDelete
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const is12HourFormat = formData.time_format === "12";
   const scheduleTimeParts = getScheduleTimeParts(formData.schedule_time);
   const canSave =
@@ -574,7 +576,7 @@ export function ScheduleManagerModal({
               Scheduled
             </p>
 
-            <StatusBadge status="active" label={`${schedules.length} Total`} />
+            <div className="flex items-center gap-2"><StatusBadge status="active" label={`${schedules.length} Total`} /><IconButton icon={Columns3} label="Column config" disabled={saving || !schedules.length} onClick={() => setColumnConfigOpen(true)} /></div>
           </div>
 
           {saving || schedules.length === 0 ? (
@@ -590,7 +592,7 @@ export function ScheduleManagerModal({
                   : "overflow-visible"
               }`}
             >
-              <DataTable
+              <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
                 columns={scheduleColumns}
@@ -770,10 +772,11 @@ export function MonitorContent({
   renderActions,
   filterConfig
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <DataTableToolbar
+        <DataTableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -797,7 +800,7 @@ export function MonitorContent({
       </div>
 
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
-        <DataTable
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
           columns={dumpJobColumns}
@@ -846,6 +849,7 @@ export function DbPreviewContent({
   onClearAll,
   filterConfig
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const isExpired = previewMode === "expired";
   const title = isExpired ? "Expired Instruments" : "Current Instruments";
   const sourceOptions = isExpired
@@ -901,7 +905,7 @@ export function DbPreviewContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <DataTableToolbar
+        <DataTableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -961,7 +965,7 @@ export function DbPreviewContent({
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
-        <DataTable
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
           columns={previewColumns}
@@ -1282,10 +1286,11 @@ export function MarketCalendarContent({
   renderCell,
   filterConfig
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <DataTableToolbar
+        <DataTableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1352,7 +1357,7 @@ export function MarketCalendarContent({
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
-        <DataTable
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
           columns={marketHolidayPreviewColumns}
@@ -1409,10 +1414,11 @@ export function GenericPreviewContent({
   emptyMessage,
   getRowKey
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <DataTableToolbar
+        <DataTableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1453,7 +1459,7 @@ export function GenericPreviewContent({
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
-        <DataTable
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
           columns={columns}
@@ -1504,10 +1510,11 @@ export function OhlcvTabContent({
   renderCell,
   filterConfig
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <DataTableToolbar
+        <DataTableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1554,7 +1561,7 @@ export function OhlcvTabContent({
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
-        <DataTable
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
           columns={ohlcvPreviewColumns}
@@ -1627,10 +1634,11 @@ export function CompanyFundamentalsContent({
   gridTemplateColumns,
   minWidth
 }) {
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-30 shrink-0 border-b border-oa-border bg-black px-3 py-1.5 [&>div]:mb-0">
-        <DataTableToolbar
+        <DataTableToolbar onColumnConfig={() => setColumnConfigOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           onSearchClear={onClearSearch}
@@ -1697,7 +1705,7 @@ export function CompanyFundamentalsContent({
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent">
 
-        <DataTable
+        <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)}
           fitToViewport
           resizableColumns
           columns={columns}

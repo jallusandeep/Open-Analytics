@@ -1,20 +1,16 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 
-import IconButton from "./IconButton";
 import { oaCardStyles } from "./uiStyles";
 import { LoadingScope } from "./LoadingScope";
 
 function Modal({
   open = false,
   title = "",
-  subtitle = "",
   children,
   onClose,
   width = "max-w-xl",
   closeOnOverlay = true,
-  showCloseButton = true,
   footer = null
 }) {
   const [panelElement, setPanelElement] = useState(null);
@@ -70,9 +66,9 @@ function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title || "Modal"}
-        className={`oa-modal-panel relative z-[10001] w-full ${width} overflow-visible rounded border border-oa-border bg-black text-oa-text shadow-2xl`}
+        className={`oa-modal-panel relative z-[10001] w-full ${width} overflow-visible rounded border border-oa-border bg-black text-zinc-300 shadow-2xl`}
       >
-        <div className="flex min-h-[48px] items-center justify-between gap-4 rounded-t border-b border-oa-border bg-oa-panel px-4 py-2.5">
+        <div className="flex min-h-[48px] items-center rounded-t border-b border-oa-border bg-oa-panel px-4 py-2.5">
           <div className="min-w-0">
             {title && (
               <h2 className={`truncate ${oaCardStyles.modalTitle}`}>
@@ -80,16 +76,6 @@ function Modal({
               </h2>
             )}
           </div>
-
-          {showCloseButton && (
-            <IconButton
-              icon={X}
-              label="Close"
-              onClick={onClose}
-              variant="danger"
-              tooltipSide="left"
-            />
-          )}
         </div>
 
         <LoadingScope.Provider value={{ element: panelElement }}>

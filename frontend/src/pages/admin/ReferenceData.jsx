@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { referenceViews as VIEWS } from "../../utils/referenceNavigation";
-import { Columns3, Download, History, RefreshCcw, Upload, X } from "lucide-react";
+import { Columns3, Download, History, RefreshCcw, Upload } from "lucide-react";
 
 import axiosClient from "../../api/axiosClient";
 import MainLayout from "../../components/layout/MainLayout";
@@ -10,7 +10,6 @@ import { PaginationFooter } from "./dataCollection/components";
 import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
 import Modal from "../../components/common/Modal";
-import IconButton from "../../components/common/IconButton";
 import Select from "../../components/common/Select";
 import Spinner from "../../components/common/Spinner";
 import { useToast } from "../../components/common/ToastProvider";
@@ -80,7 +79,6 @@ function AuditTrailDrawer({ open, loading, events, view, onClose }) {
     <aside role="dialog" aria-modal="true" aria-label="Reference data audit trail" className="oa-audit-panel absolute inset-y-0 right-0 flex w-full max-w-[520px] flex-col border-l border-oa-border bg-black shadow-2xl">
       <header className="flex shrink-0 items-center justify-between border-b border-oa-border bg-zinc-800/70 px-5 py-3.5">
         <h2 className={`flex items-center gap-2 ${oaCardStyles.modalTitle}`}><History size={13} />Audit Trail</h2>
-        <IconButton icon={X} label="Close audit trail" onClick={onClose} variant="danger" tooltipSide="left" />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3.5">
         {loading ? <div role="status" aria-live="polite" className="flex h-full items-center justify-center gap-2 font-mono text-xs text-oa-muted"><Spinner size="sm" color="light" /><span>Loading audit trail...</span></div> : filteredEvents.length === 0 ? <div className="flex h-full items-center justify-center font-mono text-xs text-oa-muted">No audit events recorded.</div> : <div>{Array.from(dateGroups, ([dateLabel, groupEvents]) => <section key={dateLabel} className="mb-[18px]"><h3 className="mb-2 pl-[30px] text-[10px] font-bold uppercase tracking-[0.6px] text-oa-muted">{dateLabel}</h3>{groupEvents.map((event, eventIndex) => <article key={`${event.at}-${event.exchange}-${event.source_type}-${eventIndex}`} className="mb-0.5 flex gap-2.5 rounded-lg px-2.5 py-2 hover:bg-oa-panel/30">
@@ -284,7 +282,7 @@ function ReferenceDataPage({ view }) {
           ]} />
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference data CSV" />
         </div>
-        <div className="min-h-0 flex-1 overflow-hidden [&>div]:border-0">
+        <div className="min-h-0 flex-1 overflow-hidden [&_.oa-data-table]:border-0">
           <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)} columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":")} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
             activeFilter,
             headerValues: Object.fromEntries(Object.entries(data.header_values || {}).map(([key, values]) => [key, values.map((value) => ({ value: displayFilterValue(value), label: value === "" ? "--" : value }))])),
