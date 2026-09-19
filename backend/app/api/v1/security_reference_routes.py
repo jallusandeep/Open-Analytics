@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.database import get_connection
 from app.dependencies import require_admin_or_super_admin
-from app.services.security_reference import TABLES, MASTER_EDITABLE, LISTING_EDITABLE, TYPE_EDITABLE, append_mapping_history, type_mapping_summary, valid_isin, sync_reference, write_record
+from app.services.security_reference import TABLES, MASTER_EDITABLE, LISTING_EDITABLE, TYPE_EDITABLE, append_mapping_history, type_mapping_summary, valid_isin, sync_reference, write_record, record_reference_audit
 
 router = APIRouter(prefix="/reference-data", tags=["Reference Data"], dependencies=[Depends(require_admin_or_super_admin)])
 
@@ -205,6 +205,21 @@ def list_rows(view: str, search: str = "", filters: str = "{}", sort_by: str = "
 def type_mapping_audit(limit: int = Query(500, ge=1, le=2000)):
     conn = get_connection()
     try:
+        companies = {}
+        matches = conn.execute("""
+            SELECT DISTINCT UPPER(TRIM(COALESCE(i.exchange, split_part(i.segment, '_', 1)))),
+                UPPER(TRIM(i.segment)), UPPER(TRIM(i.instrument_type)),
+                UPPER(TRIM(COALESCE(i.security_type, ''))),
+                COALESCE(NULLIF(TRIM(s.company_name), ''), NULLIF(TRIM(i.name), '')),
+                UPPER(TRIM(i.isin))
+            FROM upstox_instruments i
+            LEFT JOIN security_reference s ON s.isin = UPPER(TRIM(i.isin))
+            WHERE i.segment IN ('NSE_EQ', 'BSE_EQ') AND NULLIF(TRIM(i.isin), '') IS NOT NULL
+            ORDER BY 5, 6
+        """).fetchall()
+        for exchange, segment, source_type, security_type, name, isin in matches:
+            companies.setdefault((exchange, segment, source_type, security_type), []).append(
+                {"company_name": name, "isin": isin})
         rows = conn.execute("""
             SELECT exchange, segment, source_type, security_type, history_json
             FROM security_type_mapping
@@ -218,7 +233,8 @@ def type_mapping_audit(limit: int = Query(500, ge=1, le=2000)):
                 history = []
             if not isinstance(history, list):
                 continue
-            identity = {"exchange": exchange, "segment": segment, "source_type": source_type, "security_type": security_type}
+            identity = {"exchange": exchange, "segment": segment, "source_type": source_type, "security_type": security_type,
+                        "companies": companies.get((exchange, segment, source_type, security_type), [])}
             for event in history:
                 if isinstance(event, dict):
                     source = event.get("source")
@@ -229,6 +245,21 @@ def type_mapping_audit(limit: int = Query(500, ge=1, le=2000)):
                                    "changes": event.get("changes") or {}})
         events.sort(key=lambda event: str(event.get('at') or ''), reverse=True)
         return {"events": events[:limit], "total": len(events)}
+    finally:
+        conn.close()
+
+
+@router.get("/tables/{view}/audit")
+def reference_audit(view: str, limit: int = Query(500, ge=1, le=2000)):
+    config(view)
+    if view == "types":
+        return type_mapping_audit(limit)
+    conn = get_connection()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM security_reference_audit WHERE view_name=?", [view]).fetchone()[0]
+        rows = conn.execute("""SELECT event_json FROM security_reference_audit
+            WHERE view_name=? ORDER BY occurred_at DESC LIMIT ?""", [view, limit]).fetchall()
+        return {"events": [json.loads(row[0]) for row in rows], "total": total}
     finally:
         conn.close()
 
@@ -388,6 +419,12 @@ def upload(view: str, payload: Upload, current_user: dict = Depends(require_admi
             if view in {'securities', 'listings'}:
                 merged['manual_fields'] = json.dumps(sorted(manual))
             write_record(conn, table, columns, keys, merged)
+            if view in {'securities', 'listings'}:
+                company = conn.execute('SELECT company_name FROM security_reference WHERE isin=?', [merged['isin']]).fetchone()
+                actor = (current_user.get('full_name') or current_user.get('email') or current_user.get('user_id')) if isinstance(current_user, dict) else None
+                record_reference_audit(conn, view, old, merged,
+                                       'MANUAL_CLEAR' if flag == 'D' else 'MANUAL_UPDATE' if old else 'MANUAL_ADD',
+                                       'CSV_UPLOAD', actor=actor or 'Administrator', company_name=company[0] if company else None)
             counts['deleted' if flag == 'D' else 'updated' if old else 'added'] += 1
         if view in {'securities', 'listings'}:
             sync_reference(conn)

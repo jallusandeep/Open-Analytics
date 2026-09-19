@@ -78,6 +78,9 @@ def is_equity_instrument(segment, instrument_type):
 
 
 def ensure_reference_schema(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS security_reference_audit (
+        view_name VARCHAR, occurred_at TIMESTAMP, event_json VARCHAR
+    )""")
     # Identifier History was retired from Reference Data; remove the legacy
     # table during schema initialization instead of leaving an unused dataset.
     conn.execute("DROP TABLE IF EXISTS security_identifier_history")
@@ -141,6 +144,27 @@ def mapping_history(value):
         return history if isinstance(history, list) else []
     except (TypeError, ValueError):
         return []
+
+
+def record_reference_audit(conn, view, old, record, action, source, actor=None, company_name=None):
+    changes = {
+        field: {"from": (old or {}).get(field), "to": record.get(field)}
+        for field in TABLES[view][1]
+        if field not in {"source_updated_at", "record_updated_at"}
+        and (old or {}).get(field) != record.get(field)
+    }
+    if not changes:
+        return
+    now = datetime.now()
+    event = {"at": now.isoformat(), "action": action, "source": source,
+             "actor": actor or "System / Upstox Sync",
+             "tab": "Securities Metadata" if view == "securities" else "Exchange Listings",
+             "company_name": record.get("company_name") or company_name or (old or {}).get("company_name"),
+             "isin": record.get("isin"), "exchange": record.get("exchange"),
+             "segment": record.get("segment"), "instrument_key": record.get("instrument_key"),
+             "changes": changes}
+    conn.execute("INSERT INTO security_reference_audit VALUES (?, ?, ?)",
+                 [view, now, json.dumps(event, default=str)])
 
 
 def append_mapping_history(old, record, action, source, changed_fields=None, occurred_at=None, actor=None, tab="Security Type Mapping"):
@@ -287,6 +311,11 @@ def sync_reference(conn):
         if old and all(old.get(key) == record.get(key) for key in comparable):
             return
         pending[table_key].append(record)
+        company = record.get("company_name") or old_master.get(record.get("isin"), {}).get("company_name")
+        if not company and record.get("isin") in groups:
+            company = next(iter(groups[record["isin"]].values())).get("name")
+        record_reference_audit(conn, table_key, old, record, "UPDATED" if old else "DISCOVERED",
+                               "UPSTOX_SYNC", company_name=company)
         counts["updated" if old else "added"] += 1
     live_keys = set()
     for isin, listing_rows in groups.items():

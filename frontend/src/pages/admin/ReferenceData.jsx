@@ -39,13 +39,19 @@ function auditDateLabel(value) {
 
 
 function auditRecordLabel(event) {
-  return [event.exchange, event.segment, event.source_type, event.security_type].filter(Boolean).join(" / ") || "Unknown record";
+  const company = event.companies?.[0] || event;
+  const identity = [company.company_name, company.isin].filter(Boolean).join("/");
+  return identity ? `${identity}${event.companies?.length > 1 ? ` (+${event.companies.length - 1} more)` : ""}` : "No linked company";
 }
 
 function AuditChangeDetails({ event }) {
   const changes = Object.entries(event.changes || {});
   const content = <div className="space-y-1 rounded-md border border-oa-border bg-oa-panel/30 px-2.5 py-[7px]">
-    {event.source === "CSV_UPLOAD" && <h4 className="mb-1 text-[11px] font-bold text-zinc-200">{auditAction(event)}: {auditRecordLabel(event)}</h4>}
+    {event.companies?.length > 0 && <details className="text-[11px] text-oa-muted">
+      <summary className="cursor-pointer">Currently linked companies ({event.companies.length})</summary>
+      <ul className="mt-1 max-h-48 space-y-1 overflow-y-auto">{event.companies.map((company) => <li key={`${company.isin}-${company.company_name}`} className="break-words">{[company.company_name, company.isin].filter(Boolean).join("/")}</li>)}</ul>
+    </details>}
+    {event.source === "CSV_UPLOAD" && <h4 className="mb-1 text-[11px] font-bold text-zinc-200">{event.action !== "BASELINE" && <>{auditAction(event)}: </>}{auditRecordLabel(event)}</h4>}
     {changes.length ? changes.map(([field, change]) => <div key={field} className="break-words text-[11px] leading-[1.45] text-oa-muted">
       <span className="font-semibold">{auditFieldLabel(field)}:</span>{" "}
       <span aria-label={`Previous value: ${auditValue(change?.from)}`} className="rounded-full border border-red-400/35 bg-red-500/15 px-[7px] py-px text-[10px] font-bold text-red-200">{auditValue(change?.from)}</span>
@@ -88,12 +94,12 @@ function AuditTrailDrawer({ open, loading, events, view, onClose }) {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 break-words text-[13px] font-medium leading-[1.35] text-white">{event.source === "CSV_UPLOAD" ? "CSV Upload" : <>{auditAction(event)}: <span className="font-bold text-blue-400">{auditRecordLabel(event)}</span></>}</div>
+              <div className="min-w-0 break-words text-[13px] font-medium leading-[1.35] text-white">{event.action !== "BASELINE" && <>{event.source === "CSV_UPLOAD" ? "CSV Upload" : auditAction(event)}: </>}<span className="font-bold text-blue-400">{auditRecordLabel(event)}</span></div>
               <time className="mt-0.5 shrink-0 whitespace-nowrap text-right text-[10px] text-oa-muted" title={event.at || undefined}>{event.at && !Number.isNaN(new Date(event.at).getTime()) ? new Date(event.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }) : "--"}</time>
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-oa-muted">
               <span>by <strong className="font-semibold text-zinc-300">{event.actor || "Unknown actor"}</strong></span>
-              <span className="rounded bg-blue-500/15 px-[7px] py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-300">{auditAction(event)}</span>
+              {event.action !== "BASELINE" && <span className="rounded bg-blue-500/15 px-[7px] py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-300">{auditAction(event)}</span>}
               <span className="text-[10px]">via {({ CSV_UPLOAD: "CSV Upload", UPSTOX_SYNC: "Upstox Sync" })[event.source] || auditFieldLabel(String(event.source || "Unknown source").toLowerCase())}</span>
             </div>
             <AuditChangeDetails event={event} />
@@ -163,6 +169,20 @@ function ReferenceDataPage({ view }) {
   const [activeFilter, setActiveFilter] = useState(null);
   const [sort, setSort] = useState({ key: view === "listings" ? "instrument_key" : view === "types" ? "exchange" : "isin", direction: "asc" });
   const filters = JSON.stringify(columnFilters);
+
+  async function openAuditTrail() {
+    setAuditOpen(true);
+    setAuditData({ events: [], total: 0 });
+    setAuditLoading(true);
+    try {
+      const response = await axiosClient.get(`/reference-data/tables/${view}/audit`, { params: { limit: 500 } });
+      setAuditData(response.data);
+    } catch {
+      showToast("Unable to load the audit trail.", "error");
+    } finally {
+      setAuditLoading(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -241,23 +261,6 @@ function ReferenceDataPage({ view }) {
     } finally { setBusy(false); }
   }
 
-  async function openAuditTrail() {
-    setAuditOpen(true);
-    setAuditData({ events: [], total: 0 });
-    if (view !== "types") {
-      setAuditLoading(false);
-      return;
-    }
-    setAuditLoading(true);
-    try {
-      const response = await axiosClient.get("/reference-data/tables/types/audit", { params: { limit: 500 } });
-      setAuditData(response.data);
-    } catch {
-      showToast("Unable to load the audit trail.", "error");
-    } finally {
-      setAuditLoading(false);
-    }
-  }
 
   return <MainLayout>
     <section className="oa-app-font h-screen min-h-0 overflow-hidden bg-black p-3">

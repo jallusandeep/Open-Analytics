@@ -108,6 +108,8 @@ def test_type_mapping_discovers_source_types_and_preserves_manual_gbo(db):
     audit = api.type_mapping_audit(500)
     assert audit['total'] >= 3 and audit['events'][0]['changes']
     assert any(event['actor'] == 'Reference Admin' and event['tab'] == 'Security Type Mapping' for event in audit['events'])
+    bse_event = next(event for event in audit['events'] if event['exchange'] == 'BSE')
+    assert bse_event['companies'] == [{'company_name': 'Reliance Industries Limited', 'isin': ISIN}]
 
 
 def test_type_mapping_deactivation_keeps_json_history(db):
@@ -118,6 +120,7 @@ def test_type_mapping_deactivation_keeps_json_history(db):
     active, history = db.execute('SELECT is_active, history_json FROM security_type_mapping').fetchone()
     assert active is False
     assert [event['action'] for event in json.loads(history)] == ['DISCOVERED', 'DEACTIVATED']
+    assert api.type_mapping_audit(500)['events'][0]['companies'] == []
 
 
 def test_upload_preserved_on_sync_and_source_identity_protected(db):
@@ -131,6 +134,31 @@ def test_upload_preserved_on_sync_and_source_identity_protected(db):
         api.upload('securities', api.Upload(rows=[dict(isin=ISIN, primary_symbol='WRONG', flag='U')]))
     api.upload('securities', api.Upload(rows=[dict(isin=ISIN, flag='D')]))
     assert db.execute('SELECT sector, company_name FROM security_reference').fetchone() == (None, 'Reliance Industries Limited')
+
+
+def test_reference_audit_identity_upload_and_rollback(db):
+    key = instrument(db)
+    sync_reference(db)
+    for view in ('securities', 'listings'):
+        event = api.reference_audit(view, 500)['events'][0]
+        assert event['isin'] == ISIN
+        assert event['company_name'] == 'Reliance Industries Limited'
+        total = api.reference_audit(view, 500)['total']
+        sync_reference(db)
+        assert api.reference_audit(view, 500)['total'] == total
+    api.upload('securities', api.Upload(rows=[dict(isin=ISIN, company_name='Updated company', flag='U')]), {'full_name': 'Admin'})
+    event = next(event for event in api.reference_audit('securities', 500)['events'] if event['source'] == 'CSV_UPLOAD')
+    assert event['company_name'] == 'Updated company'
+    assert event['actor'] == 'Admin'
+    assert event['changes']['company_name']['from'] == 'Reliance Industries Limited'
+    api.upload('listings', api.Upload(rows=[dict(instrument_key=key, isin=ISIN, series='TEST', flag='U')]), {'full_name': 'Admin'})
+    event = api.reference_audit('listings', 500)['events'][0]
+    assert event['company_name'] == 'Updated company'
+    assert event['isin'] == ISIN and event['source'] == 'CSV_UPLOAD'
+    total = api.reference_audit('securities', 500)['total']
+    with pytest.raises(HTTPException):
+        api.upload('securities', api.Upload(rows=[dict(isin=ISIN, sector='Energy', flag='U'), dict(isin='invalid', flag='U')]))
+    assert api.reference_audit('securities', 500)['total'] == total
 
 
 def test_missing_listing_not_declared_delisted(db):
