@@ -1,5 +1,5 @@
 export const oaTableStyles = {
-  wrapper: "relative rounded border border-oa-border bg-black oa-table-font",
+  wrapper: "relative rounded bg-black oa-table-font",
   inner: "overflow-visible rounded",
   headerRow:
     "grid rounded-t bg-[#121316] py-2.5",
