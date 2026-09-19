@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { referenceViews as VIEWS } from "../../utils/referenceNavigation";
-import { Download, History, RefreshCcw, Upload, X } from "lucide-react";
+import { Columns3, Download, History, RefreshCcw, Upload, X } from "lucide-react";
 
 import axiosClient from "../../api/axiosClient";
 import MainLayout from "../../components/layout/MainLayout";
@@ -10,41 +10,97 @@ import { PaginationFooter } from "./dataCollection/components";
 import DataTable from "../../components/tables/DataTable";
 import TableToolbar from "../../components/tables/TableToolbar";
 import Modal from "../../components/common/Modal";
+import IconButton from "../../components/common/IconButton";
 import Select from "../../components/common/Select";
+import Spinner from "../../components/common/Spinner";
 import { useToast } from "../../components/common/ToastProvider";
 import { oaCardStyles } from "../../components/common/uiStyles";
 
 const BLANK_FILTER_VALUE = "__oa_reference_blank__";
 const displayFilterValue = (value) => value === "" ? BLANK_FILTER_VALUE : value;
 
-const auditValue = (value) => value === null || value === undefined || value === "" ? "--" : String(value);
+const auditValue = (value) => value === null || value === undefined || value === "" ? "Empty" : typeof value === "boolean" ? (value ? "Yes" : "No") : String(value);
 
-function AuditTrailDrawer({ open, loading, events, total, onClose }) {
-  const [retained, setRetained] = useState(open);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setRetained(open), open ? 0 : 180);
-    return () => window.clearTimeout(timer);
-  }, [open]);
+
+const auditFieldLabel = (field) => ({ instrument_type: "Instrument Type", gbo_type: "GBO Type", description: "Description", is_active: "Active" }[field] || field.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()));
+
+function auditAction(event) {
+  return ({ MANUAL_ADD: "Created", DISCOVERED: "Discovered", MANUAL_UPDATE: "Updated", MANUAL_CLEAR: "Cleared", DEACTIVATED: "Deactivated", REACTIVATED: "Reactivated", BASELINE: "Baseline recorded" })[event.action] || auditFieldLabel(String(event.action || "Changed").toLowerCase());
+}
+
+function auditDateLabel(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "Unknown date";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const prefix = date.toDateString() === today.toDateString() ? "Today - " : date.toDateString() === yesterday.toDateString() ? "Yesterday - " : "";
+  return prefix + date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+
+function auditRecordLabel(event) {
+  return [event.exchange, event.segment, event.source_type, event.security_type].filter(Boolean).join(" / ") || "Unknown record";
+}
+
+function AuditChangeDetails({ event }) {
+  const changes = Object.entries(event.changes || {});
+  const content = <div className="space-y-1 rounded-md border border-oa-border bg-oa-panel/30 px-2.5 py-[7px]">
+    {event.source === "CSV_UPLOAD" && <h4 className="mb-1 text-[11px] font-bold text-zinc-200">{auditAction(event)}: {auditRecordLabel(event)}</h4>}
+    {changes.length ? changes.map(([field, change]) => <div key={field} className="break-words text-[11px] leading-[1.45] text-oa-muted">
+      <span className="font-semibold">{auditFieldLabel(field)}:</span>{" "}
+      <span aria-label={`Previous value: ${auditValue(change?.from)}`} className="rounded-full border border-red-400/35 bg-red-500/15 px-[7px] py-px text-[10px] font-bold text-red-200">{auditValue(change?.from)}</span>
+      <span className="px-1">&rarr;</span>
+      <span aria-label={`New value: ${auditValue(change?.to)}`} className="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-[7px] py-px text-[10px] font-bold text-emerald-200">{auditValue(change?.to)}</span>
+    </div>) : <p className="text-[11px] text-oa-muted">No field changes recorded for this event.</p>}
+  </div>;
+  return event.source === "CSV_UPLOAD" ? <details className="mt-1.5" open>
+    <summary className="cursor-pointer rounded-md border border-oa-border bg-oa-panel/30 px-3 py-2 text-xs font-semibold text-zinc-200">View upload details</summary>
+    <div className="pt-1.5">{content}</div>
+  </details> : <div className="mt-1.5">{content}</div>;
+}
+
+function AuditTrailDrawer({ open, loading, events, view, onClose }) {
+  const selectedTabLabel = VIEWS.find((item) => item.value === view)?.label;
+  const filteredEvents = events.filter((event) => event.tab === selectedTabLabel);
   useEffect(() => {
     if (!open) return undefined;
     const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open, onClose]);
-  if (!open && !retained) return null;
-  return createPortal(<div className={`fixed inset-0 z-[10000] ${open ? "" : "pointer-events-none"}`}>
-    <button type="button" aria-label="Close audit trail" onClick={onClose} className={`absolute inset-0 bg-black/65 transition-opacity duration-150 ${open ? "opacity-100" : "opacity-0"}`} />
-    <aside role="dialog" aria-modal="true" aria-label="Security type mapping audit trail" className={`absolute inset-y-0 right-0 flex w-full max-w-xl flex-col border-l border-oa-border bg-black shadow-2xl transition-transform duration-[180ms] ease-out ${open ? "translate-x-0" : "translate-x-full"}`}>
-      <header className="flex min-h-12 items-center justify-between border-b border-oa-border bg-zinc-800/70 px-4">
-        <div><h2 className={oaCardStyles.headerTitle}>Audit Trail</h2><p className="mt-0.5 font-mono text-[10px] text-oa-muted">Security Type Mapping · {total} events</p></div>
-        <button type="button" onClick={onClose} aria-label="Close audit trail" className="flex h-8 w-8 items-center justify-center rounded border border-red-500/40 bg-red-950/20 text-red-400 transition hover:bg-red-950/50"><X size={14} /></button>
+  const dateGroups = new Map();
+  for (const event of filteredEvents) {
+    const label = auditDateLabel(event.at);
+    if (!dateGroups.has(label)) dateGroups.set(label, []);
+    dateGroups.get(label).push(event);
+  }
+  return createPortal(<div inert={!open} aria-hidden={!open} data-state={open ? "open" : "closed"} className="oa-audit-drawer oa-app-font fixed inset-0 z-[10000] overflow-hidden">
+    <button type="button" aria-label="Close audit trail" onClick={onClose} className="oa-audit-backdrop absolute inset-0 bg-black/65" />
+    <aside role="dialog" aria-modal="true" aria-label="Reference data audit trail" className="oa-audit-panel absolute inset-y-0 right-0 flex w-full max-w-[520px] flex-col border-l border-oa-border bg-black shadow-2xl">
+      <header className="flex shrink-0 items-center justify-between border-b border-oa-border bg-zinc-800/70 px-5 py-3.5">
+        <h2 className={`flex items-center gap-2 ${oaCardStyles.modalTitle}`}><History size={13} />Audit Trail</h2>
+        <IconButton icon={X} label="Close audit trail" onClick={onClose} variant="danger" tooltipSide="left" />
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {loading ? <div className="flex h-full items-center justify-center font-mono text-xs text-oa-muted">Loading audit trail...</div> : events.length === 0 ? <div className="flex h-full items-center justify-center font-mono text-xs text-oa-muted">No mapping changes recorded.</div> : <div className="space-y-2">{events.map((event, eventIndex) => <article key={`${event.at}-${event.exchange}-${event.source_type}-${eventIndex}`} className="rounded border border-oa-border bg-oa-panel/30 p-3 font-mono">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div className="text-[11px] font-semibold text-white">{event.exchange} / {event.segment} / {event.source_type}{event.security_type ? ` / ${event.security_type}` : ""}</div><time className="text-[10px] text-oa-muted">{event.at ? new Date(event.at).toLocaleString() : "--"}</time></div>
-          <div className="mt-2 grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10px]"><span className="text-oa-muted">Who</span><span className="text-white">{event.actor || "--"}</span><span className="text-oa-muted">Tab</span><span className="text-white">{event.tab || "--"}</span><span className="text-oa-muted">Method</span><span className="text-sky-300">{String(event.action || "CHANGE").replaceAll("_", " ")} · {String(event.source || "UNKNOWN").replaceAll("_", " ")}</span></div>
-          <div className="mt-2 space-y-1.5">{Object.entries(event.changes || {}).map(([field, change]) => <div key={field} className="grid grid-cols-[72px_120px_minmax(0,1fr)] gap-2 border-t border-oa-border/60 pt-1.5 text-[11px]"><span className="text-oa-muted">Column</span><span className="text-white">{field.replaceAll("_", " ")}</span><span className="min-w-0 break-words"><span className="text-red-300">{auditValue(change?.from)}</span><span className="px-2 text-oa-muted">→</span><span className="text-emerald-300">{auditValue(change?.to)}</span></span></div>)}</div>
-        </article>)}</div>}
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3.5">
+        {loading ? <div role="status" aria-live="polite" className="flex h-full items-center justify-center gap-2 font-mono text-xs text-oa-muted"><Spinner size="sm" color="light" /><span>Loading audit trail...</span></div> : filteredEvents.length === 0 ? <div className="flex h-full items-center justify-center font-mono text-xs text-oa-muted">No audit events recorded.</div> : <div>{Array.from(dateGroups, ([dateLabel, groupEvents]) => <section key={dateLabel} className="mb-[18px]"><h3 className="mb-2 pl-[30px] text-[10px] font-bold uppercase tracking-[0.6px] text-oa-muted">{dateLabel}</h3>{groupEvents.map((event, eventIndex) => <article key={`${event.at}-${event.exchange}-${event.source_type}-${eventIndex}`} className="mb-0.5 flex gap-2.5 rounded-lg px-2.5 py-2 hover:bg-oa-panel/30">
+          <div aria-hidden="true" className="flex w-3.5 shrink-0 flex-col items-center pt-[3px]">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full border-2 border-black bg-blue-500" />
+            {eventIndex < groupEvents.length - 1 && <span className="mt-[3px] w-0.5 flex-1 bg-oa-border" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 break-words text-[13px] font-medium leading-[1.35] text-white">{event.source === "CSV_UPLOAD" ? "CSV Upload" : <>{auditAction(event)}: <span className="font-bold text-blue-400">{auditRecordLabel(event)}</span></>}</div>
+              <time className="mt-0.5 shrink-0 whitespace-nowrap text-right text-[10px] text-oa-muted" title={event.at || undefined}>{event.at && !Number.isNaN(new Date(event.at).getTime()) ? new Date(event.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }) : "--"}</time>
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-oa-muted">
+              <span>by <strong className="font-semibold text-zinc-300">{event.actor || "Unknown actor"}</strong></span>
+              <span className="rounded bg-blue-500/15 px-[7px] py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-300">{auditAction(event)}</span>
+              <span className="text-[10px]">via {({ CSV_UPLOAD: "CSV Upload", UPSTOX_SYNC: "Upstox Sync" })[event.source] || auditFieldLabel(String(event.source || "Unknown source").toLowerCase())}</span>
+            </div>
+            <AuditChangeDetails event={event} />
+          </div>
+        </article>)}</section>)}</div>}
       </div>
     </aside>
   </div>, document.body);
@@ -96,6 +152,7 @@ function ReferenceDataPage({ view }) {
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditData, setAuditData] = useState({ events: [], total: 0 });
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -188,6 +245,11 @@ function ReferenceDataPage({ view }) {
 
   async function openAuditTrail() {
     setAuditOpen(true);
+    setAuditData({ events: [], total: 0 });
+    if (view !== "types") {
+      setAuditLoading(false);
+      return;
+    }
     setAuditLoading(true);
     try {
       const response = await axiosClient.get("/reference-data/tables/types/audit", { params: { limit: 500 } });
@@ -217,12 +279,13 @@ function ReferenceDataPage({ view }) {
             } },
             { icon: Upload, label: "Upload CSV", variant: "add", disabled: loading || busy, onClick: () => fileRef.current?.click() },
             { icon: Download, label: "Download data", disabled: loading || busy, onClick: () => setDownloadOpen(true) },
-            ...(view === "types" ? [{ icon: History, label: "Open audit trail", disabled: loading || busy, onClick: openAuditTrail }] : [])
-          ]} trailingContent={view === "types" && data.summary ? <span className="ml-auto whitespace-nowrap text-right text-[10px] text-oa-muted" aria-label={`Mapping completeness: ${data.summary.complete} of ${data.summary.total}`}>Mapped <strong className="text-white">{data.summary.complete}/{data.summary.total}</strong> ({data.summary.completion_percent}%) · Partial {data.summary.partial} · Unmapped {data.summary.unmapped}</span> : null} />
+            { icon: History, label: "Open audit trail", disabled: loading || busy, onClick: openAuditTrail },
+            { icon: Columns3, label: "Column config", disabled: loading || busy || !data.columns?.length, onClick: () => setColumnConfigOpen(true) }
+          ]} />
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={upload} className="hidden" aria-label="Upload reference data CSV" />
         </div>
         <div className="min-h-0 flex-1 overflow-hidden [&>div]:border-0">
-          <DataTable columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":")} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
+          <DataTable columnConfigOpen={columnConfigOpen} onColumnConfigClose={() => setColumnConfigOpen(false)} columns={data.columns || []} rows={data.rows} loading={loading} loadingMessage="Loading reference data" emptyMessage="No reference data found." gridTemplateColumns={(data.columns || []).map((column) => /name|industry|instrument_key|reason|value|description/.test(column.key) ? "240px" : "160px").join(" ")} minWidth="min-w-full" getRowKey={(row) => (data.columns || []).map((column) => row[column.key] ?? "").join(":")} renderCell={(row, column) => { const value = row[column.key]; return value === null || value === undefined || value === "" ? "--" : String(value); }} filterConfig={{
             activeFilter,
             headerValues: Object.fromEntries(Object.entries(data.header_values || {}).map(([key, values]) => [key, values.map((value) => ({ value: displayFilterValue(value), label: value === "" ? "--" : value }))])),
             columnFilters: Object.fromEntries(Object.entries(columnFilters).map(([key, values]) => [key, values.map(displayFilterValue)])),
@@ -246,6 +309,6 @@ function ReferenceDataPage({ view }) {
         <button type="submit" disabled={busy} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-white font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download size={14} />{busy ? "Downloading..." : "Download"}</button>
       </form>
     </Modal>
-    <AuditTrailDrawer open={auditOpen} loading={auditLoading} events={auditData.events} total={auditData.total} onClose={() => setAuditOpen(false)} />
+    <AuditTrailDrawer open={auditOpen} loading={auditLoading} events={auditData.events} view={view} onClose={() => setAuditOpen(false)} />
   </MainLayout>;
 }

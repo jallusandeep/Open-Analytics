@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createServer } from 'vite';
+
+const stored = new Map();
+globalThis.localStorage = { getItem: (key) => stored.get(key) ?? null };
+let userId = 'first-user';
+globalThis.sessionStorage = { getItem: () => JSON.stringify({ user_id: userId }) };
+globalThis.window = { location: { pathname: '/reference-data', search: '?view=types' } };
+const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+try {
+  const { default: DataTable } = await server.ssrLoadModule('/src/components/tables/DataTable.jsx');
+  const columns = [{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }, { key: 'value', label: 'Value' }];
+  const key = `oa-table-view:v1:${JSON.stringify([userId, '/reference-data?view=types', columns.map((column) => column.key)])}`;
+  const props = { columns, rows: [{ name: 'Example name', code: 'HIDDEN-CODE', value: 42 }], gridTemplateColumns: '160px 200px 240px 96px', renderCell: (row, column) => row[column.key], renderActions: () => 'Edit record' };
+  const render = () => renderToStaticMarkup(React.createElement(DataTable, props));
+  assert.match(render(), /HIDDEN-CODE/);
+
+  stored.set(key, JSON.stringify({ columns: ['name', 'value'], active: true }));
+  const saved = render();
+  assert.doesNotMatch(saved, /HIDDEN-CODE/);
+  assert.match(saved, /Example name/);
+  assert.match(saved, /Edit record/);
+  assert.match(saved, /minmax\(96px, 0.6fr\) minmax\(160px, 1fr\) minmax\(240px, 1.5fr\)/);
+  stored.set(key, JSON.stringify({ columns: ['value', 'name'], active: true }));
+  const reordered = render();
+  assert.ok(reordered.indexOf('Resize Value column') < reordered.indexOf('Resize Name column'), 'Saved order must control header order');
+  assert.match(reordered, /minmax\(96px, 0.6fr\) minmax\(240px, 1.5fr\) minmax\(160px, 1fr\)/, 'Widths must follow reordered columns');
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(DataTable, { ...props, columnConfigOpen: false })), /Column config/, 'External toolbar control must remove the extra table bar');
+  userId = 'second-user';
+  assert.match(render(), /HIDDEN-CODE/, 'Another user must get the default columns');
+  userId = 'first-user';
+  window.location.search = '?view=listings';
+  assert.match(render(), /HIDDEN-CODE/, 'Another table must get the default columns');
+  window.location.search = '?view=types';
+  stored.set(key, JSON.stringify({ columns: ['name'], active: false }));
+  assert.match(render(), /HIDDEN-CODE/, 'Restoring default must retain all columns');
+  stored.set(key, JSON.stringify({ columns: ['removed-column'], active: true }));
+  assert.match(render(), /HIDDEN-CODE/, 'Invalid saved columns must fall back to default');
+  stored.set(key, 'invalid json');
+  assert.match(render(), /HIDDEN-CODE/, 'Corrupt storage must not break the table');
+  const views = [{ id: 'first', name: 'Prices', columns: ['value', 'name'] }, { id: 'second', name: 'Codes', columns: ['code'] }];
+  stored.set(key, JSON.stringify({ views, activeId: 'first' }));
+  assert.doesNotMatch(render(), /HIDDEN-CODE/, 'First named view must use its own columns');
+  stored.set(key, JSON.stringify({ views, activeId: 'second' }));
+  assert.match(render(), /HIDDEN-CODE/, 'Second named view must restore independently');
+  assert.doesNotMatch(render(), /Example name/);
+  stored.set(key, JSON.stringify({ views, activeId: 'default' }));
+  assert.match(render(), /Example name/, 'Default view must remain available with saved views');
+  assert.match(render(), /HIDDEN-CODE/);
+  stored.set(key, JSON.stringify({ views, activeId: 'second', defaultId: 'first' }));
+  assert.doesNotMatch(render(), /HIDDEN-CODE/, 'Refresh must use the pinned default, not the last viewed preset');
+  assert.match(render(), /Example name/);
+  stored.set(key, JSON.stringify({ views, activeId: 'first', defaultId: 'default' }));
+  assert.match(render(), /HIDDEN-CODE/, 'Removing the personalised default must restore all columns');
+  console.log('Passed: default view, saved columns, action/width alignment, user/table isolation, default restoration, invalid storage.');
+} finally {
+  await server.close();
+}

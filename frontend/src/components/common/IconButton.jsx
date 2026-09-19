@@ -14,7 +14,8 @@ function IconButton({
   loading = false,
   form,
   iconSize = 14,
-  size = "default"
+  size = "default",
+  borderless = false
 }) {
   const selectedBaseClass =
     size === "filter" ? oaIconButtonStyles.filterBase : oaIconButtonStyles.base;
@@ -49,7 +50,7 @@ function IconButton({
         disabled={disabled || loading}
         form={form}
         aria-label={label}
-        className={`${selectedBaseClass} ${finalButtonClass}`}
+        className={`${selectedBaseClass} ${finalButtonClass}${borderless ? " !border-0 !bg-transparent hover:!bg-red-500/15 hover:[&>svg]:text-red-300 hover:[&>svg]:scale-110 [&>svg]:transition-transform focus-visible:!bg-red-500/15" : ""}`}
       >
         {loading ? (
           <Spinner size="xs" color="light" />

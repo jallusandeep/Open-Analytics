@@ -3,6 +3,7 @@ import ScreenLoading from "../common/ScreenLoading";
 import Spinner from "../common/Spinner";
 import { oaTableStyles } from "../common/uiStyles";
 import DataTableHeaderFilter from "./DataTableHeaderFilter";
+import ColumnConfig from "./ColumnConfig";
 
 const DEFAULT_ACTION_COLUMN_WIDTH = "96px";
 
@@ -63,7 +64,7 @@ function DataTable({
   gridTemplateColumns,
   minWidth = "min-w-full",
   fitToViewport = false,
-  resizableColumns = false,
+  resizableColumns = true,
   wrapHeaders = false,
   getRowKey,
   renderCell,
@@ -109,7 +110,7 @@ function DataTable({
   useEffect(() => () => dragCleanupRef.current?.(), []);
 
   function resizeColumn(index, delta) {
-    const widths = resizedWidths || measureColumnWidths();
+    const widths = measureColumnWidths();
     setColumnWidths({ signature: columnSignature, widths: widths.map((width, position) => position === index ? Math.max(80, width + delta) : width) });
   }
 
@@ -166,9 +167,9 @@ function DataTable({
       }).join(" ");
   const tableWidthClass = resizedWidths ? "w-max" : minWidth;
   const tableSurfaceStyle = resizedWidths
-    ? { width: `${resizedWidths.reduce((total, width) => total + width, 0)}px`, maxWidth: "none" }
+    ? { width: `${resizedWidths.reduce((total, width) => total + width, 0)}px`, minWidth: "100%", maxWidth: "none" }
     : { width: `max(100%, ${minimumWidths.reduce((total, width) => total + width, 0)}px)` };
-  const gridStyle = { gridTemplateColumns: resizedWidths ? resizedWidths.map((width) => `${width}px`).join(" ") : responsiveGridTemplateColumns };
+  const gridStyle = { gridTemplateColumns: resizedWidths ? resizedWidths.map((width, index) => index === resizedWidths.length - 1 ? `minmax(${width}px, 1fr)` : `${width}px`).join(" ") : responsiveGridTemplateColumns };
 
   function isFilterEnabled(column) {
     if (!filterConfig) {
@@ -283,15 +284,15 @@ function DataTable({
                       type="button"
                       aria-label={`Resize ${column.label} column`}
 
-                      onPointerDown={(event) => startResize(event, columns.indexOf(column) + (renderActions ? 1 : 0))}
+                      onPointerDown={(event) => startResize(event, columnIndex + (renderActions ? 1 : 0))}
                       onDoubleClick={() => setColumnWidths(null)}
                       onKeyDown={(event) => {
                         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                           event.preventDefault();
-                          resizeColumn(columns.indexOf(column) + (renderActions ? 1 : 0), event.key === "ArrowLeft" ? -16 : 16);
+                          resizeColumn(columnIndex + (renderActions ? 1 : 0), event.key === "ArrowLeft" ? -16 : 16);
                         }
                       }}
-                      className="absolute inset-y-0 right-0 z-20 w-2 touch-none cursor-col-resize border-r border-white/10 bg-transparent hover:border-white hover:bg-white/10 focus-visible:bg-white/20 focus-visible:outline-none"
+                      className="oa-table-resize-handle absolute inset-y-0 right-0 z-20 w-2 touch-none cursor-col-resize bg-transparent focus-visible:outline-none"
                     />
                   )}
                 </div>
@@ -334,4 +335,17 @@ function DataTable({
   );
 }
 
-export default DataTable;
+function ConfigurableDataTable(props) {
+  const { columns, gridTemplateColumns, renderActions } = props;
+  const tracks = splitGridTemplateColumns(gridTemplateColumns);
+  const actionTrack = renderActions && tracks.length === columns.length + 1 ? tracks.pop() : null;
+  return <ColumnConfig columns={columns} tableId={props.tableId} configOpen={props.columnConfigOpen} onConfigClose={props.onColumnConfigClose}>
+    {(visibleColumns) => {
+      const visibleTracks = visibleColumns.map((column) => tracks[columns.indexOf(column)] || "1fr");
+      if (actionTrack) visibleTracks.push(actionTrack);
+      return <DataTable {...props} columns={visibleColumns} gridTemplateColumns={visibleTracks.join(" ")} />;
+    }}
+  </ColumnConfig>;
+}
+
+export default ConfigurableDataTable;
