@@ -15,6 +15,9 @@ export const oaTableStyles = {
   dataText:
     "font-mono text-[13px] font-medium tracking-[-0.01em] text-zinc-400",
   dataCell: "oa-data-table-cell min-w-0 truncate px-3",
+  footer: "flex h-7 shrink-0 items-center bg-[#121316] px-3",
+  footerText:
+    "font-mono text-[11px] font-medium tracking-[-0.01em] text-oa-muted",
   mutedText: "font-mono text-xs text-oa-muted",
   emptyText: "font-mono text-xs text-oa-muted",
   actionHeader: "relative flex min-w-0 items-center justify-end px-3",
