@@ -985,6 +985,7 @@ export function DbPreviewContent({
 
       <PaginationFooter
         previewData={previewData}
+        visibleRowCount={rows.length}
         loading={loading}
         onPreviousPage={onPreviousPage}
         onNextPage={onNextPage}
@@ -1375,6 +1376,7 @@ export function MarketCalendarContent({
 
       <PaginationFooter
         previewData={previewData}
+        visibleRowCount={rows.length}
         loading={loading}
         onPreviousPage={onPreviousPage}
         onNextPage={onNextPage}
@@ -1477,6 +1479,7 @@ export function GenericPreviewContent({
 
       <PaginationFooter
         previewData={previewData}
+        visibleRowCount={rows.length}
         loading={loading}
         onPreviousPage={onPreviousPage}
         onNextPage={onNextPage}
@@ -1583,6 +1586,7 @@ export function OhlcvTabContent({
 
       <PaginationFooter
         previewData={previewData}
+        visibleRowCount={rows.length}
         loading={loading}
         onPreviousPage={onPreviousPage}
         onNextPage={onNextPage}
@@ -1725,6 +1729,7 @@ export function CompanyFundamentalsContent({
 
       <PaginationFooter
         previewData={previewData}
+        visibleRowCount={rows.length}
         loading={loading}
         onPreviousPage={onPreviousPage}
         onNextPage={onNextPage}
@@ -1736,6 +1741,7 @@ export function CompanyFundamentalsContent({
 
 export function PaginationFooter({
   previewData,
+  visibleRowCount = previewData.rows?.length || 0,
   loading,
   onPreviousPage,
   onNextPage,
@@ -1744,7 +1750,7 @@ export function PaginationFooter({
   return (
     <div className="flex shrink-0 flex-col gap-2 border-t border-oa-border bg-black px-3 py-2 text-[12px] text-oa-muted md:flex-row md:items-center md:justify-between">
       <span>
-        Records: {formatNumber(previewData.total_records)} | Page {" "}
+        Rows shown: {formatNumber(visibleRowCount)} | Records: {formatNumber(previewData.total_records)} | Page {" "}
         {previewData.page} of {previewData.total_pages}
       </span>
 

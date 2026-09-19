@@ -33,6 +33,7 @@ from app.engines.derivatives.derivatives_routes import router as derivatives_rou
 from app.engines.market_breadth.market_breadth_routes import router as market_breadth_router
 from app.api.v1.reference_data_routes import router as reference_data_router
 from app.api.v1.security_reference_routes import router as security_reference_router
+from app.api.v1.table_view_routes import router as table_view_router
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
     version=APP_VERSION
@@ -93,6 +94,7 @@ app.include_router(derivatives_router, prefix="/api/v1")
 app.include_router(market_breadth_router, prefix="/api/v1")
 app.include_router(reference_data_router, prefix="/api/v1")
 app.include_router(security_reference_router, prefix="/api/v1")
+app.include_router(table_view_router, prefix="/api/v1")
 from app.api.v1.data_export_routes import router as data_export_router
 app.include_router(data_export_router, prefix="/api/v1")
 

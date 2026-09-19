@@ -297,7 +297,7 @@ function ReferenceDataPage({ view }) {
             onSort: (key, direction) => { setSort({ key, direction }); setPage(1); setActiveFilter(null); }
           }} />
         </div>
-        <PaginationFooter previewData={{ ...data, page }} loading={loading || busy} onPreviousPage={() => setPage((value) => Math.max(1, value - 1))} onNextPage={() => setPage((value) => Math.min(data.total_pages, value + 1))} onPageChange={(value) => setPage(Number(value))} />
+        <PaginationFooter previewData={{ ...data, page }} visibleRowCount={data.rows.length} loading={loading || busy} onPreviousPage={() => setPage((value) => Math.max(1, value - 1))} onNextPage={() => setPage((value) => Math.min(data.total_pages, value + 1))} onPageChange={(value) => setPage(Number(value))} />
       </div>
     </section>
     <Modal open={downloadOpen} title="Download Data" onClose={() => !busy && setDownloadOpen(false)} closeOnOverlay={!busy} width="max-w-md">

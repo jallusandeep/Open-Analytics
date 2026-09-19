@@ -1,5 +1,6 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Check, Columns3, GripVertical, ListChecks, ListX, Plus, Save, X } from "lucide-react";
+import axiosClient from "../../api/axiosClient";
 import Modal from "../common/Modal";
 import { oaCheckboxControlStyles } from "../common/uiStyles";
 import IconButton from "../common/IconButton";
@@ -16,6 +17,10 @@ function storageKey(columns, tableId) {
   return `oa-table-view:v1:${JSON.stringify([userId, tableId || window.location.pathname + window.location.search, columns.map((column) => column.key)])}`;
 }
 
+function sharedTableId(tableId, columns) {
+  return tableId || `${window.location.pathname}${window.location.search}:${columns.map((column) => column.key).join(",")}`;
+}
+
 function readViews(key, columns) {
   const fallback = { views: [], activeId: "default", defaultId: "default" };
   try {
@@ -25,14 +30,14 @@ function readViews(key, columns) {
       const keys = clean(value.columns);
       return keys.length ? { views: [{ id: "legacy", name: "My view", columns: keys }], activeId: value.active ? "legacy" : "default", defaultId: value.active ? "legacy" : "default" } : fallback;
     }
-    const views = Array.isArray(value?.views) ? value.views.filter((view) => typeof view?.id === "string" && view.id !== "default" && typeof view.name === "string").map((view) => ({ ...view, columns: clean(view.columns) })).filter((view) => view.columns.length) : [];
+    const views = Array.isArray(value?.views) ? value.views.filter((view) => typeof view?.id === "string" && view.id !== "default" && typeof view.name === "string").map((view) => ({ ...view, shared: Boolean(view.shared), columns: clean(view.columns) })).filter((view) => view.columns.length) : [];
     const preferredId = value?.defaultId ?? value?.activeId;
     const defaultId = views.some((view) => view.id === preferredId) ? preferredId : "default";
     return { views, activeId: defaultId, defaultId };
   } catch { return fallback; }
 }
 
-function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClose }) {
+function ColumnConfigState({ columns, children, viewKey, tableId, configOpen, onConfigClose }) {
   const nameInputId = useId();
   const allKeys = columns.map((column) => column.key);
   const [saved, setSaved] = useState(() => readViews(viewKey, columns));
@@ -41,6 +46,7 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
   const [draft, setDraft] = useState(initialKeys);
   const [viewId, setViewId] = useState(saved.activeId);
   const [makeDefault, setMakeDefault] = useState(true);
+  const [isShared, setIsShared] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
   const open = configOpen ?? localOpen;
   const [draggedKey, setDraggedKey] = useState(null);
@@ -50,6 +56,26 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
   const [naming, setNaming] = useState(false);
   const [viewName, setViewName] = useState("");
   const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    axiosClient.get("/table-views", { params: { table_id: sharedTableId(tableId, columns) } }).then(({ data }) => {
+      if (cancelled || !Array.isArray(data?.views)) return;
+      const sharedViews = data.views.filter((view) => view.shared).map((view) => ({ ...view, shared: true }));
+      if (!sharedViews.length) return;
+      setSaved((previous) => {
+        const localViews = previous.views.filter((view) => !sharedViews.some((shared) => shared.id === view.id));
+        const mergedViews = [...localViews, ...sharedViews];
+        const sharedDefault = sharedViews.find((view) => view.default);
+        const nextDefault = previous.defaultId === "default" && sharedDefault ? sharedDefault.id : previous.defaultId;
+        const nextActive = previous.activeId === "default" && sharedDefault ? sharedDefault.id : previous.activeId;
+        const activeColumns = mergedViews.find((view) => view.id === nextActive)?.columns || allKeys;
+        setViewId(nextActive); setSelected(activeColumns); setDraft(activeColumns); setMakeDefault(nextActive === nextDefault); setIsShared(Boolean(mergedViews.find((view) => view.id === nextActive)?.shared));
+        return { ...previous, views: mergedViews, activeId: nextActive, defaultId: nextDefault };
+      });
+    }).catch(() => { /* Local views remain available when shared views cannot be loaded. */ });
+    return () => { cancelled = true; };
+  }, [viewKey]);
 
   function persist(value) {
     try {
@@ -69,6 +95,7 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
     setDraft(selected);
     setViewId(saved.activeId);
     setMakeDefault(saved.activeId === saved.defaultId);
+    setIsShared(Boolean(saved.views.find((view) => view.id === saved.activeId)?.shared));
     setNaming(false);
     setSearch("");
     setSelectedSearch("");
@@ -90,7 +117,7 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
     setStatus("");
   }
 
-  function saveNewView() {
+  async function saveNewView() {
     if (!naming) {
       setNaming(true);
       setViewId("new");
@@ -103,9 +130,20 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
       setError("A view with this name already exists. Choose a different name."); return;
     }
     const id = crypto.randomUUID();
-    if (persist({ views: [...saved.views, { id, name, columns: draft }], activeId: id, defaultId: makeDefault ? id : saved.defaultId })) {
+    const view = { id, name, columns: draft, shared: isShared };
+    if (isShared) {
+      try {
+        const response = await axiosClient.post("/table-views", { table_id: sharedTableId(tableId, columns), name, columns: draft, is_default: makeDefault, is_shared: true });
+        view.id = response.data.id;
+        view.ownerName = response.data.ownerName;
+      } catch (requestError) {
+        setError(requestError.response?.data?.detail || "Unable to share this view.");
+        return;
+      }
+    }
+    if (persist({ views: [...saved.views, view], activeId: view.id, defaultId: makeDefault ? view.id : saved.defaultId })) {
       setSelected(draft);
-      setViewId(id);
+      setViewId(view.id);
       setNaming(false);
       setStatus(`Saved ${name}${makeDefault ? " as your default view" : ""}.`);
     }
@@ -133,18 +171,24 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
       <div className="oa-app-font max-h-[70vh] space-y-3 overflow-y-auto">
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1 space-y-1"><label className="text-xs text-oa-muted">View</label>
-            <Select ariaLabel="Table view" minWidth="w-full" value={viewId} options={[{ value: "default", label: "Default view" }, ...saved.views.map((view) => ({ value: view.id, label: `${view.name}${view.id === saved.defaultId ? " (My default)" : ""}` })), ...(naming ? [{ value: "new", label: "New view" }] : [])]} onChange={(event) => {
+            <Select ariaLabel="Table view" minWidth="w-full" value={viewId} options={[{ value: "default", label: "Default view" }, ...saved.views.map((view) => ({ value: view.id, label: `${view.name}${view.shared ? ` (Shared by ${view.ownerName || "another user"})` : view.id === saved.defaultId ? " (My default)" : ""}` })), ...(naming ? [{ value: "new", label: "New view" }] : [])]} onChange={(event) => {
               const id = event.target.value;
               if (id === "new") return;
-              setViewId(id); setMakeDefault(id === saved.defaultId); setDraft(id === "default" ? allKeys : saved.views.find((view) => view.id === id).columns); setNaming(false); setError(""); setStatus("");
+              setViewId(id); setMakeDefault(id === saved.defaultId); setIsShared(Boolean(saved.views.find((view) => view.id === id)?.shared)); setDraft(id === "default" ? allKeys : saved.views.find((view) => view.id === id).columns); setNaming(false); setError(""); setStatus("");
             }} />
           </div>
-          <IconButton icon={Plus} label="Add view" variant="add" onClick={() => { setNaming(true); setViewId("new"); setMakeDefault(false); setViewName(""); setDraft(allKeys); setError(""); setStatus(""); }} />
+          <IconButton icon={Plus} label="Add view" variant="add" onClick={() => { setNaming(true); setViewId("new"); setMakeDefault(false); setIsShared(false); setViewName(""); setDraft(allKeys); setError(""); setStatus(""); }} />
         </div>
-        <label className={oaCheckboxControlStyles.wrapper}>
-          <input type="checkbox" className={oaCheckboxControlStyles.checkbox} checked={makeDefault} onChange={(event) => { setMakeDefault(event.target.checked); setError(""); }} />
-          <span>Make this my default view</span>
-        </label>
+        <div className="grid gap-2 md:grid-cols-2">
+          <label className={oaCheckboxControlStyles.wrapper}>
+            <input type="checkbox" className={oaCheckboxControlStyles.checkbox} checked={makeDefault} onChange={(event) => { setMakeDefault(event.target.checked); setError(""); }} />
+            <span>Make this my default view</span>
+          </label>
+          <label className={oaCheckboxControlStyles.wrapper}>
+            <input type="checkbox" className={oaCheckboxControlStyles.checkbox} checked={isShared} onChange={(event) => { setIsShared(event.target.checked); setError(""); }} disabled={!naming && Boolean(saved.views.find((view) => view.id === viewId)?.shared)} />
+            <span>Share this view with other users</span>
+          </label>
+        </div>
         {naming && <div className="space-y-1"><label htmlFor={nameInputId} className="text-xs text-oa-muted">New view name</label><Input id={nameInputId} autoFocus maxLength={80} placeholder="Name your view" value={viewName} onChange={(event) => setViewName(event.target.value)} /></div>}
         <div className="grid gap-3 md:grid-cols-2">
           <section className="min-w-0 p-3">
@@ -192,5 +236,5 @@ function ColumnConfigState({ columns, children, viewKey, configOpen, onConfigClo
 
 export default function ColumnConfig({ columns, tableId, children, configOpen, onConfigClose }) {
   const key = storageKey(columns, tableId);
-  return <ColumnConfigState key={key} viewKey={key} columns={columns} configOpen={configOpen} onConfigClose={onConfigClose}>{children}</ColumnConfigState>;
+  return <ColumnConfigState key={key} viewKey={key} tableId={tableId} columns={columns} configOpen={configOpen} onConfigClose={onConfigClose}>{children}</ColumnConfigState>;
 }
