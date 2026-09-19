@@ -10,7 +10,7 @@ def encode(value):
 
 def ensure_news_event_schema(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS news_event_engine_runs (
-        run_id VARCHAR PRIMARY KEY, snapshot_id VARCHAR NOT NULL, as_of TIMESTAMPTZ NOT NULL,
+        run_id VARCHAR PRIMARY KEY, snapshot_id VARCHAR NOT NULL, as_of VARCHAR NOT NULL,
         calculation_version VARCHAR NOT NULL, status VARCHAR NOT NULL,
         input_json JSON NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     for table in ('events', 'daily_features'):
@@ -30,7 +30,7 @@ def build_news_events(conn, request):
     conn.execute('BEGIN TRANSACTION')
     try:
         conn.execute('INSERT INTO news_event_engine_runs VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)',
-                     [run_id, request.snapshot_id, request.as_of, VERSION, 'complete', content])
+                     [run_id, request.snapshot_id, request.as_of.isoformat(), VERSION, 'complete', content])
         for table, records in (('events', result['events']), ('daily_features', result['daily_features'])):
             if records:
                 conn.executemany(f'INSERT INTO news_event_engine_{table} VALUES (?,?,?)',

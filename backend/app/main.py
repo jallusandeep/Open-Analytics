@@ -29,6 +29,7 @@ from app.engines.valuation.valuation_routes import router as valuation_router
 from app.engines.factor.factor_routes import router as factor_router
 from app.engines.news_event.news_event_routes import router as news_event_router
 from app.engines.institutional_flow.institutional_flow_routes import router as institutional_flow_router
+from app.engines.derivatives.derivatives_routes import router as derivatives_router
 from app.api.v1.reference_data_routes import router as reference_data_router
 from app.api.v1.security_reference_routes import router as security_reference_router
 app = FastAPI(
@@ -87,6 +88,7 @@ app.include_router(valuation_router, prefix="/api/v1")
 app.include_router(factor_router, prefix="/api/v1")
 app.include_router(news_event_router, prefix="/api/v1")
 app.include_router(institutional_flow_router, prefix="/api/v1")
+app.include_router(derivatives_router, prefix="/api/v1")
 app.include_router(reference_data_router, prefix="/api/v1")
 app.include_router(security_reference_router, prefix="/api/v1")
 from app.api.v1.data_export_routes import router as data_export_router
