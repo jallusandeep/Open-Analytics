@@ -31,6 +31,7 @@ from app.engines.news_event.news_event_routes import router as news_event_router
 from app.engines.institutional_flow.institutional_flow_routes import router as institutional_flow_router
 from app.engines.derivatives.derivatives_routes import router as derivatives_router
 from app.engines.market_breadth.market_breadth_routes import router as market_breadth_router
+from app.engines.market_regime.market_regime_routes import router as market_regime_router
 from app.api.v1.reference_data_routes import router as reference_data_router
 from app.api.v1.security_reference_routes import router as security_reference_router
 from app.api.v1.table_view_routes import router as table_view_router
@@ -92,6 +93,7 @@ app.include_router(news_event_router, prefix="/api/v1")
 app.include_router(institutional_flow_router, prefix="/api/v1")
 app.include_router(derivatives_router, prefix="/api/v1")
 app.include_router(market_breadth_router, prefix="/api/v1")
+app.include_router(market_regime_router, prefix="/api/v1")
 app.include_router(reference_data_router, prefix="/api/v1")
 app.include_router(security_reference_router, prefix="/api/v1")
 app.include_router(table_view_router, prefix="/api/v1")
